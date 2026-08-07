@@ -10,6 +10,20 @@ export const StepInputSchema = z.object({
   howToGetIt: z.string().min(1).optional(),
 });
 
+export const PublicFormFieldSchema = z.object({
+  key: z.string().regex(/^[a-z][a-z0-9_]{0,49}$/),
+  label: z.string().min(1).max(80),
+  type: z.enum(["text", "email", "url", "textarea"]),
+  placeholder: z.string().max(160).optional(),
+  required: z.boolean().default(true),
+});
+
+export const PublicFormDefinitionSchema = z.object({
+  title: z.string().min(1).max(120),
+  description: z.string().min(1).max(300),
+  fields: z.array(PublicFormFieldSchema).min(1).max(10),
+});
+
 export const WorkflowStepSchema = z.object({
   id: z.string(),
   type: z.enum([
@@ -34,7 +48,10 @@ export const CompiledWorkflowSchema = z.object({
   workflowName: z.string(),
   summary: z.string(),
   steps: z.array(WorkflowStepSchema),
+  publicForm: PublicFormDefinitionSchema.optional(),
 });
 
 export type CompiledWorkflow = z.infer<typeof CompiledWorkflowSchema>;
 export type StepInput = z.infer<typeof StepInputSchema>;
+export type PublicFormDefinition = z.infer<typeof PublicFormDefinitionSchema>;
+export type PublicFormField = z.infer<typeof PublicFormFieldSchema>;

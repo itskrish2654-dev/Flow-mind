@@ -10,6 +10,8 @@ import {
   CircleDot,
   CirclePlay,
   Copy,
+  Database,
+  ExternalLink,
   Filter,
   Info,
   LoaderCircle,
@@ -24,6 +26,7 @@ import {
 
 import { runTestWorkflow, type TestExecutionLog } from "@/app/actions/execute";
 import { compileWorkflow } from "@/app/actions/workflow";
+import { getPublicFormPath, getPublicFormUrl } from "@/lib/public-form";
 import type { CompiledWorkflow, StepInput } from "@/lib/schemas/workflow";
 import { getStepInputs, orderWorkflowSteps, toPlainEnglish } from "@/lib/workflow-setup";
 
@@ -110,11 +113,13 @@ function EmptyCanvas() {
 
 function Inspector({
   step,
+  workflowId,
   inputs,
   values,
   onChange,
 }: {
   step: Step | null;
+  workflowId: string | null;
   inputs: StepInput[];
   values: InputValues;
   onChange: (id: string, value: string) => void;
@@ -139,6 +144,7 @@ function Inspector({
 
   const visual = stepVisuals[step.type];
   const Icon = visual.icon;
+  const publicFormPath = workflowId ? getPublicFormPath(workflowId) : null;
   return (
     <aside className="hidden w-[292px] shrink-0 flex-col border-l border-slate-200 bg-white xl:flex">
       <div className="flex min-h-[65px] items-center gap-2.5 border-b border-slate-200 px-4">
@@ -148,8 +154,58 @@ function Inspector({
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         <p className="text-[11px] leading-5 text-slate-500">{toPlainEnglish(step.description)}</p>
         <div className="my-4 h-px bg-slate-100" />
+        {step.type === "webhook_trigger" && publicFormPath && (
+          <div className="mb-4 rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-violet-50 p-3.5">
+            <p className="text-[10px] font-semibold text-slate-900">Your hosted form is ready</p>
+            <p className="mt-1 text-[9px] leading-4 text-slate-500">
+              Share this link to collect information and start the automation.
+            </p>
+            <div className="mt-3 grid gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (workflowId) {
+                    void copyValue(
+                      "public-form",
+                      getPublicFormUrl(workflowId, window.location.origin),
+                    );
+                  }
+                }}
+                className="flex h-9 items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 text-[10px] font-semibold text-white shadow-md shadow-indigo-100 transition hover:brightness-110"
+              >
+                {copied === "public-form" ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+                {copied === "public-form" ? "Link copied" : "Copy Public Form Link"}
+              </button>
+              <a
+                href={publicFormPath}
+                target="_blank"
+                rel="noreferrer"
+                className="flex h-9 items-center justify-center gap-2 rounded-lg border border-indigo-200 bg-white text-[10px] font-semibold text-indigo-700 transition hover:bg-indigo-50"
+              >
+                <ExternalLink className="size-3.5" />
+                Preview Form
+              </a>
+            </div>
+          </div>
+        )}
+        {step.type === "http_request" && workflowId && (
+          <div className="mb-4 rounded-xl border border-violet-200 bg-gradient-to-br from-violet-50 to-indigo-50 p-3.5">
+            <p className="text-[10px] font-semibold text-slate-900">Internal data table connected</p>
+            <p className="mt-1 text-[9px] leading-4 text-slate-500">
+              Every form submission and test result is saved automatically.
+            </p>
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new Event("flowmind:show-executions"))}
+              className="mt-3 flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-violet-200 bg-white text-[10px] font-semibold text-violet-700 transition hover:bg-violet-50"
+            >
+              <Database className="size-3.5" />
+              View Executions &amp; Data
+            </button>
+          </div>
+        )}
         {inputs.length === 0 ? (
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-center"><CheckCircle2 className="mx-auto size-5 text-emerald-500" /><p className="mt-2 text-[11px] font-medium text-slate-900">No setup needed</p></div>
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-center"><CheckCircle2 className="mx-auto size-5 text-emerald-500" /><p className="mt-2 text-[11px] font-medium text-slate-900">{step.type === "webhook_trigger" ? "Native form connected" : step.type === "http_request" ? "Native data table connected" : "No setup needed"}</p></div>
         ) : (
           <div className="space-y-4">
             <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">Required details</p>
@@ -208,9 +264,12 @@ export function AutomationWorkspace({
 
   const steps = useMemo(() => workflow ? orderWorkflowSteps(workflow.steps) : [], [workflow]);
   const selectedStep = steps.find((step) => step.id === selectedStepId) ?? steps[0] ?? null;
-  const selectedInputs = selectedStep ? getStepInputs(selectedStep, workflowId) : [];
+  const selectedInputs = selectedStep && !["webhook_trigger", "http_request"].includes(selectedStep.type)
+    ? getStepInputs(selectedStep, workflowId)
+    : [];
 
   function inputsFor(step: Step) {
+    if (step.type === "webhook_trigger" || step.type === "http_request") return [];
     return getStepInputs(step, workflowId);
   }
 
@@ -336,6 +395,9 @@ export function AutomationWorkspace({
       }
       setLogs(result.logs);
       setDelivered(result.delivered);
+      window.dispatchEvent(
+        new CustomEvent("flowmind:executions-changed", { detail: workflowId }),
+      );
       if (result.delivered) {
         window.localStorage.setItem(`flowmind:status:${workflowId}`, "working");
         window.dispatchEvent(new CustomEvent("flowmind:status-changed", { detail: { id: workflowId, status: "Working" } }));
@@ -400,7 +462,7 @@ export function AutomationWorkspace({
         </section>
       </main>
 
-      <Inspector step={selectedStep} inputs={selectedInputs} values={values} onChange={(id, value) => { setValues((current) => ({ ...current, [id]: value })); setError(null); setLogs([]); }} />
+      <Inspector workflowId={workflowId} step={selectedStep} inputs={selectedInputs} values={values} onChange={(id, value) => { setValues((current) => ({ ...current, [id]: value })); setError(null); setLogs([]); }} />
     </div>
   );
 }

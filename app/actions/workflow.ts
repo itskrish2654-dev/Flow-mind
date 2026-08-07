@@ -10,6 +10,7 @@ import {
   type StepInput,
 } from "@/lib/schemas/workflow";
 import { getAuthenticatedContext } from "@/lib/auth";
+import { createPublicFormDefinition } from "@/lib/public-form";
 
 const MAX_PROMPT_LENGTH = 10_000;
 
@@ -423,6 +424,11 @@ Use null for configuration values that do not apply to a step.`,
     const compiledWorkflow = CompiledWorkflowSchema.parse({
       workflowName: output.workflowName,
       summary: output.summary,
+      publicForm: createPublicFormDefinition(
+        normalizedPrompt,
+        output.workflowName,
+        output.summary,
+      ),
       steps: orderedSteps.map((orderedStep, stepIndex) => {
         const step = orderedStep!;
         const config = {

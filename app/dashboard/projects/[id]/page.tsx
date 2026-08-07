@@ -1,7 +1,8 @@
 import { notFound } from "next/navigation";
 
+import { listWorkflowExecutions } from "@/app/actions/executions";
 import { getWorkflow } from "@/app/actions/workflow";
-import { AutomationWorkspace } from "@/components/automation-workspace";
+import { ProjectWorkspace } from "@/components/project-workspace";
 
 export default async function ProjectPage({
   params,
@@ -9,17 +10,20 @@ export default async function ProjectPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const result = await getWorkflow(id);
+  const [result, executionsResult] = await Promise.all([
+    getWorkflow(id),
+    listWorkflowExecutions(id),
+  ]);
 
   if (!result.ok) {
     notFound();
   }
 
   return (
-    <AutomationWorkspace
-      key={id}
-      initialWorkflowId={id}
-      initialWorkflow={result.workflow}
+    <ProjectWorkspace
+      workflowId={id}
+      workflow={result.workflow}
+      initialExecutions={executionsResult.ok ? executionsResult.executions : []}
     />
   );
 }
