@@ -15,9 +15,6 @@
 .auth-progress-bar {
   animation: auth-progress 1.45s ease-in-out infinite;
 }
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
-
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {

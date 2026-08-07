@@ -1,51 +1,6 @@
 import type { CompiledWorkflow, StepInput } from "@/lib/schemas/workflow";
 
-export type WorkflowStep = CompiledWorkflow["steps"][number];
-
-export const friendlyStepCopy: Record<
-  WorkflowStep["type"],
-  {
-    icon: string;
-    label: string;
-    title: string;
-    description: string;
-    color: string;
-    numberColor: string;
-  }
-> = {
-  webhook_trigger: {
-    icon: "⚡",
-    label: "WHEN THIS HAPPENS",
-    title: "Something starts your automation",
-    description: "FlowPilot notices when new information arrives and gets started.",
-    color: "border-violet-200 bg-violet-50 text-violet-700",
-    numberColor: "bg-violet-600 text-white shadow-violet-200",
-  },
-  ai_transform: {
-    icon: "✨",
-    label: "AI MAGIC",
-    title: "FlowPilot works with your information",
-    description: "FlowPilot reads, summarizes, or improves the information for you.",
-    color: "border-indigo-200 bg-indigo-50 text-indigo-700",
-    numberColor: "bg-indigo-600 text-white shadow-indigo-200",
-  },
-  http_request: {
-    icon: "🚀",
-    label: "SEND THE RESULT",
-    title: "Your result goes to the right place",
-    description: "FlowPilot sends the finished result to the app you choose.",
-    color: "border-emerald-200 bg-emerald-50 text-emerald-700",
-    numberColor: "bg-emerald-600 text-white shadow-emerald-200",
-  },
-  filter_condition: {
-    icon: "🔍",
-    label: "CHECK A RULE",
-    title: "FlowPilot checks what should happen next",
-    description: "FlowPilot checks your rule before continuing.",
-    color: "border-amber-200 bg-amber-50 text-amber-700",
-    numberColor: "bg-amber-500 text-white shadow-amber-200",
-  },
-};
+type WorkflowStep = CompiledWorkflow["steps"][number];
 
 const primaryStepOrder: WorkflowStep["type"][] = [
   "webhook_trigger",

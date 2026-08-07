@@ -167,10 +167,6 @@ export type GetWorkflowResult =
   | { ok: true; workflow: CompiledWorkflow }
   | { ok: false; error: string };
 
-export type CreateWorkflowResult =
-  | { success: true; id: string }
-  | { success: false; error: string };
-
 export type SavedWorkflow = {
   id: string;
   name: string;
@@ -241,57 +237,6 @@ export async function listWorkflows(): Promise<ListWorkflowsResult> {
     }];
   });
   return { ok: true, workflows };
-}
-
-export async function createWorkflow(prompt: string): Promise<CreateWorkflowResult> {
-  const normalizedPrompt = prompt.trim();
-
-  if (!normalizedPrompt) {
-    return { success: false, error: "Describe the workflow you want to create." };
-  }
-
-  if (normalizedPrompt.length > MAX_PROMPT_LENGTH) {
-    return {
-      success: false,
-      error: "Workflow descriptions must be 10,000 characters or fewer.",
-    };
-  }
-
-  const auth = await getAuthenticatedContext();
-  if (!auth) return { success: false, error: "Unauthorized" };
-
-  const { data, error } = await auth.supabase
-    .from("workflows")
-    .insert({
-      user_id: auth.user.id,
-      name: normalizedPrompt.slice(0, 20),
-      prompt: normalizedPrompt,
-      compiled_steps: null,
-    })
-    .select("id")
-    .single();
-
-  if (error) {
-    console.error("Supabase workflow insert failed", {
-      code: error.code,
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
-    });
-    return {
-      success: false,
-      error: "We couldn't save this workflow. Please try again.",
-    };
-  }
-
-  if (!data?.id) {
-    return {
-      success: false,
-      error: "The workflow was saved without an identifier.",
-    };
-  }
-
-  return { success: true, id: data.id };
 }
 
 export async function compileWorkflow(prompt: string): Promise<CompileWorkflowResult> {

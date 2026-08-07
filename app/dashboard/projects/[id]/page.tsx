@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { getWorkflow } from "@/app/actions/workflow";
-import { ProjectSetup } from "@/components/project-setup";
+import { AutomationWorkspace } from "@/components/automation-workspace";
 
 export default async function ProjectPage({
   params,
@@ -15,5 +15,11 @@ export default async function ProjectPage({
     notFound();
   }
 
-  return <ProjectSetup workflowId={id} workflow={result.workflow} />;
+  return (
+    <AutomationWorkspace
+      key={id}
+      initialWorkflowId={id}
+      initialWorkflow={result.workflow}
+    />
+  );
 }
