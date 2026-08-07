@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import {
   CheckCircle2,
@@ -45,6 +45,7 @@ function workflowStatus(item: SavedWorkflow): AutomationStatus {
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [automations, setAutomations] = useState<Array<SavedWorkflow & { status: AutomationStatus }>>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -87,7 +88,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     if (pathname === "/dashboard") {
       window.dispatchEvent(new CustomEvent("flowmind:new-workflow"));
     } else {
-      window.location.assign("/dashboard");
+      router.push("/dashboard");
     }
   }
 
