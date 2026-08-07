@@ -3,37 +3,13 @@
 import { z } from "zod";
 
 import type { PublicFormSubmissionState } from "@/lib/public-form";
-import { getPublicWorkflow } from "@/lib/public-workflow";
-import type { CompiledWorkflow } from "@/lib/schemas/workflow";
+import { uploadGeneratedDocument } from "@/lib/document-storage";
+import { getPublicExecutableWorkflow } from "@/lib/public-workflow";
 import type { Json } from "@/lib/supabase/types";
-import { createPublicClient } from "@/lib/supabase/public";
 import { executeWorkflowSteps } from "@/lib/workflow-execution";
 
 const WorkflowIdSchema = z.string().uuid();
 const FieldValueSchema = z.string().trim().max(5_000);
-
-function nativeFormSteps(workflowName: string): CompiledWorkflow["steps"] {
-  return [
-    {
-      id: "native_form",
-      type: "webhook_trigger",
-      title: "Hosted Form Submission",
-      description: "Receives validated information from the hosted form.",
-    },
-    {
-      id: "native_process",
-      type: "ai_transform",
-      title: workflowName,
-      description: "Processes the submitted information using this automation.",
-    },
-    {
-      id: "native_table",
-      type: "http_request",
-      title: "Save to FlowMind Data",
-      description: "Stores the result in the project execution table.",
-    },
-  ];
-}
 
 export async function submitPublicWorkflow(
   projectId: string,
@@ -52,7 +28,7 @@ export async function submitPublicWorkflow(
     };
   }
 
-  const publicWorkflow = await getPublicWorkflow(parsedId.data);
+  const publicWorkflow = await getPublicExecutableWorkflow(parsedId.data);
   if (!publicWorkflow) {
     return {
       status: "error",
@@ -94,16 +70,31 @@ export async function submitPublicWorkflow(
     if (parsedValue.data) inputData[field.key] = parsedValue.data;
   }
 
-  const execution = await executeWorkflowSteps({
-    workflowId: publicWorkflow.id,
-    workflowName: publicWorkflow.name,
-    steps: nativeFormSteps(publicWorkflow.workflowName),
-    inputValues: inputData,
-    mode: "public-form",
-  });
+  let execution: Awaited<ReturnType<typeof executeWorkflowSteps>>;
+  try {
+    execution = await executeWorkflowSteps({
+      workflowId: publicWorkflow.id,
+      workflowName: publicWorkflow.name,
+      steps: publicWorkflow.workflow.steps,
+      inputValues: inputData,
+      mode: "public-form",
+      uploadGeneratedDocument: async ({ bytes }) =>
+        uploadGeneratedDocument(
+          publicWorkflow.admin,
+          publicWorkflow.ownerId,
+          publicWorkflow.id,
+          bytes,
+        ),
+    });
+  } catch (error: unknown) {
+    console.error("Public workflow execution failed", error);
+    return {
+      status: "error",
+      message: "We couldn’t generate the document. Please try again.",
+    };
+  }
 
-  const supabase = createPublicClient();
-  const { error } = await supabase.from("workflow_executions").insert({
+  const { error } = await publicWorkflow.admin.from("workflow_executions").insert({
     workflow_id: publicWorkflow.id,
     input_data: execution.inputData as Json,
     output_data: execution.outputData as Json,

@@ -24,6 +24,7 @@ const GroqCompiledWorkflowSchema = z.object({
         "webhook_trigger",
         "ai_transform",
         "http_request",
+        "generate_pdf",
         "filter_condition",
       ]),
       title: z.string(),
@@ -43,6 +44,7 @@ const GroqCompiledWorkflowSchema = z.object({
         endpoint: z.string().nullable(),
         method: z.enum(["GET", "POST", "PUT", "DELETE"]).nullable(),
         transformPrompt: z.string().nullable(),
+        documentTemplate: z.string().max(50_000).nullable(),
       }),
     }),
   ).length(3),
@@ -51,8 +53,29 @@ const GroqCompiledWorkflowSchema = z.object({
 const REQUIRED_STEP_ORDER = [
   "webhook_trigger",
   "ai_transform",
-  "http_request",
 ] as const;
+
+function isPdfWorkflow(prompt: string): boolean {
+  return /\b(pdf|invoice|proposal|document|report)\b/i.test(prompt);
+}
+
+function defaultDocumentTemplate(workflowName: string): string {
+  return `# ${workflowName}\n\nPrepared for {{name}}\n\n{{query}}\n\n## Summary\n\n{{ai_summary}}`;
+}
+
+function normalizeDocumentTemplate(
+  template: string | null,
+  workflowName: string,
+): string {
+  const source = template?.trim() || defaultDocumentTemplate(workflowName);
+  return source.replace(
+    /\{\{\s*(ai_[a-zA-Z0-9_.-]+)\s*\}\}/g,
+    (placeholder, key: string) =>
+      ["ai_summary", "ai_result"].includes(key.toLowerCase())
+        ? placeholder
+        : "{{ai_summary}}",
+  );
+}
 
 function isYouTubeScriptWorkflow(prompt: string): boolean {
   const normalized = prompt.toLowerCase();
@@ -183,6 +206,81 @@ export type DeleteWorkflowResult =
   | { ok: true }
   | { ok: false; error: string };
 
+export type SaveDocumentTemplateResult =
+  | { ok: true; workflow: CompiledWorkflow }
+  | { ok: false; error: string };
+
+export async function saveDocumentTemplate(
+  workflowId: string,
+  stepId: string,
+  template: string,
+): Promise<SaveDocumentTemplateResult> {
+  const request = z
+    .object({
+      workflowId: z.string().uuid(),
+      stepId: z.string().min(1).max(100),
+      template: z.string().trim().min(1).max(50_000),
+    })
+    .safeParse({ workflowId, stepId, template });
+
+  if (!request.success) {
+    return { ok: false, error: "Add a document template before saving." };
+  }
+
+  const auth = await getAuthenticatedContext();
+  if (!auth) return { ok: false, error: "Unauthorized" };
+
+  const { data, error } = await auth.supabase
+    .from("workflows")
+    .select("compiled_steps")
+    .eq("id", request.data.workflowId)
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+
+  const parsed = CompiledWorkflowSchema.safeParse(data?.compiled_steps);
+  if (error || !parsed.success) {
+    return { ok: false, error: "We couldn’t find this document workflow." };
+  }
+
+  let matchedStep = false;
+  const workflow: CompiledWorkflow = {
+    ...parsed.data,
+    steps: parsed.data.steps.map((step) => {
+      if (step.id !== request.data.stepId || step.type !== "generate_pdf") {
+        return step;
+      }
+      matchedStep = true;
+      return {
+        ...step,
+        config: {
+          ...step.config,
+          documentTemplate: request.data.template,
+        },
+      };
+    }),
+  };
+
+  if (!matchedStep) {
+    return { ok: false, error: "We couldn’t find the PDF step to update." };
+  }
+
+  const { error: updateError } = await auth.supabase
+    .from("workflows")
+    .update({ compiled_steps: workflow })
+    .eq("id", request.data.workflowId)
+    .eq("user_id", auth.user.id);
+
+  if (updateError) {
+    console.error("Supabase document template update failed", {
+      code: updateError.code,
+      message: updateError.message,
+    });
+    return { ok: false, error: "We couldn’t save the document template." };
+  }
+
+  return { ok: true, workflow };
+}
+
 export async function deleteWorkflow(workflowId: string): Promise<DeleteWorkflowResult> {
   const parsedWorkflowId = z.string().uuid().safeParse(workflowId);
   if (!parsedWorkflowId.success) {
@@ -278,11 +376,12 @@ CRITICAL RULES:
 1. OUTPUT RAW, VALID JSON ONLY. NO MARKDOWN. NO CODE BLOCKS (\`\`\`json).
 2. You must perfectly match the expected JSON schema.
 3. Step 1 must ALWAYS be a trigger. Step 2 must ALWAYS be AI magic. Step 3 must
-   ALWAYS be a destination action.
+   ALWAYS be a destination action. Use generate_pdf when the user requests a PDF,
+   invoice, proposal, report, or document; otherwise use http_request.
 4. DO NOT include conversational text before or after the JSON.
 5. If the prompt is too short, invent a logical 3-step automation for it.
 6. Every step MUST include inputsRequired and config. Never omit config. When a config
-   value does not apply, set endpoint, method, and transformPrompt to null.
+   value does not apply, set endpoint, method, transformPrompt, and documentTemplate to null.
 7. Every inputsRequired item MUST include key, label, type, placeholder, value, helpText,
    and howToGetIt. Use null when a value does not apply; never omit a property.
 
@@ -310,7 +409,8 @@ EXAMPLE EXPECTED OUTPUT:
       "config": {
         "endpoint": null,
         "method": null,
-        "transformPrompt": null
+        "transformPrompt": null,
+        "documentTemplate": null
       }
     },
     {
@@ -332,7 +432,8 @@ EXAMPLE EXPECTED OUTPUT:
       "config": {
         "endpoint": null,
         "method": null,
-        "transformPrompt": "Summarize the incoming email using the user's instructions."
+        "transformPrompt": "Summarize the incoming email using the user's instructions.",
+        "documentTemplate": null
       }
     },
     {
@@ -354,7 +455,8 @@ EXAMPLE EXPECTED OUTPUT:
       "config": {
         "endpoint": null,
         "method": "POST",
-        "transformPrompt": null
+        "transformPrompt": null,
+        "documentTemplate": null
       }
     }
   ]
@@ -367,8 +469,10 @@ System Rules for Step Order:
 1. STEP 1 must ALWAYS be the Trigger and use type webhook_trigger. This can fetch
    information such as trending topics, listen for a new event, or run on a schedule.
 2. STEP 2 must ALWAYS be the AI Transformation or Generation and use type ai_transform.
-3. STEP 3 must ALWAYS be the Destination Action and use type http_request, such as saving
-   to Google Docs, sending by email, or posting to Notion.
+3. STEP 3 must ALWAYS be the Destination Action. Use type generate_pdf for a PDF,
+   invoice, proposal, report, or document. Otherwise use type http_request for sending
+   to another app. A generate_pdf config must include a useful Markdown documentTemplate
+   with variables such as {{name}}, {{query}}, and {{ai_summary}}.
 NEVER place the Destination step before the AI Generation step.
 Return exactly three steps in this exact order. Do not add a filter_condition step.
 
@@ -412,9 +516,17 @@ Use null for configuration values that do not apply to a step.`,
       },
     });
 
-    const orderedSteps = REQUIRED_STEP_ORDER.map((type) =>
-      output.steps.find((step) => step.type === type),
-    );
+    const wantsPdf = isPdfWorkflow(normalizedPrompt);
+    const orderedSteps = [
+      ...REQUIRED_STEP_ORDER.map((type) =>
+        output.steps.find((step) => step.type === type),
+      ),
+      output.steps.find((step) =>
+        wantsPdf
+          ? step.type === "generate_pdf" || step.type === "http_request"
+          : step.type === "http_request" || step.type === "generate_pdf",
+      ),
+    ];
 
     if (orderedSteps.some((step) => !step)) {
       throw new Error("The generated workflow did not contain the required step order.");
@@ -437,11 +549,22 @@ Use null for configuration values that do not apply to a step.`,
           ...(step.config.transformPrompt
             ? { transformPrompt: step.config.transformPrompt }
             : {}),
+          ...(stepIndex === 2 && wantsPdf
+            ? {
+                documentTemplate:
+                  normalizeDocumentTemplate(
+                    step.config.documentTemplate,
+                    output.workflowName,
+                  ),
+              }
+            : {}),
         };
 
-        const inputsRequired = youtubeWorkflow
-          ? youtubeScriptInput(stepIndex)
-          : step.inputsRequired.map((input) => ({
+        const inputsRequired = stepIndex === 2 && wantsPdf
+          ? []
+          : youtubeWorkflow
+            ? youtubeScriptInput(stepIndex)
+            : step.inputsRequired.map((input) => ({
               key: input.key,
               label: input.label,
               type: input.type,
@@ -449,11 +572,16 @@ Use null for configuration values that do not apply to a step.`,
               ...(input.value ? { value: input.value } : {}),
               ...(input.helpText ? { helpText: input.helpText } : {}),
               ...(input.howToGetIt ? { howToGetIt: input.howToGetIt } : {}),
-            }));
+              }));
 
         return {
           id: `step_${stepIndex + 1}`,
-          type: step.type,
+          type:
+            stepIndex === 2
+              ? wantsPdf
+                ? "generate_pdf"
+                : "http_request"
+              : step.type,
           title: step.title,
           description: step.description,
           ...(inputsRequired.length > 0 ? { inputsRequired } : {}),

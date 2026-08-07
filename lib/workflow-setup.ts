@@ -6,17 +6,10 @@ const primaryStepOrder: WorkflowStep["type"][] = [
   "webhook_trigger",
   "ai_transform",
   "http_request",
+  "generate_pdf",
 ];
 
 export function orderWorkflowSteps(steps: WorkflowStep[]): WorkflowStep[] {
-  const primarySteps = primaryStepOrder.map((type) =>
-    steps.find((step) => step.type === type),
-  );
-
-  if (primarySteps.every((step): step is WorkflowStep => Boolean(step))) {
-    return primarySteps;
-  }
-
   return [...steps].sort(
     (first, second) =>
       primaryStepOrder.indexOf(first.type) - primaryStepOrder.indexOf(second.type),
@@ -233,6 +226,26 @@ function defaultInputs(step: WorkflowStep, workflowId: string | null): StepInput
           howToGetIt: fallbackGuide(step, { key: "security_key", label: "", type: "secret" }),
         },
       ];
+    case "generate_pdf":
+      return [
+        {
+          key: "document_template",
+          label: "Document Template",
+          type: "text",
+          value:
+            step.config?.documentTemplate ??
+            `# ${step.title}\n\nPrepared for {{name}}\n\n{{query}}\n\n## Summary\n\n{{ai_summary}}`,
+          placeholder:
+            "# Customer Proposal\n\nHello {{name}},\n\n{{ai_summary}}",
+          helpText:
+            "Write your document in plain text or Markdown. Add earlier values with curly braces, such as {{name}} or {{ai_summary}}.",
+          howToGetIt: [
+            "1. Add a title and the text that should appear in the document.",
+            "2. Insert form values using double curly braces, such as {{name}}.",
+            "3. Use {{ai_summary}} where the AI result should appear.",
+          ].join("\n"),
+        },
+      ];
     case "filter_condition":
       return [
         {
@@ -269,6 +282,9 @@ export function getStepInputs(
   step: WorkflowStep,
   workflowId: string | null,
 ): StepInput[] {
+  if (step.type === "generate_pdf") {
+    return defaultInputs(step, workflowId).map((input) => enrichInput(step, input));
+  }
   const suppliedInputs = (step.inputsRequired ?? []).map((input) =>
     enrichInput(step, input),
   );

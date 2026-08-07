@@ -12,12 +12,14 @@ import {
   Copy,
   Database,
   ExternalLink,
+  FileText,
   Filter,
   Info,
   LoaderCircle,
   LockKeyhole,
   Network,
   Play,
+  Save,
   Send,
   Sparkles,
   Workflow,
@@ -25,7 +27,7 @@ import {
 } from "lucide-react";
 
 import { runTestWorkflow, type TestExecutionLog } from "@/app/actions/execute";
-import { compileWorkflow } from "@/app/actions/workflow";
+import { compileWorkflow, saveDocumentTemplate } from "@/app/actions/workflow";
 import { getPublicFormPath, getPublicFormUrl } from "@/lib/public-form";
 import type { CompiledWorkflow, StepInput } from "@/lib/schemas/workflow";
 import { getStepInputs, orderWorkflowSteps, toPlainEnglish } from "@/lib/workflow-setup";
@@ -48,6 +50,7 @@ const stepVisuals = {
   webhook_trigger: { label: "Trigger", icon: Zap, tone: "emerald" },
   ai_transform: { label: "AI Process", icon: Sparkles, tone: "indigo" },
   http_request: { label: "Destination", icon: Send, tone: "violet" },
+  generate_pdf: { label: "PDF Document", icon: FileText, tone: "rose" },
   filter_condition: { label: "Condition", icon: Filter, tone: "amber" },
 } as const;
 
@@ -55,6 +58,7 @@ const toneClasses = {
   emerald: "border-emerald-200 bg-emerald-50 text-emerald-600",
   indigo: "border-indigo-200 bg-indigo-50 text-indigo-600",
   violet: "border-violet-200 bg-violet-50 text-violet-600",
+  rose: "border-rose-200 bg-rose-50 text-rose-600",
   amber: "border-amber-200 bg-amber-50 text-amber-600",
 };
 
@@ -117,14 +121,18 @@ function Inspector({
   inputs,
   values,
   onChange,
+  onSaveTemplate,
 }: {
   step: Step | null;
   workflowId: string | null;
   inputs: StepInput[];
   values: InputValues;
   onChange: (id: string, value: string) => void;
+  onSaveTemplate: (stepId: string, template: string) => Promise<string | null>;
 }) {
   const [copied, setCopied] = useState<string | null>(null);
+  const [templateStatus, setTemplateStatus] = useState<string | null>(null);
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
 
   async function copyValue(id: string, value: string) {
     if (!value) return;
@@ -204,6 +212,17 @@ function Inspector({
             </button>
           </div>
         )}
+        {step.type === "generate_pdf" && (
+          <div className="mb-4 rounded-xl border border-rose-200 bg-gradient-to-br from-rose-50 to-orange-50 p-3.5">
+            <p className="flex items-center gap-2 text-[10px] font-semibold text-slate-900">
+              <FileText className="size-3.5 text-rose-500" />
+              Native PDF generator
+            </p>
+            <p className="mt-1 text-[9px] leading-4 text-slate-500">
+              Use variables from the form or earlier steps with double curly braces, such as {"{{name}}"} and {"{{ai_summary}}"}.
+            </p>
+          </div>
+        )}
         {inputs.length === 0 ? (
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-center"><CheckCircle2 className="mx-auto size-5 text-emerald-500" /><p className="mt-2 text-[11px] font-medium text-slate-900">{step.type === "webhook_trigger" ? "Native form connected" : step.type === "http_request" ? "Native data table connected" : "No setup needed"}</p></div>
         ) : (
@@ -216,18 +235,55 @@ function Inspector({
                 <div key={id}>
                   <label htmlFor={id} className="block text-[10px] font-medium leading-4 text-slate-700">{toPlainEnglish(input.label)}</label>
                   {input.helpText && <p className="mt-1 text-[9px] leading-4 text-slate-400">{toPlainEnglish(input.helpText)}</p>}
-                  <div className="relative mt-2">
-                    <input
-                      id={id}
-                      type={input.type === "secret" ? "password" : input.type === "url" ? "url" : "text"}
-                      value={value}
-                      onChange={(event) => onChange(id, event.target.value)}
-                      placeholder={input.placeholder}
-                      autoComplete={input.type === "secret" ? "off" : undefined}
-                      className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50/70 px-3 pr-9 text-[10px] text-slate-800 outline-none placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-50"
-                    />
-                    {input.type === "url" && value && <button type="button" onClick={() => void copyValue(id, value)} className="absolute right-1 top-1 flex size-8 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-800">{copied === id ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}</button>}
-                  </div>
+                  {step.type === "generate_pdf" && input.key === "document_template" ? (
+                    <>
+                      <textarea
+                        id={id}
+                        rows={13}
+                        maxLength={50_000}
+                        value={value}
+                        onChange={(event) => {
+                          onChange(id, event.target.value);
+                          setTemplateStatus(null);
+                        }}
+                        placeholder={input.placeholder}
+                        spellCheck
+                        className="mt-2 w-full resize-y rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2.5 font-mono text-[10px] leading-5 text-slate-800 outline-none placeholder:text-slate-400 focus:border-rose-400 focus:bg-white focus:ring-4 focus:ring-rose-50"
+                      />
+                      <button
+                        type="button"
+                        disabled={!workflowId || !value.trim() || isSavingTemplate}
+                        onClick={async () => {
+                          setIsSavingTemplate(true);
+                          const saveError = await onSaveTemplate(step.id, value);
+                          setTemplateStatus(saveError ?? "Template saved for future runs.");
+                          setIsSavingTemplate(false);
+                        }}
+                        className="mt-2 flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-rose-500 to-orange-500 text-[10px] font-semibold text-white shadow-md shadow-rose-100 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {isSavingTemplate ? <LoaderCircle className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+                        {isSavingTemplate ? "Saving…" : "Save Document Template"}
+                      </button>
+                      {templateStatus && (
+                        <p className={`mt-2 text-[9px] leading-4 ${templateStatus.startsWith("Template saved") ? "text-emerald-600" : "text-rose-600"}`}>
+                          {templateStatus}
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <div className="relative mt-2">
+                      <input
+                        id={id}
+                        type={input.type === "secret" ? "password" : input.type === "url" ? "url" : "text"}
+                        value={value}
+                        onChange={(event) => onChange(id, event.target.value)}
+                        placeholder={input.placeholder}
+                        autoComplete={input.type === "secret" ? "off" : undefined}
+                        className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50/70 px-3 pr-9 text-[10px] text-slate-800 outline-none placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-50"
+                      />
+                      {input.type === "url" && value && <button type="button" onClick={() => void copyValue(id, value)} className="absolute right-1 top-1 flex size-8 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-800">{copied === id ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}</button>}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -409,6 +465,21 @@ export function AutomationWorkspace({
     }
   }
 
+  async function persistDocumentTemplate(
+    stepId: string,
+    template: string,
+  ): Promise<string | null> {
+    try {
+      if (!workflowId) return "Create the workflow before saving its template.";
+      const result = await saveDocumentTemplate(workflowId, stepId, template);
+      if (!result.ok) return result.error;
+      setWorkflow(result.workflow);
+      return null;
+    } catch {
+      return "We couldn’t save the document template. Please try again.";
+    }
+  }
+
   return (
     <div className="flex h-full min-w-0 overflow-hidden">
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -462,7 +533,7 @@ export function AutomationWorkspace({
         </section>
       </main>
 
-      <Inspector workflowId={workflowId} step={selectedStep} inputs={selectedInputs} values={values} onChange={(id, value) => { setValues((current) => ({ ...current, [id]: value })); setError(null); setLogs([]); }} />
+      <Inspector workflowId={workflowId} step={selectedStep} inputs={selectedInputs} values={values} onSaveTemplate={persistDocumentTemplate} onChange={(id, value) => { setValues((current) => ({ ...current, [id]: value })); setError(null); setLogs([]); }} />
     </div>
   );
 }

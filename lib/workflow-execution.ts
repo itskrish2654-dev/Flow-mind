@@ -4,6 +4,11 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
 import type { CompiledWorkflow } from "@/lib/schemas/workflow";
+import {
+  generatePdfBuffer,
+  populateDocumentTemplate,
+  type DocumentVariables,
+} from "@/lib/pdf-document";
 
 export type ExecutionLog = {
   icon: string;
@@ -12,6 +17,10 @@ export type ExecutionLog = {
 
 type WorkflowStep = CompiledWorkflow["steps"][number];
 type InputValues = Record<string, string>;
+
+export type GeneratedDocumentUpload = (input: {
+  bytes: Uint8Array;
+}) => Promise<{ url: string; filename: string }>;
 
 export type WorkflowExecutionResult = {
   logs: ExecutionLog[];
@@ -23,6 +32,8 @@ export type WorkflowExecutionResult = {
     ai_result: string | null;
     logs: ExecutionLog[];
     delivered: boolean;
+    pdf_url: string | null;
+    documents: Array<{ url: string; filename: string }>;
   };
 };
 
@@ -153,6 +164,17 @@ export function validateRequiredSetupInputs(
   for (const step of steps) {
     if (step.type === "webhook_trigger" || step.type === "http_request") continue;
 
+    if (step.type === "generate_pdf") {
+      const template = (
+        inputValues[`${step.id}-document_template`] ??
+        inputValues.document_template ??
+        step.config?.documentTemplate ??
+        ""
+      ).trim();
+      if (!template) return "Document Template is required before running a test.";
+      continue;
+    }
+
     for (const input of step.inputsRequired ?? []) {
       const value = (
         inputValues[`${step.id}-${input.key}`] ??
@@ -192,9 +214,32 @@ function safeInputData(
 
   return Object.fromEntries(
     Object.entries(inputValues).filter(
-      ([key, value]) => !secretKeys.has(key) && value.trim().length > 0,
+      ([key, value]) =>
+        !secretKeys.has(key) &&
+        !key.endsWith("document_template") &&
+        value.trim().length > 0,
     ),
   );
+}
+
+function executionVariables(
+  steps: WorkflowStep[],
+  inputValues: InputValues,
+  inputData: Record<string, string>,
+): DocumentVariables {
+  const variables: DocumentVariables = { ...inputData };
+
+  for (const step of steps) {
+    for (const input of step.inputsRequired ?? []) {
+      const value =
+        inputValues[`${step.id}-${input.key}`] ??
+        inputValues[input.key] ??
+        input.value;
+      if (value !== undefined) variables[input.key] = value;
+    }
+  }
+
+  return variables;
 }
 
 export async function executeWorkflowSteps({
@@ -203,17 +248,21 @@ export async function executeWorkflowSteps({
   steps,
   inputValues,
   mode,
+  uploadGeneratedDocument,
 }: {
   workflowId: string;
   workflowName: string;
   steps: WorkflowStep[];
   inputValues: InputValues;
   mode: "test" | "public-form";
+  uploadGeneratedDocument?: GeneratedDocumentUpload;
 }): Promise<WorkflowExecutionResult> {
   const logs: ExecutionLog[] = [];
   const inputData = safeInputData(steps, inputValues);
   let delivered = false;
   let aiResult: string | null = null;
+  const documents: Array<{ url: string; filename: string }> = [];
+  const variables = executionVariables(steps, inputValues, inputData);
 
   for (const [index, step] of steps.entries()) {
     if (step.type === "webhook_trigger") {
@@ -229,9 +278,43 @@ export async function executeWorkflowSteps({
 
     if (step.type === "ai_transform") {
       aiResult = `${step.title} processed the submission for ${workflowName}.`;
+      variables.ai_result = aiResult;
+      variables.ai_summary = aiResult;
+      variables.ai_output = aiResult;
+      variables.ai_content = aiResult;
+      variables.ai_transformed_content = aiResult;
+      variables.generated_content = aiResult;
+      variables[step.id] = aiResult;
       logs.push({
         icon: "✨",
         message: `Step ${index + 1}: FlowPilot created the automation result.`,
+      });
+      continue;
+    }
+
+    if (step.type === "generate_pdf") {
+      if (!uploadGeneratedDocument) {
+        throw new Error("Document storage is not configured for this execution.");
+      }
+
+      const template =
+        inputValues[`${step.id}-document_template`] ??
+        inputValues.document_template ??
+        step.config?.documentTemplate ??
+        "# Document\n\n{{ai_summary}}";
+      const populatedDocument = populateDocumentTemplate(template, variables);
+      const bytes = await generatePdfBuffer(populatedDocument);
+      const uploadedDocument = await uploadGeneratedDocument({ bytes });
+      const document = {
+        url: uploadedDocument.url,
+        filename: uploadedDocument.filename,
+      };
+      documents.push(document);
+      variables.pdf_url = document.url;
+      delivered = true;
+      logs.push({
+        icon: "📄",
+        message: `Step ${index + 1}: Your PDF was generated and saved successfully.`,
       });
       continue;
     }
@@ -314,6 +397,8 @@ export async function executeWorkflowSteps({
       ai_result: aiResult,
       logs,
       delivered,
+      pdf_url: documents[0]?.url ?? null,
+      documents,
     },
   };
 }

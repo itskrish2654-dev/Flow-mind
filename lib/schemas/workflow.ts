@@ -30,6 +30,7 @@ export const WorkflowStepSchema = z.object({
     "webhook_trigger",
     "ai_transform",
     "http_request",
+    "generate_pdf",
     "filter_condition",
   ]),
   title: z.string(),
@@ -40,6 +41,7 @@ export const WorkflowStepSchema = z.object({
       endpoint: z.string().optional(),
       method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional(),
       transformPrompt: z.string().optional(),
+      documentTemplate: z.string().max(50_000).optional(),
     })
     .optional(),
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, useTransition } from "react";
-import { Database, Download, LoaderCircle, RefreshCw } from "lucide-react";
+import { Database, Download, ExternalLink, FileText, LoaderCircle, RefreshCw } from "lucide-react";
 
 import {
   listWorkflowExecutions,
@@ -26,6 +26,38 @@ function executionStatus(value: Json): string {
   return typeof status === "string"
     ? status.charAt(0).toUpperCase() + status.slice(1)
     : "Processed";
+}
+
+function executionPdfUrl(value: Json): string | null {
+  if (!value || Array.isArray(value) || typeof value !== "object") return null;
+  if (typeof value.pdf_url === "string" && value.pdf_url.startsWith("https://")) {
+    return value.pdf_url;
+  }
+  if (Array.isArray(value.documents)) {
+    const document = value.documents.find(
+      (item) =>
+        item &&
+        typeof item === "object" &&
+        !Array.isArray(item) &&
+        typeof item.url === "string",
+    );
+    return document && typeof document === "object" && !Array.isArray(document)
+      ? String(document.url)
+      : null;
+  }
+  return null;
+}
+
+function executionOutputPreview(value: Json): string {
+  if (!value || Array.isArray(value) || typeof value !== "object") {
+    return compactJson(value);
+  }
+  const preview = Object.fromEntries(
+    Object.entries(value).filter(
+      ([key]) => !["pdf_url", "documents", "logs"].includes(key),
+    ),
+  );
+  return compactJson(preview);
 }
 
 function csvCell(value: string): string {
@@ -71,11 +103,12 @@ export function ExecutionsDataTable({
 
   function exportCsv() {
     const rows = [
-      ["execution_id", "created_at", "status", "input_data", "output_data"],
+      ["execution_id", "created_at", "status", "pdf_url", "input_data", "output_data"],
       ...executions.map((execution) => [
         execution.id,
         execution.createdAt,
         executionStatus(execution.outputData),
+        executionPdfUrl(execution.outputData) ?? "",
         compactJson(execution.inputData),
         compactJson(execution.outputData),
       ]),
@@ -150,7 +183,9 @@ export function ExecutionsDataTable({
                   </tr>
                 </thead>
                 <tbody>
-                  {executions.map((execution) => (
+                  {executions.map((execution) => {
+                    const pdfUrl = executionPdfUrl(execution.outputData);
+                    return (
                     <tr key={execution.id} className="border-b border-slate-100 align-top last:border-0">
                       <td className="whitespace-nowrap px-4 py-4 text-[10px] text-slate-500">
                         {executionDateFormatter.format(new Date(execution.createdAt))}
@@ -166,12 +201,25 @@ export function ExecutionsDataTable({
                         </code>
                       </td>
                       <td className="max-w-[320px] px-4 py-4">
+                        {pdfUrl && (
+                          <a
+                            href={pdfUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mb-2 inline-flex h-8 items-center gap-2 rounded-lg bg-gradient-to-br from-rose-500 to-orange-500 px-3 text-[9px] font-semibold text-white shadow-sm shadow-rose-100 transition hover:brightness-110"
+                          >
+                            <FileText className="size-3.5" />
+                            Download PDF
+                            <ExternalLink className="size-3" />
+                          </a>
+                        )}
                         <code className="block whitespace-pre-wrap break-words text-[10px] leading-5 text-slate-600">
-                          {compactJson(execution.outputData)}
+                          {executionOutputPreview(execution.outputData)}
                         </code>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

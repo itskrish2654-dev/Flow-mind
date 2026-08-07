@@ -3,6 +3,7 @@
 import { z } from "zod";
 
 import { getAuthenticatedContext } from "@/lib/auth";
+import { uploadGeneratedDocument } from "@/lib/document-storage";
 import {
   CompiledWorkflowSchema,
   WorkflowStepSchema,
@@ -77,13 +78,29 @@ export async function runTestWorkflow(
   );
   if (validationError) return { ok: false, error: validationError };
 
-  const execution = await executeWorkflowSteps({
-    workflowId: request.data.workflowId,
-    workflowName: ownedWorkflow.name,
-    steps: savedWorkflow.data.steps,
-    inputValues: request.data.inputValues,
-    mode: "test",
-  });
+  let execution: Awaited<ReturnType<typeof executeWorkflowSteps>>;
+  try {
+    execution = await executeWorkflowSteps({
+      workflowId: request.data.workflowId,
+      workflowName: ownedWorkflow.name,
+      steps: savedWorkflow.data.steps,
+      inputValues: request.data.inputValues,
+      mode: "test",
+      uploadGeneratedDocument: async ({ bytes }) =>
+        uploadGeneratedDocument(
+          auth.supabase,
+          auth.user.id,
+          request.data.workflowId,
+          bytes,
+        ),
+    });
+  } catch (error: unknown) {
+    console.error("FlowMind workflow execution failed", error);
+    return {
+      ok: false,
+      error: "The workflow could not finish generating its document.",
+    };
+  }
 
   const { data: savedExecution, error: executionError } = await auth.supabase
     .from("workflow_executions")
