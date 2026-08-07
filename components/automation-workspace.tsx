@@ -38,6 +38,8 @@ type InputValues = Record<string, string>;
 type AutomationWorkspaceProps = {
   initialWorkflow?: CompiledWorkflow | null;
   initialWorkflowId?: string | null;
+  initialWorkflowName?: string;
+  initialPrompt?: string;
 };
 
 const examples = [
@@ -56,10 +58,10 @@ const stepVisuals = {
 
 const toneClasses = {
   emerald: "border-emerald-200 bg-emerald-50 text-emerald-600",
-  indigo: "border-indigo-200 bg-indigo-50 text-indigo-600",
-  violet: "border-violet-200 bg-violet-50 text-violet-600",
-  rose: "border-rose-200 bg-rose-50 text-rose-600",
-  amber: "border-amber-200 bg-amber-50 text-amber-600",
+  indigo: "border-[#e7c75f] bg-[#fff3c8] text-[#8a6200]",
+  violet: "border-[#ded6ca] bg-[#f7f2e8] text-[#272536]",
+  rose: "border-[#ead89e] bg-[#fff7dc] text-[#9a7007]",
+  amber: "border-[#ead89e] bg-[#fff7dc] text-[#9a7007]",
 };
 
 function inputId(stepId: string, key: string) {
@@ -89,7 +91,7 @@ function WorkflowNode({ step, index, selected, ready, onSelect }: { step: Step; 
     <button
       type="button"
       onClick={onSelect}
-      className={`w-[185px] shrink-0 rounded-xl border bg-white p-3.5 text-left shadow-[0_14px_34px_rgba(15,23,42,.08)] transition hover:-translate-y-0.5 hover:border-indigo-400 ${selected ? "border-indigo-400 ring-4 ring-indigo-100" : "border-slate-200"}`}
+      className={`w-[185px] shrink-0 rounded-xl border bg-[#fffdfa] p-3.5 text-left shadow-[0_14px_34px_rgba(39,37,54,.08)] transition hover:-translate-y-0.5 hover:border-[#d7aa2f] ${selected ? "border-[#d7aa2f] ring-4 ring-[#f4e5ad]" : "border-[#e4ddd2]"}`}
     >
       <span className="flex items-center gap-2.5">
         <span className={`flex size-9 shrink-0 items-center justify-center rounded-[10px] border ${toneClasses[visual.tone]}`}><Icon className="size-4" /></span>
@@ -107,7 +109,7 @@ function EmptyCanvas() {
   return (
     <div className="flex h-full items-center justify-center px-6 text-center">
       <div>
-        <span className="mx-auto flex size-12 items-center justify-center rounded-2xl border border-indigo-500/20 bg-indigo-500/10 text-indigo-400"><Network className="size-5" /></span>
+        <span className="mx-auto flex size-12 items-center justify-center rounded-2xl border border-[#e7c75f] bg-[#fff3c8] text-[#9a7007]"><Network className="size-5" /></span>
         <h2 className="mt-4 text-[13px] font-semibold text-slate-900">Your workflow will appear here</h2>
         <p className="mx-auto mt-1.5 max-w-sm text-[11px] leading-5 text-slate-500">Describe what you want below. The generated steps will become a real, selectable workflow.</p>
       </div>
@@ -143,8 +145,8 @@ function Inspector({
 
   if (!step) {
     return (
-      <aside className="hidden w-[292px] shrink-0 flex-col border-l border-slate-200 bg-white xl:flex">
-        <div className="flex h-[65px] items-center border-b border-slate-200 px-5"><span className="text-[12px] font-semibold text-slate-900">Step setup</span></div>
+      <aside className="hidden w-[292px] shrink-0 flex-col border-l border-[#e4ddd2] bg-[#fffdfa] xl:flex">
+        <div className="flex h-[65px] items-center border-b border-[#e4ddd2] px-5"><span className="text-[12px] font-semibold text-[#272536]">Step setup</span></div>
         <div className="flex flex-1 items-center justify-center p-6 text-center"><div><Info className="mx-auto size-5 text-slate-300" /><p className="mt-3 text-[11px] text-slate-400">Build a workflow, then select a step to configure it.</p></div></div>
       </aside>
     );
@@ -154,16 +156,16 @@ function Inspector({
   const Icon = visual.icon;
   const publicFormPath = workflowId ? getPublicFormPath(workflowId) : null;
   return (
-    <aside className="hidden w-[292px] shrink-0 flex-col border-l border-slate-200 bg-white xl:flex">
-      <div className="flex min-h-[65px] items-center gap-2.5 border-b border-slate-200 px-4">
+    <aside className="hidden w-[292px] shrink-0 flex-col border-l border-[#e4ddd2] bg-[#fffdfa] xl:flex">
+      <div className="flex min-h-[65px] items-center gap-2.5 border-b border-[#e4ddd2] px-4">
         <span className={`flex size-8 shrink-0 items-center justify-center rounded-[10px] border ${toneClasses[visual.tone]}`}><Icon className="size-3.5" /></span>
         <span className="min-w-0"><span className="block text-[9px] uppercase tracking-[0.1em] text-slate-400">{visual.label}</span><span className="block truncate text-[12px] font-semibold text-slate-900">{toPlainEnglish(step.title)}</span></span>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         <p className="text-[11px] leading-5 text-slate-500">{toPlainEnglish(step.description)}</p>
-        <div className="my-4 h-px bg-slate-100" />
+        <div className="my-4 h-px bg-[#eee8de]" />
         {step.type === "webhook_trigger" && publicFormPath && (
-          <div className="mb-4 rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-violet-50 p-3.5">
+          <div className="mb-4 rounded-xl border border-[#e7c75f] bg-[#fff7dc] p-3.5">
             <p className="text-[10px] font-semibold text-slate-900">Your hosted form is ready</p>
             <p className="mt-1 text-[9px] leading-4 text-slate-500">
               Share this link to collect information and start the automation.
@@ -179,7 +181,7 @@ function Inspector({
                     );
                   }
                 }}
-                className="flex h-9 items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 text-[10px] font-semibold text-white shadow-md shadow-indigo-100 transition hover:brightness-110"
+                className="flex h-9 items-center justify-center gap-2 rounded-lg border border-[#d7aa2f] bg-[#fffdfa] text-[10px] font-semibold text-[#6f5100] transition hover:bg-[#fff0b9]"
               >
                 {copied === "public-form" ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
                 {copied === "public-form" ? "Link copied" : "Copy Public Form Link"}
@@ -188,7 +190,7 @@ function Inspector({
                 href={publicFormPath}
                 target="_blank"
                 rel="noreferrer"
-                className="flex h-9 items-center justify-center gap-2 rounded-lg border border-indigo-200 bg-white text-[10px] font-semibold text-indigo-700 transition hover:bg-indigo-50"
+                className="flex h-9 items-center justify-center gap-2 rounded-lg border border-[#e1bd4b] bg-white text-[10px] font-semibold text-[#7f5d00] transition hover:bg-[#fff3c8]"
               >
                 <ExternalLink className="size-3.5" />
                 Preview Form
@@ -197,7 +199,7 @@ function Inspector({
           </div>
         )}
         {step.type === "http_request" && workflowId && (
-          <div className="mb-4 rounded-xl border border-violet-200 bg-gradient-to-br from-violet-50 to-indigo-50 p-3.5">
+          <div className="mb-4 rounded-xl border border-[#ded6ca] bg-[#f7f2e8] p-3.5">
             <p className="text-[10px] font-semibold text-slate-900">Internal data table connected</p>
             <p className="mt-1 text-[9px] leading-4 text-slate-500">
               Every form submission and test result is saved automatically.
@@ -205,7 +207,7 @@ function Inspector({
             <button
               type="button"
               onClick={() => window.dispatchEvent(new Event("flowmind:show-executions"))}
-              className="mt-3 flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-violet-200 bg-white text-[10px] font-semibold text-violet-700 transition hover:bg-violet-50"
+              className="mt-3 flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-[#d9cfbf] bg-white text-[10px] font-semibold text-[#272536] transition hover:border-[#d7aa2f] hover:bg-[#fff7dc]"
             >
               <Database className="size-3.5" />
               View Executions &amp; Data
@@ -213,9 +215,9 @@ function Inspector({
           </div>
         )}
         {step.type === "generate_pdf" && (
-          <div className="mb-4 rounded-xl border border-rose-200 bg-gradient-to-br from-rose-50 to-orange-50 p-3.5">
+          <div className="mb-4 rounded-xl border border-[#e7c75f] bg-[#fff7dc] p-3.5">
             <p className="flex items-center gap-2 text-[10px] font-semibold text-slate-900">
-              <FileText className="size-3.5 text-rose-500" />
+              <FileText className="size-3.5 text-[#9a7007]" />
               Native PDF generator
             </p>
             <p className="mt-1 text-[9px] leading-4 text-slate-500">
@@ -248,7 +250,7 @@ function Inspector({
                         }}
                         placeholder={input.placeholder}
                         spellCheck
-                        className="mt-2 w-full resize-y rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2.5 font-mono text-[10px] leading-5 text-slate-800 outline-none placeholder:text-slate-400 focus:border-rose-400 focus:bg-white focus:ring-4 focus:ring-rose-50"
+                        className="mt-2 w-full resize-y rounded-lg border border-[#ded6ca] bg-[#f8f4ec] px-3 py-2.5 font-mono text-[10px] leading-5 text-slate-800 outline-none placeholder:text-slate-400 focus:border-[#d7aa2f] focus:bg-white focus:ring-4 focus:ring-[#f4e5ad]"
                       />
                       <button
                         type="button"
@@ -259,7 +261,7 @@ function Inspector({
                           setTemplateStatus(saveError ?? "Template saved for future runs.");
                           setIsSavingTemplate(false);
                         }}
-                        className="mt-2 flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-rose-500 to-orange-500 text-[10px] font-semibold text-white shadow-md shadow-rose-100 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="mt-2 flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-[#d7aa2f] bg-[#fffdfa] text-[10px] font-semibold text-[#6f5100] transition hover:bg-[#fff0b9] disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         {isSavingTemplate ? <LoaderCircle className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
                         {isSavingTemplate ? "Saving…" : "Save Document Template"}
@@ -279,7 +281,7 @@ function Inspector({
                         onChange={(event) => onChange(id, event.target.value)}
                         placeholder={input.placeholder}
                         autoComplete={input.type === "secret" ? "off" : undefined}
-                        className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50/70 px-3 pr-9 text-[10px] text-slate-800 outline-none placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-50"
+                        className="h-10 w-full rounded-lg border border-[#ded6ca] bg-[#f8f4ec] px-3 pr-9 text-[10px] text-slate-800 outline-none placeholder:text-slate-400 focus:border-[#d7aa2f] focus:bg-white focus:ring-4 focus:ring-[#f4e5ad]"
                       />
                       {input.type === "url" && value && <button type="button" onClick={() => void copyValue(id, value)} className="absolute right-1 top-1 flex size-8 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-800">{copied === id ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}</button>}
                     </div>
@@ -297,12 +299,14 @@ function Inspector({
 export function AutomationWorkspace({
   initialWorkflow = null,
   initialWorkflowId = null,
+  initialWorkflowName = "",
+  initialPrompt = "",
 }: AutomationWorkspaceProps) {
   const router = useRouter();
   const initialSteps = initialWorkflow
     ? orderWorkflowSteps(initialWorkflow.steps)
     : [];
-  const [prompt, setPrompt] = useState("");
+  const [prompt, setPrompt] = useState(initialPrompt);
   const [workflow, setWorkflow] = useState<CompiledWorkflow | null>(initialWorkflow);
   const [workflowId, setWorkflowId] = useState<string | null>(initialWorkflowId);
   const [selectedStepId, setSelectedStepId] = useState<string | null>(
@@ -411,7 +415,7 @@ export function AutomationWorkspace({
     setLogs([]);
     setDelivered(null);
     try {
-      const result = await compileWorkflow(description);
+      const result = await compileWorkflow(description, workflowId);
       if (!result.success) {
         setError(result.error);
         return;
@@ -425,7 +429,12 @@ export function AutomationWorkspace({
       setPrompt("");
       window.dispatchEvent(new CustomEvent("flowmind:active-workflow", { detail: result.id }));
       window.dispatchEvent(new Event("flowmind:automations-changed"));
-      router.push(`/dashboard/projects/${result.id}`);
+      const projectPath = `/dashboard/projects/${result.id}`;
+      if (window.location.pathname === projectPath) {
+        router.refresh();
+      } else {
+        router.push(projectPath);
+      }
     } catch {
       setError("We couldn’t build that automation just now. Please try again.");
     } finally {
@@ -483,23 +492,23 @@ export function AutomationWorkspace({
   return (
     <div className="flex h-full min-w-0 overflow-hidden">
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex min-h-[65px] shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4 sm:px-5">
-          <div className="flex items-center gap-2 lg:hidden"><span className="flex size-8 items-center justify-center rounded-[10px] bg-gradient-to-br from-indigo-500 to-violet-600 text-white"><Zap className="size-4 fill-current" /></span><span className="font-bold text-slate-950">FlowMind</span></div>
-          <div className="hidden min-w-0 items-center gap-2 lg:flex"><Workflow className="size-4 shrink-0 text-indigo-500" /><span className="truncate text-[13px] font-semibold text-slate-900">{workflow ? toPlainEnglish(workflow.workflowName) : "New Automation"}</span></div>
+        <header className="flex min-h-[65px] shrink-0 items-center gap-3 border-b border-[#e4ddd2] bg-[#fffdfa] px-4 sm:px-5">
+          <div className="flex items-center gap-2 lg:hidden"><span className="flex size-8 items-center justify-center rounded-[10px] border border-[#e4c35d] bg-[#fff2bd] text-[#8a6200]"><Zap className="size-4 fill-current" /></span><span className="font-bold text-[#272536]">FlowMind</span></div>
+          <div className="hidden min-w-0 items-center gap-2 lg:flex"><Workflow className="size-4 shrink-0 text-[#b18410]" /><span className="truncate text-[13px] font-semibold text-[#272536]">{workflow ? toPlainEnglish(workflow.workflowName) : initialWorkflowName ? toPlainEnglish(initialWorkflowName) : "New Automation"}</span></div>
           {workflow && <span className={`hidden rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.08em] sm:block ${workflowReady ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"}`}>{workflowReady ? "Ready" : `${steps.length - readySteps} steps need setup`}</span>}
           <div className="ml-auto flex items-center gap-2">
-            {workflow && <button type="button" onClick={resetBuilder} className="hidden h-8 rounded-lg border border-slate-200 bg-white px-3 text-[10px] text-slate-500 transition hover:bg-slate-50 hover:text-slate-900 sm:block">New</button>}
-            <button type="button" onClick={() => void runTest()} disabled={!workflow || isTesting} className="flex h-8 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 text-[10px] text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35">{isTesting ? <LoaderCircle className="size-3 animate-spin" /> : <Play className="size-3 fill-current text-emerald-500" />} Test Run</button>
+            {workflow && <button type="button" onClick={resetBuilder} className="hidden h-8 rounded-lg border border-[#ded6ca] bg-white px-3 text-[10px] text-slate-600 transition hover:border-[#d7aa2f] hover:bg-[#fff7dc] hover:text-[#272536] sm:block">New</button>}
+            <button type="button" onClick={() => void runTest()} disabled={!workflow || isTesting} className="flex h-8 items-center gap-2 rounded-lg border border-[#dcd4c8] bg-transparent px-3 text-[10px] font-semibold text-[#272536] transition hover:border-[#d7aa2f] hover:bg-[#fff8e3] disabled:cursor-not-allowed disabled:opacity-35">{isTesting ? <LoaderCircle className="size-3 animate-spin text-[#9a7007]" /> : <Play className="size-3 fill-current text-[#b18410]" />} Test Run</button>
           </div>
         </header>
 
-        <section className="workflow-canvas relative h-[44%] min-h-[260px] shrink-0 overflow-hidden border-b border-slate-200">
+        <section className="workflow-canvas relative h-[44%] min-h-[260px] shrink-0 overflow-hidden border-b border-[#e4ddd2]">
           {!workflow ? <EmptyCanvas /> : (
             <div className="h-full overflow-x-auto px-6">
               <div className="flex h-full min-w-max items-center justify-center">
                 {steps.map((step, index) => (
                   <div key={step.id} className="flex items-center">
-                    {index > 0 && <div className="relative w-12 shrink-0"><div className="h-0.5 bg-gradient-to-r from-indigo-500 to-violet-500" /><span className="absolute right-0 top-1/2 size-1.5 -translate-y-1/2 rotate-45 border-r-2 border-t-2 border-violet-400" /></div>}
+                    {index > 0 && <div className="relative w-12 shrink-0"><div className="h-0.5 bg-[#d7aa2f]" /><span className="absolute right-0 top-1/2 size-1.5 -translate-y-1/2 rotate-45 border-r-2 border-t-2 border-[#d7aa2f]" /></div>}
                     <WorkflowNode step={step} index={index} selected={selectedStep?.id === step.id} ready={stepIsReady(step)} onSelect={() => setSelectedStepId(step.id)} />
                   </div>
                 ))}
@@ -509,25 +518,25 @@ export function AutomationWorkspace({
           {workflow && <div className="absolute bottom-3 left-4 flex items-center gap-3 text-[9px] text-slate-400"><span className="flex items-center gap-1"><Network className="size-3" />{steps.length} nodes</span><span>{readySteps}/{steps.length} ready</span></div>}
         </section>
 
-        <section className="flex min-h-0 flex-1 flex-col bg-[#f8fafc]">
+        <section className="flex min-h-0 flex-1 flex-col bg-[#f8f5ef]">
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-6">
             {!workflow && !isBuilding && !error && (
-              <div className="flex items-start gap-3"><span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600"><Bot className="size-4 text-white" /></span><div className="max-w-xl rounded-2xl rounded-tl-sm border border-slate-200 bg-white px-4 py-3 text-[11px] leading-5 text-slate-600 shadow-sm">Describe an outcome below and I’ll turn it into connected, configurable steps.</div></div>
+              <div className="flex items-start gap-3"><span className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd]"><Bot className="size-4 text-[#8a6200]" /></span><div className="max-w-xl rounded-2xl rounded-tl-sm border border-[#e4ddd2] bg-[#fffdfa] px-4 py-3 text-[11px] leading-5 text-slate-600 shadow-sm">Describe an outcome below and I’ll turn it into connected, configurable steps.</div></div>
             )}
             {workflow && (
-              <div className="flex items-start gap-3"><span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600"><Sparkles className="size-4 text-white" /></span><div className="max-w-2xl rounded-2xl rounded-tl-sm border border-slate-200 bg-white px-4 py-3 shadow-sm"><p className="text-[11px] font-semibold text-slate-900">{toPlainEnglish(workflow.workflowName)}</p><p className="mt-1 text-[11px] leading-5 text-slate-500">{toPlainEnglish(workflow.summary)}</p><p className="mt-2 text-[10px] text-indigo-600">Select each node to complete its setup.</p></div></div>
+              <div className="flex items-start gap-3"><span className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd]"><Sparkles className="size-4 text-[#8a6200]" /></span><div className="max-w-2xl rounded-2xl rounded-tl-sm border border-[#e4ddd2] bg-[#fffdfa] px-4 py-3 shadow-sm"><p className="text-[11px] font-semibold text-slate-900">{toPlainEnglish(workflow.workflowName)}</p><p className="mt-1 text-[11px] leading-5 text-slate-500">{toPlainEnglish(workflow.summary)}</p><p className="mt-2 text-[10px] font-medium text-[#805b00]">Select each node to complete its setup.</p></div></div>
             )}
-            {isBuilding && <div className="flex items-center gap-3"><span className="flex size-8 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600"><Bot className="size-4 text-white" /></span><span className="flex items-center gap-2 rounded-2xl rounded-tl-sm border border-slate-200 bg-white px-4 py-3 text-[11px] text-slate-500 shadow-sm"><LoaderCircle className="size-3.5 animate-spin text-indigo-500" />Building your workflow…</span></div>}
-            {error && <div role="alert" className="mt-3 rounded-xl border border-rose-500/25 bg-rose-500/[.07] px-4 py-3 text-[11px] text-rose-300">{error}</div>}
+            {isBuilding && <div className="flex items-center gap-3"><span className="flex size-8 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd]"><Bot className="size-4 text-[#8a6200]" /></span><span className="flex items-center gap-2 rounded-2xl rounded-tl-sm border border-[#e4ddd2] bg-[#fffdfa] px-4 py-3 text-[11px] text-slate-500 shadow-sm"><LoaderCircle className="size-3.5 animate-spin text-[#b18410]" />Building your workflow…</span></div>}
+            {error && <div role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[11px] text-rose-700">{error}</div>}
             {logs.length > 0 && <div className={`mt-4 rounded-xl border p-3 ${delivered ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"}`}><p className="flex items-center gap-2 text-[11px] font-semibold text-slate-900"><CirclePlay className={`size-3.5 ${delivered ? "text-emerald-500" : "text-amber-500"}`} />Test results</p><div className="mt-2 space-y-1.5">{logs.map((log, index) => <p key={`${log.message}-${index}`} className="text-[10px] leading-4 text-slate-600">{log.icon} {log.message}</p>)}</div></div>}
           </div>
 
-          <div className="shrink-0 border-t border-slate-200 bg-white px-4 pb-4 pt-3 sm:px-5">
-            <div className="flex items-end gap-2 rounded-2xl border-[1.5px] border-slate-200 bg-white px-3 py-2.5 shadow-[0_8px_30px_rgba(15,23,42,.06)] transition focus-within:border-indigo-400 focus-within:ring-4 focus-within:ring-indigo-50">
+          <div className="shrink-0 border-t border-[#e4ddd2] bg-[#fffdfa] px-4 pb-4 pt-3 sm:px-5">
+            <div className="flex items-end gap-2 rounded-2xl border-[1.5px] border-[#ded6ca] bg-white px-3 py-2.5 shadow-[0_8px_30px_rgba(39,37,54,.06)] transition focus-within:border-[#d7aa2f] focus-within:ring-4 focus-within:ring-[#f4e5ad]">
               <textarea value={prompt} onChange={(event) => { setPrompt(event.target.value); setError(null); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void buildAutomation(); } }} rows={1} maxLength={10_000} placeholder={workflow ? "Describe a different automation to replace this one…" : "Describe the automation you want to build…"} className="max-h-28 min-h-8 flex-1 resize-none bg-transparent py-1 text-[12px] leading-5 text-slate-800 outline-none placeholder:text-slate-400" />
-              <button type="button" onClick={() => void buildAutomation()} disabled={!prompt.trim() || isBuilding} className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-[0_0_20px_rgba(99,102,241,.25)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-35">{isBuilding ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}</button>
+              <button type="button" onClick={() => void buildAutomation()} disabled={!prompt.trim() || isBuilding} aria-label={isBuilding ? "Generating workflow" : "Generate workflow"} className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-[#dfbd4c] bg-[#fff2bd] text-[#725300] transition hover:bg-[#f1c94b] hover:text-[#272536] disabled:cursor-not-allowed disabled:opacity-35">{isBuilding ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}</button>
             </div>
-            {!workflow && <div className="mt-2 flex gap-2 overflow-x-auto pb-0.5">{examples.map((example) => <button key={example} type="button" onClick={() => setPrompt(example)} className="shrink-0 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[9px] text-slate-500 transition hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600">{example}</button>)}</div>}
+            {!workflow && <div className="mt-2 flex gap-2 overflow-x-auto pb-0.5">{examples.map((example) => <button key={example} type="button" onClick={() => setPrompt(example)} className="shrink-0 rounded-lg border border-[#ded6ca] bg-[#f8f4ec] px-2.5 py-1.5 text-[9px] text-slate-500 transition hover:border-[#d7aa2f] hover:bg-[#fff7dc] hover:text-[#7f5d00]">{example}</button>)}</div>}
             <div className="mt-2 flex items-center gap-1.5 text-[9px] text-slate-400"><LockKeyhole className="size-3" />Private credentials stay in your workspace</div>
           </div>
         </section>

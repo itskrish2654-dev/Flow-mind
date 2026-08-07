@@ -188,7 +188,12 @@ export type CompileWorkflowResult =
   | { success: false; error: string };
 
 export type GetWorkflowResult =
-  | { ok: true; workflow: CompiledWorkflow }
+  | {
+      ok: true;
+      workflow: CompiledWorkflow | null;
+      name: string;
+      prompt: string;
+    }
   | { ok: false; error: string };
 
 export type SavedWorkflow = {
@@ -325,21 +330,42 @@ export async function listWorkflows(): Promise<ListWorkflowsResult> {
     return { ok: false, error: "We couldn’t load your automations." };
   }
 
-  const workflows = (data ?? []).flatMap((row) => {
+  const workflows = (data ?? []).map((row) => {
+    if (row.compiled_steps === null) {
+      return {
+        id: row.id,
+        name: row.name,
+        prompt: row.prompt,
+        workflow: null,
+      };
+    }
+
     const parsed = CompiledWorkflowSchema.safeParse(row.compiled_steps);
-    if (!parsed.success) return [];
-    return [{
+    if (!parsed.success) {
+      console.error("Saved workflow list item could not be read", {
+        workflowId: row.id,
+        issues: parsed.error.issues,
+      });
+    }
+
+    return {
       id: row.id,
       name: row.name,
       prompt: row.prompt,
-      workflow: parsed.data,
-    }];
+      workflow: parsed.success ? parsed.data : null,
+    };
   });
   return { ok: true, workflows };
 }
 
-export async function compileWorkflow(prompt: string): Promise<CompileWorkflowResult> {
+export async function compileWorkflow(
+  prompt: string,
+  existingWorkflowId: string | null = null,
+): Promise<CompileWorkflowResult> {
   const normalizedPrompt = prompt.trim();
+  const parsedExistingWorkflowId = existingWorkflowId
+    ? z.string().uuid().safeParse(existingWorkflowId)
+    : null;
 
   if (!normalizedPrompt) {
     return { success: false, error: "Describe the workflow you want to create." };
@@ -350,6 +376,10 @@ export async function compileWorkflow(prompt: string): Promise<CompileWorkflowRe
       success: false,
       error: "Workflow descriptions must be 10,000 characters or fewer.",
     };
+  }
+
+  if (parsedExistingWorkflowId && !parsedExistingWorkflowId.success) {
+    return { success: false, error: "We could not identify that draft automation." };
   }
 
   const auth = await getAuthenticatedContext();
@@ -589,16 +619,20 @@ Use null for configuration values that do not apply to a step.`,
         };
       }),
     });
-    const { data, error } = await auth.supabase
-      .from("workflows")
-      .insert({
-        user_id: auth.user.id,
-        name: compiledWorkflow.workflowName.slice(0, 80),
-        prompt: normalizedPrompt,
-        compiled_steps: compiledWorkflow,
-      })
-      .select("id")
-      .single();
+    const workflowValues = {
+      user_id: auth.user.id,
+      name: compiledWorkflow.workflowName.slice(0, 80),
+      prompt: normalizedPrompt,
+      compiled_steps: compiledWorkflow,
+    };
+    const writeQuery = parsedExistingWorkflowId?.success
+      ? auth.supabase
+          .from("workflows")
+          .update(workflowValues)
+          .eq("id", parsedExistingWorkflowId.data)
+          .eq("user_id", auth.user.id)
+      : auth.supabase.from("workflows").insert(workflowValues);
+    const { data, error } = await writeQuery.select("id").single();
 
     if (error) {
       console.error("Supabase compiled workflow insert failed", {
@@ -650,13 +684,22 @@ export async function getWorkflow(workflowId: string): Promise<GetWorkflowResult
 
   const { data, error } = await auth.supabase
     .from("workflows")
-    .select("compiled_steps")
+    .select("name, prompt, compiled_steps")
     .eq("id", parsedWorkflowId.data)
     .eq("user_id", auth.user.id)
-    .single();
+    .maybeSingle();
 
-  if (error || !data?.compiled_steps) {
+  if (error || !data) {
     return { ok: false, error: "We could not find this automation." };
+  }
+
+  if (data.compiled_steps === null) {
+    return {
+      ok: true,
+      workflow: null,
+      name: data.name,
+      prompt: data.prompt,
+    };
   }
 
   const parsedWorkflow = CompiledWorkflowSchema.safeParse(data.compiled_steps);
@@ -666,5 +709,10 @@ export async function getWorkflow(workflowId: string): Promise<GetWorkflowResult
     return { ok: false, error: "This automation needs to be created again." };
   }
 
-  return { ok: true, workflow: parsedWorkflow.data };
+  return {
+    ok: true,
+    workflow: parsedWorkflow.data,
+    name: data.name,
+    prompt: data.prompt,
+  };
 }

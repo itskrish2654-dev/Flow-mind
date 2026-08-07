@@ -119,6 +119,47 @@ button:disabled {
   background-size: 24px 24px;
 }
 
+.dashboard-theme {
+  --flowmind-ink: #272536;
+  --flowmind-yellow: #d7aa2f;
+  --flowmind-yellow-bright: #f1c94b;
+  --flowmind-canvas: #f7f4ee;
+  --flowmind-surface: #fffdfa;
+  --flowmind-border: #e4ddd2;
+  --flowmind-muted: #746d63;
+}
+
+.dashboard-theme .workflow-canvas {
+  background-color: var(--flowmind-canvas);
+  background-image: radial-gradient(circle, rgba(87, 80, 68, 0.25) 1px, transparent 1px);
+}
+
+.dashboard-theme ::selection {
+  background: #f1c94b;
+  color: #272536;
+}
+
+.dashboard-theme ::-webkit-scrollbar-thumb {
+  background: #5f5a54;
+}
+
+.dashboard-theme .text-slate-400 {
+  color: #64748b;
+}
+
+.dashboard-theme .text-slate-500 {
+  color: #566275;
+}
+
+.dashboard-theme .text-emerald-400 {
+  color: #047857;
+}
+
+.dashboard-theme .text-amber-400,
+.dashboard-theme .text-amber-600 {
+  color: #8a5c00;
+}
+
 .composer-icon {
   display: flex;
   height: 2rem;

@@ -69,9 +69,10 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
   }
 
   return (
-    <div className="w-full max-w-[420px] rounded-[28px] border border-slate-200 bg-white p-6 shadow-[0_28px_90px_-45px_rgba(30,41,59,.35)] sm:p-8">
+    <div className="relative w-full max-w-[420px] overflow-hidden rounded-[28px] border border-[#ddd5c9] bg-[#fffdfa] p-6 shadow-[0_30px_90px_-52px_rgba(72,61,35,.32)] sm:p-8">
+      <div className="absolute inset-x-0 top-0 h-1 bg-[#f1c94b]" />
       <div className="flex items-center gap-3">
-        <span className="flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-lg shadow-indigo-200"><Zap className="size-[18px] fill-current" /></span>
+        <span className="flex size-10 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd] text-[#8a6200]"><Zap className="size-[18px] fill-current" /></span>
         <div><p className="text-lg font-bold tracking-[-0.03em] text-slate-950">FlowMind</p><p className="text-[11px] text-slate-600">Your private automation workspace</p></div>
       </div>
 
@@ -82,9 +83,9 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
           aria-live="polite"
         >
           <div className="relative flex size-24 items-center justify-center">
-            <span className="absolute inset-0 animate-ping rounded-full bg-indigo-100/70" />
-            <span className="absolute inset-2 animate-pulse rounded-full bg-gradient-to-br from-indigo-100 to-violet-100" />
-            <span className="relative flex size-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-xl shadow-indigo-200">
+            <span className="absolute inset-0 animate-ping rounded-full bg-[#f7e7a9]/70" />
+            <span className="absolute inset-2 animate-pulse rounded-full bg-[#fff2bd]" />
+            <span className="relative flex size-14 items-center justify-center rounded-2xl border border-[#e4c35d] bg-[#f1c94b] text-[#272536] shadow-[0_14px_32px_-18px_rgba(138,98,0,.7)]">
               {progress === "opening" ? (
                 <CheckCircle2 className="size-7" />
               ) : (
@@ -106,14 +107,14 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
               : "Securely checking your account. This usually takes just a few seconds."}
           </p>
 
-          <div className="mt-7 h-1.5 w-56 overflow-hidden rounded-full bg-slate-100">
-            <span className="auth-progress-bar block h-full w-1/2 rounded-full bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500" />
+          <div className="mt-7 h-1.5 w-56 overflow-hidden rounded-full bg-[#eee9df]">
+            <span className="auth-progress-bar block h-full w-1/2 rounded-full bg-[#d7aa2f]" />
           </div>
           <div className="mt-5 flex items-center gap-1.5" aria-hidden="true">
             {[0, 1, 2].map((delay) => (
               <span
                 key={delay}
-                className="size-1.5 animate-bounce rounded-full bg-indigo-400"
+                className="size-1.5 animate-bounce rounded-full bg-[#c89514]"
                 style={{ animationDelay: `${delay * 140}ms` }}
               />
             ))}
@@ -121,7 +122,7 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
         </div>
       ) : (
         <>
-          <div className="mt-8 grid grid-cols-2 rounded-xl bg-slate-100 p-1">
+          <div className="mt-8 grid grid-cols-2 rounded-xl bg-[#f1ede5] p-1">
             {(["login", "signup"] as const).map((value) => (
               <button key={value} type="button" onClick={() => { setMode(value); setError(null); setNotice(null); }} className={`h-9 rounded-lg text-xs font-semibold transition ${mode === value ? "bg-white text-slate-900 shadow-sm" : "text-slate-700 hover:text-slate-950"}`}>
                 {value === "login" ? "Log in" : "Create account"}
@@ -137,17 +138,17 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
           <form onSubmit={(event) => void submit(event)} className="mt-6 space-y-4">
             <div>
               <label htmlFor="email" className="text-xs font-semibold text-slate-700">Email address</label>
-              <div className="relative mt-2"><Mail className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-slate-400" /><input id="email" name="email" type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/70 pl-10 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-50" /></div>
+              <div className="relative mt-2"><Mail className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-slate-400" /><input id="email" name="email" type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" className="h-11 w-full rounded-xl border border-[#ddd5c9] bg-[#faf8f4] pl-10 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-[#cfc5b6] focus:border-[#d7aa2f] focus:bg-white focus:ring-4 focus:ring-[#f4e5ad]" /></div>
             </div>
             <div>
               <label htmlFor="password" className="text-xs font-semibold text-slate-700">Password</label>
-              <div className="relative mt-2"><LockKeyhole className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-slate-400" /><input id="password" name="password" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} required minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/70 pl-10 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-50" /></div>
+              <div className="relative mt-2"><LockKeyhole className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-slate-400" /><input id="password" name="password" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} required minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" className="h-11 w-full rounded-xl border border-[#ddd5c9] bg-[#faf8f4] pl-10 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-[#cfc5b6] focus:border-[#d7aa2f] focus:bg-white focus:ring-4 focus:ring-[#f4e5ad]" /></div>
             </div>
 
             {error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-xs leading-5 text-rose-700">{error}</p>}
             {notice && <p role="status" className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-xs leading-5 text-emerald-700"><CheckCircle2 className="mt-0.5 size-4 shrink-0" />{notice}</p>}
 
-            <button type="submit" className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-sm font-semibold text-white shadow-lg shadow-indigo-200 transition hover:brightness-110">
+            <button type="submit" className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#dfbd4c] bg-[#f1c94b] text-sm font-semibold text-[#272536] shadow-[0_10px_28px_-18px_rgba(138,98,0,.65)] transition hover:bg-[#f4d66c]">
               <ArrowRight className="size-4" />
               {mode === "login" ? "Log in securely" : "Create account"}
             </button>

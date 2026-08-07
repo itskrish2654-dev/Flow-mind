@@ -37,11 +37,11 @@ export function ProjectWorkspace({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <nav className="flex h-11 shrink-0 items-end gap-1 border-b border-slate-200 bg-white px-3 sm:px-5" aria-label="Project views">
+      <nav className="flex h-11 shrink-0 items-end gap-1 border-b border-[#e4ddd2] bg-[#fffdfa] px-3 sm:px-5" aria-label="Project views">
         <button
           type="button"
           onClick={() => setView("builder")}
-          className={`flex h-10 items-center gap-2 border-b-2 px-3 text-[11px] font-semibold transition ${view === "builder" ? "border-indigo-500 text-indigo-700" : "border-transparent text-slate-400 hover:text-slate-700"}`}
+          className={`flex h-10 items-center gap-2 border-b-2 px-3 text-[11px] font-semibold transition ${view === "builder" ? "border-[#d7aa2f] text-[#272536]" : "border-transparent text-[#6c6458] hover:text-[#272536]"}`}
         >
           <Workflow className="size-3.5" />
           Workflow
@@ -49,12 +49,12 @@ export function ProjectWorkspace({
         <button
           type="button"
           onClick={() => setView("data")}
-          className={`flex h-10 items-center gap-2 border-b-2 px-3 text-[11px] font-semibold transition ${view === "data" ? "border-indigo-500 text-indigo-700" : "border-transparent text-slate-400 hover:text-slate-700"}`}
+          className={`flex h-10 items-center gap-2 border-b-2 px-3 text-[11px] font-semibold transition ${view === "data" ? "border-[#d7aa2f] text-[#272536]" : "border-transparent text-[#6c6458] hover:text-[#272536]"}`}
         >
           <Database className="size-3.5" />
           Executions &amp; Data
           {executionCount > 0 && (
-            <span className="rounded-full bg-indigo-50 px-1.5 py-0.5 text-[8px] text-indigo-600">
+            <span className="ml-2 rounded-full bg-[#272536] px-2 py-0.5 text-[10px] font-semibold text-[#f1c94b]">
               {executionCount}
             </span>
           )}

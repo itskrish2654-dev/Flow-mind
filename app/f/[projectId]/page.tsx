@@ -20,8 +20,9 @@ export default async function PublicFormPage({
   if (!publicWorkflow) notFound();
 
   return (
-    <main className="relative h-dvh overflow-y-auto bg-[#f4f7fb] px-4 py-8 sm:px-6 sm:py-12">
-      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_50%_8%,rgba(99,102,241,.14),transparent_36%)]" />
+    <main className="dashboard-theme relative h-dvh overflow-y-auto bg-[#f7f4ee] px-4 py-8 sm:px-6 sm:py-12">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_50%_6%,rgba(241,201,75,.2),transparent_34%)]" />
+      <div className="pointer-events-none fixed inset-0 opacity-40 [background-image:radial-gradient(circle,rgba(116,109,99,.2)_1px,transparent_1px)] [background-size:28px_28px] [mask-image:linear-gradient(to_bottom,black,transparent_48%)]" />
       <div className="relative mx-auto flex min-h-[calc(100dvh-4rem)] items-center justify-center sm:min-h-[calc(100dvh-6rem)]">
         <PublicWorkflowForm projectId={publicWorkflow.id} form={publicWorkflow.form} />
       </div>

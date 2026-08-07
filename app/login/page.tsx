@@ -21,8 +21,8 @@ export default async function LoginPage({
   if (user) redirect(nextPath);
 
   return (
-    <main className="relative flex min-h-dvh items-center justify-center overflow-y-auto bg-[#f4f7fb] px-5 py-10">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_15%,rgba(99,102,241,.12),transparent_34%)]" />
+    <main className="dashboard-theme relative flex min-h-dvh items-center justify-center overflow-y-auto bg-[#f7f4ee] px-5 py-10">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_12%,rgba(241,201,75,.2),transparent_34%)]" />
       <div className="relative"><LoginForm nextPath={nextPath} /><p className="mt-5 text-center text-[10px] text-slate-400">Protected by Supabase Auth and row-level security</p></div>
     </main>
   );

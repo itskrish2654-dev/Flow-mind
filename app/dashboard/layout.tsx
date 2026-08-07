@@ -115,19 +115,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   return (
-    <div className="flex h-dvh min-h-[640px] overflow-hidden bg-[#f4f7fb] text-slate-800">
-      <aside className="hidden w-[260px] shrink-0 flex-col border-r border-slate-200 bg-white lg:flex">
-        <Link href="/dashboard" className="flex h-[65px] items-center gap-3 border-b border-slate-200 px-5">
-          <span className="flex size-8 items-center justify-center rounded-[10px] bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-[0_0_22px_rgba(99,102,241,.22)]">
+    <div className="dashboard-theme flex h-dvh min-h-[640px] overflow-hidden bg-[#f7f4ee] text-[#34313d]">
+      <aside className="hidden w-[260px] shrink-0 flex-col border-r border-[#e4ddd2] bg-[#fffdfa] lg:flex">
+        <Link href="/dashboard" className="flex h-[65px] items-center gap-3 border-b border-[#e4ddd2] px-5">
+          <span className="flex size-8 items-center justify-center rounded-[10px] border border-[#e4c35d] bg-[#fff2bd] text-[#8a6200]">
             <Zap className="size-4 fill-current" />
           </span>
-          <span className="text-[18px] font-bold tracking-[-0.03em] text-slate-950">FlowMind</span>
-          <span className="ml-auto rounded-full bg-indigo-50 px-2 py-0.5 text-[9px] font-bold tracking-[0.12em] text-indigo-600">AI</span>
+          <span className="text-[18px] font-bold tracking-[-0.03em] text-[#272536]">FlowMind</span>
+          <span className="ml-auto rounded-full bg-[#f1c94b] px-2 py-0.5 text-[9px] font-bold tracking-[0.12em] text-[#272536]">AI</span>
         </Link>
 
         <div className="px-4 pb-4 pt-4">
-          <button type="button" onClick={newAutomation} className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-[13px] font-semibold text-white shadow-[0_8px_24px_rgba(99,102,241,.18)] transition hover:brightness-110">
-            <Plus className="size-3.5" /> New Automation
+          <button type="button" onClick={newAutomation} className="group flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-[#dcd4c8] bg-transparent text-[13px] font-semibold text-[#272536] transition hover:border-[#d7aa2f] hover:bg-[#fff8e3]">
+            <span className="flex size-5 items-center justify-center rounded-md bg-[#fff0b9] text-[#8a6200] transition group-hover:bg-[#f1c94b] group-hover:text-[#272536]"><Plus className="size-3.5" /></span> New Automation
           </button>
         </div>
 
@@ -140,8 +140,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {isLoading ? (
             <div className="flex items-center gap-2 px-3 py-4 text-[10px] text-slate-400"><LoaderCircle className="size-3.5 animate-spin" />Loading automations…</div>
           ) : automations.length === 0 ? (
-            <div className="mx-1 rounded-xl border border-dashed border-slate-200 bg-slate-50/70 px-4 py-5 text-center">
-              <Workflow className="mx-auto size-4 text-slate-300" />
+            <div className="mx-1 rounded-xl border border-dashed border-[#ded6ca] bg-[#f8f4ec] px-4 py-5 text-center">
+              <Workflow className="mx-auto size-4 text-[#b9aa8b]" />
               <p className="mt-2 text-[10px] leading-4 text-slate-400">Your saved automations will appear here.</p>
             </div>
           ) : (
@@ -149,14 +149,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               {automations.map((automation) => {
                 const active = automation.id === activeId || pathname === `/dashboard/projects/${automation.id}`;
                 return (
-                  <div key={automation.id} className={`group flex items-center rounded-xl border-l-2 transition ${active ? "border-indigo-500 bg-indigo-50" : "border-transparent hover:bg-slate-50"}`}>
+                  <div key={automation.id} className={`group flex items-center rounded-xl border-l-2 transition ${active ? "border-[#d7aa2f] bg-[#fff7dc]" : "border-transparent hover:bg-[#f8f4ec]"}`}>
                     <Link href={`/dashboard/projects/${automation.id}`} onClick={() => setActiveId(automation.id)} className="flex min-w-0 flex-1 items-start gap-2.5 px-3 py-2.5 text-left">
-                      <span className={`mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg ${automation.status === "Working" ? "bg-emerald-50 text-emerald-600" : automation.status === "Ready" ? "bg-indigo-50 text-indigo-600" : "bg-amber-50 text-amber-600"}`}>
+                      <span className={`mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg ${automation.status === "Working" ? "bg-emerald-50 text-emerald-600" : automation.status === "Ready" ? "bg-[#fff0b9] text-[#956b00]" : "bg-amber-50 text-amber-600"}`}>
                         {automation.status === "Working" ? <CheckCircle2 className="size-3.5" /> : automation.status === "Ready" ? <Zap className="size-3.5" /> : <Clock3 className="size-3.5" />}
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className={`block truncate text-[11px] font-medium ${active ? "text-indigo-800" : "text-slate-700"}`}>{automation.name}</span>
-                        <span className={`mt-0.5 block text-[9px] font-medium ${automation.status === "Working" ? "text-emerald-600" : automation.status === "Ready" ? "text-indigo-500" : "text-amber-600"}`}>{automation.status}</span>
+                        <span className={`block truncate text-[11px] font-medium ${active ? "text-[#272536]" : "text-slate-700"}`}>{automation.name}</span>
+                        <span className={`mt-0.5 block text-[9px] font-medium ${automation.status === "Working" ? "text-emerald-600" : automation.status === "Ready" ? "text-[#9a7007]" : "text-amber-600"}`}>{automation.status}</span>
                       </span>
                     </Link>
                     <button type="button" onClick={() => { setDeleteTarget(automation); setDeleteError(null); }} aria-label={`Delete ${automation.name}`} className="mr-2 flex size-7 shrink-0 items-center justify-center rounded-lg text-slate-300 opacity-0 transition hover:bg-rose-50 hover:text-rose-600 focus:opacity-100 group-hover:opacity-100">
@@ -169,9 +169,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           )}
         </div>
 
-        <div className="border-t border-slate-200 px-3 py-3">
+        <div className="border-t border-[#e4ddd2] px-3 py-3">
           <div className="flex items-center gap-3 rounded-xl px-3 py-2.5">
-            <span className="flex size-8 items-center justify-center rounded-xl bg-slate-100 text-slate-400"><CircleHelp className="size-4" /></span>
+            <span className="flex size-8 items-center justify-center rounded-xl bg-[#f4ead0] text-[#9a7007]"><CircleHelp className="size-4" /></span>
             <span className="min-w-0 flex-1"><span className="block text-[11px] font-medium text-slate-700">Private workspace</span><span className="block text-[10px] text-slate-400">Drafts save automatically</span></span>
             <form action={signOut}>
               <button type="submit" aria-label="Log out" className="flex size-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-800"><LogOut className="size-3.5" /></button>
@@ -184,7 +184,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/25 p-4 backdrop-blur-[2px]" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !isDeleting) setDeleteTarget(null); }}>
-          <div role="dialog" aria-modal="true" aria-labelledby="delete-automation-title" className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_24px_80px_rgba(15,23,42,.2)]">
+          <div role="dialog" aria-modal="true" aria-labelledby="delete-automation-title" className="w-full max-w-sm rounded-2xl border border-[#e4ddd2] bg-[#fffdfa] p-5 shadow-[0_24px_80px_rgba(39,37,54,.2)]">
             <div className="flex items-start gap-3">
               <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-rose-600"><Trash2 className="size-[18px]" /></span>
               <div className="min-w-0 flex-1">
@@ -195,7 +195,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
             {deleteError && <p role="alert" className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-[10px] text-rose-700">{deleteError}</p>}
             <div className="mt-5 flex justify-end gap-2">
-              <button type="button" onClick={() => setDeleteTarget(null)} disabled={isDeleting} className="h-9 rounded-lg border border-slate-200 bg-white px-4 text-[11px] font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-40">Cancel</button>
+              <button type="button" onClick={() => setDeleteTarget(null)} disabled={isDeleting} className="h-9 rounded-lg border border-[#ded6ca] bg-white px-4 text-[11px] font-medium text-slate-600 transition hover:bg-[#f8f4ec] disabled:opacity-40">Cancel</button>
               <button type="button" onClick={() => void confirmDelete()} disabled={isDeleting} className="flex h-9 items-center gap-2 rounded-lg bg-rose-600 px-4 text-[11px] font-semibold text-white transition hover:bg-rose-700 disabled:opacity-60">{isDeleting && <LoaderCircle className="size-3.5 animate-spin" />}{isDeleting ? "Deleting…" : "Delete automation"}</button>
             </div>
           </div>

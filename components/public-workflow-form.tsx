@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { CheckCircle2, LoaderCircle, Send, Zap } from "lucide-react";
+import { CheckCircle2, LoaderCircle, LockKeyhole, Send, Zap } from "lucide-react";
 
 import { submitPublicWorkflow } from "@/app/f/[projectId]/actions";
 import type { PublicFormSubmissionState } from "@/lib/public-form";
@@ -21,7 +21,12 @@ export function PublicWorkflowForm({
 
   if (state.status === "success") {
     return (
-      <section className="w-full max-w-xl rounded-[30px] border border-emerald-200 bg-white p-8 text-center shadow-[0_28px_90px_-45px_rgba(30,41,59,.35)] sm:p-12">
+      <section className="relative w-full max-w-xl overflow-hidden rounded-[28px] border border-[#ddd5c9] bg-[#fffdfa] p-8 text-center shadow-[0_30px_90px_-52px_rgba(72,61,35,.32)] sm:p-12">
+        <div className="absolute inset-x-0 top-0 h-1 bg-[#f1c94b]" />
+        <div className="mb-8 flex items-center justify-center gap-2 text-[11px] font-semibold text-[#6f685d]">
+          <span className="flex size-6 items-center justify-center rounded-lg border border-[#e4c35d] bg-[#fff2bd] text-[#8a6200]"><Zap className="size-3.5 fill-current" /></span>
+          FlowMind secure automation
+        </div>
         <span className="mx-auto flex size-16 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600">
           <CheckCircle2 className="size-8" />
         </span>
@@ -31,24 +36,30 @@ export function PublicWorkflowForm({
         <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-slate-500">
           Your submission has been processed.
         </p>
-        <p className="mt-8 text-[11px] text-slate-400">Powered by FlowMind</p>
+        <p className="mt-8 text-[11px] text-slate-500">You can safely close this page.</p>
       </section>
     );
   }
 
   return (
-    <section className="w-full max-w-xl rounded-[30px] border border-slate-200 bg-white p-6 shadow-[0_28px_90px_-45px_rgba(30,41,59,.35)] sm:p-9">
-      <div className="flex items-center gap-3">
-        <span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-lg shadow-indigo-200">
-          <Zap className="size-5 fill-current" />
-        </span>
-        <div>
-          <p className="text-lg font-bold tracking-[-0.03em] text-slate-950">FlowMind</p>
-          <p className="text-[11px] text-slate-500">Secure hosted form</p>
+    <section className="relative w-full max-w-xl overflow-hidden rounded-[28px] border border-[#ddd5c9] bg-[#fffdfa] p-6 shadow-[0_30px_90px_-52px_rgba(72,61,35,.32)] sm:p-9">
+      <div className="absolute inset-x-0 top-0 h-1 bg-[#f1c94b]" />
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd] text-[#8a6200]">
+            <Zap className="size-[18px] fill-current" />
+          </span>
+          <div>
+            <p className="text-base font-bold tracking-[-0.03em] text-[#272536]">FlowMind</p>
+            <p className="text-[10px] text-slate-500">Hosted automation form</p>
+          </div>
         </div>
+        <span className="hidden items-center gap-1.5 rounded-full border border-[#e3dbcf] bg-[#faf7f1] px-2.5 py-1 text-[9px] font-semibold text-[#6f685d] sm:flex">
+          <LockKeyhole className="size-3 text-[#9a7007]" /> Private &amp; secure
+        </span>
       </div>
 
-      <div className="mt-8">
+      <div className="mt-7 border-t border-[#ece6dc] pt-7">
         <h1 className="text-2xl font-semibold tracking-[-0.035em] text-slate-950 sm:text-3xl">
           {form.title}
         </h1>
@@ -75,7 +86,7 @@ export function PublicWorkflowForm({
                 maxLength={5_000}
                 rows={5}
                 placeholder={field.placeholder}
-                className="mt-2 min-h-28 w-full resize-y rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 py-3 text-sm leading-6 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-50"
+                className="mt-2 min-h-28 w-full resize-y rounded-xl border border-[#ddd5c9] bg-[#faf8f4] px-3.5 py-3 text-sm leading-6 text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-[#cfc5b6] focus:border-[#d7aa2f] focus:bg-white focus:ring-4 focus:ring-[#f4e5ad]"
               />
             ) : (
               <input
@@ -86,7 +97,7 @@ export function PublicWorkflowForm({
                 maxLength={5_000}
                 autoComplete={field.type === "email" ? "email" : field.key === "name" ? "name" : undefined}
                 placeholder={field.placeholder}
-                className="mt-2 h-12 w-full rounded-xl border border-slate-200 bg-slate-50/70 px-3.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-50"
+                className="mt-2 h-12 w-full rounded-xl border border-[#ddd5c9] bg-[#faf8f4] px-3.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-[#cfc5b6] focus:border-[#d7aa2f] focus:bg-white focus:ring-4 focus:ring-[#f4e5ad]"
               />
             )}
           </div>
@@ -101,11 +112,14 @@ export function PublicWorkflowForm({
         <button
           type="submit"
           disabled={pending}
-          className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 text-sm font-semibold text-white shadow-lg shadow-indigo-200 transition hover:brightness-110 disabled:cursor-wait disabled:opacity-70"
+          className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-[#dfbd4c] bg-[#f1c94b] text-sm font-semibold text-[#272536] shadow-[0_10px_28px_-18px_rgba(138,98,0,.65)] transition hover:bg-[#f4d66c] disabled:cursor-wait disabled:opacity-70"
         >
           {pending ? <LoaderCircle className="size-4 animate-spin" /> : <Send className="size-4" />}
-          {pending ? "Processing your submission…" : "Submit"}
+          {pending ? "Processing your submission…" : "Submit response"}
         </button>
+        <p className="flex items-center justify-center gap-1.5 text-center text-[10px] text-slate-500">
+          <LockKeyhole className="size-3 text-[#9a7007]" /> Sent securely to this automation
+        </p>
       </form>
     </section>
   );
