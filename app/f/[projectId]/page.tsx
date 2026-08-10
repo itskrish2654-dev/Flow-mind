@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { PublicWorkflowForm } from "@/components/public-workflow-form";
+import { createPublicFormTrace } from "@/lib/public-form-trace";
 import { getPublicExecutableWorkflow } from "@/lib/public-workflow";
 
 export const metadata: Metadata = {
@@ -15,9 +16,18 @@ export default async function PublicFormPage({
 }: {
   params: Promise<{ projectId: string }>;
 }) {
+  const renderId = crypto.randomUUID();
+  const trace = createPublicFormTrace(renderId);
+  trace("PAGE_RENDER_START");
   const { projectId } = await params;
-  const publicWorkflow = await getPublicExecutableWorkflow(projectId);
+  trace("PAGE_PARAMS_END");
+  trace("PAGE_WORKFLOW_LOAD_START");
+  const publicWorkflow = await getPublicExecutableWorkflow(projectId, trace);
+  trace("PAGE_WORKFLOW_LOAD_END", { found: Boolean(publicWorkflow) });
   if (!publicWorkflow) notFound();
+  trace("PAGE_RENDER_VALUE_READY", {
+    capabilityAvailable: !publicWorkflow.capabilityError,
+  });
 
   return (
     <main className="dashboard-theme relative h-dvh overflow-y-auto bg-[#f7f4ee] px-4 py-8 sm:px-6 sm:py-12">
