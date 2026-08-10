@@ -19,7 +19,7 @@ import {
   LockKeyhole,
   Network,
   Play,
-  Save,
+  RotateCcw,
   Send,
   Sparkles,
   Workflow,
@@ -28,12 +28,18 @@ import {
 
 import { runTestWorkflow, type TestExecutionLog } from "@/app/actions/execute";
 import {
+  customizeDataTableWithAi,
+  customizeDocumentWithAi,
+  customizeFormWithAi,
+} from "@/app/actions/customize";
+import {
   compileWorkflow,
   saveDocumentTemplate,
   saveWorkflowCustomization,
 } from "@/app/actions/workflow";
 import { DataTableBuilder } from "@/components/data-table-builder";
 import { FormBuilder } from "@/components/form-builder";
+import { AiCustomizationBar } from "@/components/ai-customization-bar";
 import { getPublicFormPath, getPublicFormUrl } from "@/lib/public-form";
 import type {
   CompiledWorkflow,
@@ -140,9 +146,12 @@ function Inspector({
   inputs,
   values,
   onChange,
-  onSaveTemplate,
   onSavePublicForm,
   onSaveDataTable,
+  onAiCustomizeForm,
+  onAiCustomizeDataTable,
+  onAiCustomizeDocument,
+  onRestoreDocument,
 }: {
   workflow: CompiledWorkflow | null;
   step: Step | null;
@@ -150,13 +159,30 @@ function Inspector({
   inputs: StepInput[];
   values: InputValues;
   onChange: (id: string, value: string) => void;
-  onSaveTemplate: (stepId: string, template: string) => Promise<string | null>;
   onSavePublicForm: (form: PublicFormDefinition) => Promise<string | null>;
   onSaveDataTable: (definition: DataTableDefinition) => Promise<string | null>;
+  onAiCustomizeForm: (instruction: string) => Promise<{
+    error?: string;
+    message?: string;
+    form?: PublicFormDefinition;
+  }>;
+  onAiCustomizeDataTable: (instruction: string) => Promise<{
+    error?: string;
+    message?: string;
+    definition?: DataTableDefinition;
+  }>;
+  onAiCustomizeDocument: (stepId: string, instruction: string) => Promise<{
+    error?: string;
+    message?: string;
+  }>;
+  onRestoreDocument: (stepId: string, template: string) => Promise<string | null>;
 }) {
   const [copied, setCopied] = useState<string | null>(null);
-  const [templateStatus, setTemplateStatus] = useState<string | null>(null);
-  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
+  const [documentUndo, setDocumentUndo] = useState<{
+    stepId: string;
+    template: string;
+  } | null>(null);
+  const [undoingDocument, setUndoingDocument] = useState(false);
 
   async function copyValue(id: string, value: string) {
     if (!value) return;
@@ -220,7 +246,11 @@ function Inspector({
                 Preview Form
               </a>
               {publicForm && (
-                <FormBuilder form={publicForm} onSave={onSavePublicForm} />
+                <FormBuilder
+                  form={publicForm}
+                  onSave={onSavePublicForm}
+                  onAiCustomize={onAiCustomizeForm}
+                />
               )}
             </div>
           </div>
@@ -244,6 +274,7 @@ function Inspector({
                 form={publicForm}
                 definition={getDataTableDefinition(workflow)}
                 onSave={onSaveDataTable}
+                onAiCustomize={onAiCustomizeDataTable}
               />
             )}
           </div>
@@ -255,13 +286,14 @@ function Inspector({
               Native PDF generator
             </p>
             <p className="mt-1 text-[9px] leading-4 text-slate-500">
-              Use variables from the form or earlier steps with double curly braces, such as {"{{trigger.name}}"} and {"{{ai.summary}}"}.
+              Describe the document you want and FlowMind will connect the right form answers and AI results automatically.
             </p>
             {publicForm && workflow && (
               <DataTableBuilder
                 form={publicForm}
                 definition={getDataTableDefinition(workflow)}
                 onSave={onSaveDataTable}
+                onAiCustomize={onAiCustomizeDataTable}
               />
             )}
           </div>
@@ -276,69 +308,55 @@ function Inspector({
               const value = values[id] ?? input.value ?? "";
               return (
                 <div key={id}>
-                  <label htmlFor={id} className="block text-[10px] font-medium leading-4 text-slate-700">{toPlainEnglish(input.label)}</label>
-                  {input.helpText && <p className="mt-1 text-[9px] leading-4 text-slate-400">{toPlainEnglish(input.helpText)}</p>}
+                  {!(step.type === "generate_pdf" && input.key === "document_template") && (
+                    <>
+                      <label htmlFor={id} className="block text-[10px] font-medium leading-4 text-slate-700">{toPlainEnglish(input.label)}</label>
+                      {input.helpText && <p className="mt-1 text-[9px] leading-4 text-slate-400">{toPlainEnglish(input.helpText)}</p>}
+                    </>
+                  )}
                   {step.type === "generate_pdf" && input.key === "document_template" ? (
                     <>
-                      <div className="mt-2 rounded-lg border border-[#e4ddd2] bg-[#fffdfa] p-2.5">
-                        <p className="text-[9px] font-semibold text-slate-700">Insert a variable</p>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {documentVariables.map((variable) => (
-                            <button
-                              key={variable.token}
-                              type="button"
-                              title={`${variable.group}: ${variable.label}`}
-                              onClick={() =>
-                                onChange(
-                                  id,
-                                  `${value}${value && !/\s$/.test(value) ? " " : ""}${variable.token}`,
-                                )
-                              }
-                              className="rounded-md border border-[#e7c75f] bg-[#fff7dc] px-2 py-1 font-mono text-[8px] text-[#7f5d00] transition hover:bg-[#fff0b9]"
-                            >
-                              {variable.token}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <textarea
-                        id={id}
-                        rows={13}
-                        maxLength={50_000}
-                        value={value}
-                        onChange={(event) => {
-                          onChange(id, event.target.value);
-                          setTemplateStatus(null);
+                      <AiCustomizationBar
+                        question="What should this document look like?"
+                        placeholder="For example: Create a friendly proposal with the client's name, project details, AI recommendation, timeline, and a clear next step."
+                        suggestions={[
+                          "Make it a professional proposal",
+                          "Add an executive summary and next steps",
+                          "Make the tone warmer and more concise",
+                        ]}
+                        onApply={async (instruction) => {
+                          const result = await onAiCustomizeDocument(step.id, instruction);
+                          if (!result.error) {
+                            setDocumentUndo({ stepId: step.id, template: value });
+                          }
+                          return result;
                         }}
-                        placeholder={input.placeholder}
-                        spellCheck
-                        className="mt-2 w-full resize-y rounded-lg border border-[#ded6ca] bg-[#f8f4ec] px-3 py-2.5 font-mono text-[10px] leading-5 text-slate-800 outline-none placeholder:text-slate-400 focus:border-[#d7aa2f] focus:bg-white focus:ring-4 focus:ring-[#f4e5ad]"
                       />
+                      {documentUndo?.stepId === step.id && (
+                        <button
+                          type="button"
+                          disabled={undoingDocument}
+                          onClick={async () => {
+                            setUndoingDocument(true);
+                            const restoreError = await onRestoreDocument(
+                              step.id,
+                              documentUndo.template,
+                            );
+                            setUndoingDocument(false);
+                            if (!restoreError) setDocumentUndo(null);
+                          }}
+                          className="mt-2 flex h-8 items-center gap-1.5 rounded-lg border border-[#ded6ca] px-2.5 text-[9px] font-semibold text-slate-600 hover:bg-[#f8f4ec] disabled:opacity-50"
+                        >
+                          {undoingDocument ? <LoaderCircle className="size-3 animate-spin" /> : <RotateCcw className="size-3" />}
+                          Undo AI change
+                        </button>
+                      )}
                       <div className="mt-2 rounded-lg border border-[#ded6ca] bg-white p-3">
-                        <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-400">Document preview</p>
+                        <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-400">Current document preview</p>
                         <div className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-[9px] leading-4 text-slate-600">
                           {previewDocumentTemplate(value, documentVariables) || "Your populated document will appear here."}
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        disabled={!workflowId || !value.trim() || isSavingTemplate}
-                        onClick={async () => {
-                          setIsSavingTemplate(true);
-                          const saveError = await onSaveTemplate(step.id, value);
-                          setTemplateStatus(saveError ?? "Template saved for future runs.");
-                          setIsSavingTemplate(false);
-                        }}
-                        className="mt-2 flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-[#d7aa2f] bg-[#fffdfa] text-[10px] font-semibold text-[#6f5100] transition hover:bg-[#fff0b9] disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        {isSavingTemplate ? <LoaderCircle className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                        {isSavingTemplate ? "Saving…" : "Save Document Template"}
-                      </button>
-                      {templateStatus && (
-                        <p className={`mt-2 text-[9px] leading-4 ${templateStatus.startsWith("Template saved") ? "text-emerald-600" : "text-rose-600"}`}>
-                          {templateStatus}
-                        </p>
-                      )}
                     </>
                   ) : (
                     <div className="relative mt-2">
@@ -542,21 +560,6 @@ export function AutomationWorkspace({
     }
   }
 
-  async function persistDocumentTemplate(
-    stepId: string,
-    template: string,
-  ): Promise<string | null> {
-    try {
-      if (!workflowId) return "Create the workflow before saving its template.";
-      const result = await saveDocumentTemplate(workflowId, stepId, template);
-      if (!result.ok) return result.error;
-      setWorkflow(result.workflow);
-      return null;
-    } catch {
-      return "We couldn’t save the document template. Please try again.";
-    }
-  }
-
   async function persistPublicForm(
     publicForm: PublicFormDefinition,
   ): Promise<string | null> {
@@ -589,6 +592,70 @@ export function AutomationWorkspace({
     } catch {
       return "We couldn't save the data columns. Please try again.";
     }
+  }
+
+  async function restoreDocumentTemplate(
+    stepId: string,
+    template: string,
+  ): Promise<string | null> {
+    if (!workflowId) return "Create the workflow before changing its document.";
+    const result = await saveDocumentTemplate(workflowId, stepId, template);
+    if (!result.ok) return result.error;
+    adoptCustomizedWorkflow(result.workflow);
+    setValues((current) => ({
+      ...current,
+      [inputId(stepId, "document_template")]: template,
+    }));
+    return null;
+  }
+
+  function adoptCustomizedWorkflow(customizedWorkflow: CompiledWorkflow) {
+    setWorkflow(customizedWorkflow);
+    window.dispatchEvent(
+      new CustomEvent("flowmind:workflow-customized", {
+        detail: customizedWorkflow,
+      }),
+    );
+  }
+
+  async function aiCustomizeForm(instruction: string) {
+    if (!workflowId) return { error: "Create the workflow before customizing its form." };
+    const result = await customizeFormWithAi(workflowId, instruction);
+    if (!result.ok) return { error: result.error };
+    adoptCustomizedWorkflow(result.workflow);
+    return {
+      message: result.message,
+      form: result.workflow.publicForm,
+    };
+  }
+
+  async function aiCustomizeDataTable(instruction: string) {
+    if (!workflowId) return { error: "Create the workflow before customizing its data table." };
+    const result = await customizeDataTableWithAi(workflowId, instruction);
+    if (!result.ok) return { error: result.error };
+    adoptCustomizedWorkflow(result.workflow);
+    return {
+      message: result.message,
+      definition: getDataTableDefinition(result.workflow),
+    };
+  }
+
+  async function aiCustomizeDocument(stepId: string, instruction: string) {
+    if (!workflowId) return { error: "Create the workflow before customizing its document." };
+    const result = await customizeDocumentWithAi(workflowId, stepId, instruction);
+    if (!result.ok) return { error: result.error };
+    adoptCustomizedWorkflow(result.workflow);
+    const documentStep = result.workflow.steps.find(
+      (step) => step.id === stepId && step.type === "generate_pdf",
+    );
+    const template = documentStep?.config?.documentTemplate;
+    if (template) {
+      setValues((current) => ({
+        ...current,
+        [inputId(stepId, "document_template")]: template,
+      }));
+    }
+    return { message: result.message };
   }
 
   return (
@@ -650,9 +717,12 @@ export function AutomationWorkspace({
         step={selectedStep}
         inputs={selectedInputs}
         values={values}
-        onSaveTemplate={persistDocumentTemplate}
         onSavePublicForm={persistPublicForm}
         onSaveDataTable={persistDataTable}
+        onAiCustomizeForm={aiCustomizeForm}
+        onAiCustomizeDataTable={aiCustomizeDataTable}
+        onAiCustomizeDocument={aiCustomizeDocument}
+        onRestoreDocument={restoreDocumentTemplate}
         onChange={(id, value) => {
           setValues((current) => ({ ...current, [id]: value }));
           setError(null);
