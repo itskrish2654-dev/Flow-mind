@@ -16,6 +16,8 @@ import {
   Filter,
   Info,
   LoaderCircle,
+  Globe2,
+  GlobeLock,
   LockKeyhole,
   Network,
   Play,
@@ -28,6 +30,11 @@ import {
 
 import { runTestWorkflow, type TestExecutionLog } from "@/app/actions/execute";
 import {
+  getWorkflowCredentialMetadata,
+  revokeWorkflowCredential,
+  saveWorkflowCredential,
+} from "@/app/actions/credentials";
+import {
   customizeDataTableWithAi,
   customizeDocumentWithAi,
   customizeFormWithAi,
@@ -35,12 +42,15 @@ import {
 import {
   compileWorkflow,
   saveDocumentTemplate,
+  saveWebhookEndpoint,
   saveWorkflowCustomization,
+  setWorkflowPublication,
 } from "@/app/actions/workflow";
 import { DataTableBuilder } from "@/components/data-table-builder";
 import { FormBuilder } from "@/components/form-builder";
 import { AiCustomizationBar } from "@/components/ai-customization-bar";
 import { getPublicFormPath, getPublicFormUrl } from "@/lib/public-form";
+import { isSensitiveFieldName } from "@/lib/security/redaction";
 import type {
   CompiledWorkflow,
   DataTableDefinition,
@@ -63,6 +73,7 @@ type AutomationWorkspaceProps = {
   initialWorkflowId?: string | null;
   initialWorkflowName?: string;
   initialPrompt?: string;
+  initialPublished?: boolean;
 };
 
 const examples = [
@@ -108,6 +119,41 @@ function defaultInputValues(
       ]),
     ),
   );
+}
+
+function browserSafeValues(
+  workflow: CompiledWorkflow,
+  workflowId: string,
+  values: InputValues,
+): InputValues {
+  const secretIds = new Set(
+    workflow.steps.flatMap((step) =>
+      getStepInputs(step, workflowId)
+        .filter((input) => input.type === "secret")
+        .map((input) => inputId(step.id, input.key)),
+    ),
+  );
+  return Object.fromEntries(
+    Object.entries(values).filter(
+      ([key]) => !secretIds.has(key) && !isSensitiveFieldName(key),
+    ),
+  );
+}
+
+function cleanLegacySensitiveValues(): void {
+  for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+    const storageKey = localStorage.key(index);
+    if (!storageKey?.startsWith("flowmind:values:")) continue;
+    try {
+      const value = JSON.parse(localStorage.getItem(storageKey) ?? "{}") as InputValues;
+      const cleaned = Object.fromEntries(
+        Object.entries(value).filter(([key]) => !isSensitiveFieldName(key)),
+      );
+      localStorage.setItem(storageKey, JSON.stringify(cleaned));
+    } catch {
+      localStorage.removeItem(storageKey);
+    }
+  }
 }
 
 function WorkflowNode({ step, index, selected, ready, onSelect }: { step: Step; index: number; selected: boolean; ready: boolean; onSelect: () => void }) {
@@ -162,6 +208,9 @@ function Inspector({
   onAiCustomizeDataTable,
   onAiCustomizeDocument,
   onRestoreDocument,
+  published,
+  onPublicationChange,
+  onSaveWebhook,
 }: {
   workflow: CompiledWorkflow | null;
   step: Step | null;
@@ -186,6 +235,9 @@ function Inspector({
     message?: string;
   }>;
   onRestoreDocument: (stepId: string, template: string) => Promise<string | null>;
+  published: boolean;
+  onPublicationChange: (publish: boolean) => Promise<string | null>;
+  onSaveWebhook: (stepId: string, endpoint: string) => Promise<string | null>;
 }) {
   const [copied, setCopied] = useState<string | null>(null);
   const [documentUndo, setDocumentUndo] = useState<{
@@ -193,6 +245,27 @@ function Inspector({
     template: string;
   } | null>(null);
   const [undoingDocument, setUndoingDocument] = useState(false);
+  const [configuredSecrets, setConfiguredSecrets] = useState<Set<string>>(new Set());
+  const [credentialBusy, setCredentialBusy] = useState<string | null>(null);
+  const [credentialError, setCredentialError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!workflowId) return;
+    let active = true;
+    void getWorkflowCredentialMetadata(workflowId).then((result) => {
+      if (!active || !result.ok) return;
+      setConfiguredSecrets(
+        new Set(
+          result.credentials.map(
+            (credential) => `${credential.connectorId}:${credential.credentialKey}`,
+          ),
+        ),
+      );
+    });
+    return () => {
+      active = false;
+    };
+  }, [workflowId]);
 
   async function copyValue(id: string, value: string) {
     if (!value) return;
@@ -232,35 +305,41 @@ function Inspector({
         <div className="my-4 h-px bg-[#eee8de]" />
         {(step.type === "public_form_trigger" || step.type === "webhook_trigger") && publicFormPath && (
           <div className="mb-4 rounded-xl border border-[#e7c75f] bg-[#fff7dc] p-3.5">
-            <p className="text-[10px] font-semibold text-slate-900">Your hosted form is ready</p>
+            <p className="flex items-center gap-2 text-[10px] font-semibold text-slate-900">
+              {published ? <Globe2 className="size-3.5 text-emerald-600" /> : <GlobeLock className="size-3.5 text-[#9a7007]" />}
+              {published ? "Hosted form is public" : "Hosted form is private"}
+            </p>
             <p className="mt-1 text-[9px] leading-4 text-slate-500">
-              Share this link to collect information and start the automation.
+              {published
+                ? "Anyone with the link can submit. Unpublish to revoke access immediately."
+                : "Customize it, then publish when you're ready to accept submissions."}
             </p>
             <div className="mt-3 grid gap-2">
+              {published && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (workflowId) void copyValue("public-form", getPublicFormUrl(workflowId, window.location.origin));
+                    }}
+                    className="flex h-9 items-center justify-center gap-2 rounded-lg border border-[#d7aa2f] bg-[#fffdfa] text-[10px] font-semibold text-[#6f5100] transition hover:bg-[#fff0b9]"
+                  >
+                    {copied === "public-form" ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+                    {copied === "public-form" ? "Link copied" : "Copy Public Form Link"}
+                  </button>
+                  <a href={publicFormPath} target="_blank" rel="noreferrer" className="flex h-9 items-center justify-center gap-2 rounded-lg border border-[#e1bd4b] bg-white text-[10px] font-semibold text-[#7f5d00] transition hover:bg-[#fff3c8]">
+                    <ExternalLink className="size-3.5" /> Open Public Form
+                  </a>
+                </>
+              )}
               <button
                 type="button"
-                onClick={() => {
-                  if (workflowId) {
-                    void copyValue(
-                      "public-form",
-                      getPublicFormUrl(workflowId, window.location.origin),
-                    );
-                  }
-                }}
-                className="flex h-9 items-center justify-center gap-2 rounded-lg border border-[#d7aa2f] bg-[#fffdfa] text-[10px] font-semibold text-[#6f5100] transition hover:bg-[#fff0b9]"
+                onClick={() => void onPublicationChange(!published)}
+                className="flex h-9 items-center justify-center gap-2 rounded-lg border border-[#d7aa2f] bg-white text-[10px] font-semibold text-[#6f5100] transition hover:bg-[#fff0b9]"
               >
-                {copied === "public-form" ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-                {copied === "public-form" ? "Link copied" : "Copy Public Form Link"}
+                {published ? <GlobeLock className="size-3.5" /> : <Globe2 className="size-3.5" />}
+                {published ? "Unpublish & Revoke" : "Publish Form"}
               </button>
-              <a
-                href={publicFormPath}
-                target="_blank"
-                rel="noreferrer"
-                className="flex h-9 items-center justify-center gap-2 rounded-lg border border-[#e1bd4b] bg-white text-[10px] font-semibold text-[#7f5d00] transition hover:bg-[#fff3c8]"
-              >
-                <ExternalLink className="size-3.5" />
-                Preview Form
-              </a>
               {publicForm && (
                 <FormBuilder
                   form={publicForm}
@@ -375,18 +454,80 @@ function Inspector({
                       </div>
                     </>
                   ) : (
-                    <div className="relative mt-2">
-                      <input
-                        id={id}
-                        type={input.type === "secret" ? "password" : input.type === "url" ? "url" : "text"}
-                        value={value}
-                        onChange={(event) => onChange(id, event.target.value)}
-                        placeholder={input.placeholder}
-                        autoComplete={input.type === "secret" ? "off" : undefined}
-                        className="h-10 w-full rounded-lg border border-[#ded6ca] bg-[#f8f4ec] px-3 pr-9 text-[10px] text-slate-800 outline-none placeholder:text-slate-400 focus:border-[#d7aa2f] focus:bg-white focus:ring-4 focus:ring-[#f4e5ad]"
-                      />
-                      {input.type === "url" && value && <button type="button" onClick={() => void copyValue(id, value)} className="absolute right-1 top-1 flex size-8 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-800">{copied === id ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}</button>}
-                    </div>
+                    <>
+                      <div className="relative mt-2">
+                        <input
+                          id={id}
+                          type={input.type === "secret" ? "password" : input.type === "url" ? "url" : "text"}
+                          value={value}
+                          onChange={(event) => onChange(id, event.target.value)}
+                          placeholder={input.type === "secret" && configuredSecrets.has(`${step.capabilityId ?? step.type}:${input.key}`) ? "Configured — enter a replacement" : input.placeholder}
+                          autoComplete={input.type === "secret" ? "new-password" : undefined}
+                          className="h-10 w-full rounded-lg border border-[#ded6ca] bg-[#f8f4ec] px-3 pr-9 text-[10px] text-slate-800 outline-none placeholder:text-slate-400 focus:border-[#d7aa2f] focus:bg-white focus:ring-4 focus:ring-[#f4e5ad]"
+                        />
+                        {input.type === "url" && value && <button type="button" onClick={() => void copyValue(id, value)} className="absolute right-1 top-1 flex size-8 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-800">{copied === id ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}</button>}
+                      </div>
+                      {input.type === "secret" && workflowId && (
+                        <div className="mt-2 flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={!value || credentialBusy === id}
+                            onClick={async () => {
+                              setCredentialBusy(id);
+                              setCredentialError(null);
+                              const connectorId = step.capabilityId ?? step.type;
+                              const result = await saveWorkflowCredential({
+                                workflowId,
+                                connectorId,
+                                credentialKey: input.key,
+                                credentialType: "api_key",
+                                secret: value,
+                              });
+                              setCredentialBusy(null);
+                              if (!result.ok) {
+                                setCredentialError(result.error);
+                                return;
+                              }
+                              setConfiguredSecrets((current) => new Set(current).add(`${connectorId}:${input.key}`));
+                              onChange(id, "");
+                            }}
+                            className="h-8 rounded-lg border border-[#d7aa2f] px-2.5 text-[9px] font-semibold text-[#6f5100] disabled:opacity-40"
+                          >
+                            {credentialBusy === id ? "Saving…" : configuredSecrets.has(`${step.capabilityId ?? step.type}:${input.key}`) ? "Replace securely" : "Save securely"}
+                          </button>
+                          {configuredSecrets.has(`${step.capabilityId ?? step.type}:${input.key}`) && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const connectorId = step.capabilityId ?? step.type;
+                                const result = await revokeWorkflowCredential({ workflowId, connectorId, credentialKey: input.key });
+                                if (result.ok) {
+                                  setConfiguredSecrets((current) => {
+                                    const next = new Set(current);
+                                    next.delete(`${connectorId}:${input.key}`);
+                                    return next;
+                                  });
+                                } else setCredentialError(result.error);
+                              }}
+                              className="h-8 text-[9px] font-semibold text-rose-600"
+                            >
+                              Revoke
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      {input.type === "url" && ["webhook_post", "http_request"].includes(step.type) && (
+                        <button
+                          type="button"
+                          disabled={!value}
+                          onClick={() => void onSaveWebhook(step.id, value)}
+                          className="mt-2 h-8 rounded-lg border border-[#d7aa2f] px-2.5 text-[9px] font-semibold text-[#6f5100] disabled:opacity-40"
+                        >
+                          Save trusted destination
+                        </button>
+                      )}
+                      {input.type === "secret" && credentialError && <p className="mt-1 text-[9px] text-rose-600">{credentialError}</p>}
+                    </>
                   )}
                 </div>
               );
@@ -403,6 +544,7 @@ export function AutomationWorkspace({
   initialWorkflowId = null,
   initialWorkflowName = "",
   initialPrompt = "",
+  initialPublished = false,
 }: AutomationWorkspaceProps) {
   const router = useRouter();
   const initialSteps = initialWorkflow
@@ -411,6 +553,7 @@ export function AutomationWorkspace({
   const [prompt, setPrompt] = useState(initialPrompt);
   const [workflow, setWorkflow] = useState<CompiledWorkflow | null>(initialWorkflow);
   const [workflowId, setWorkflowId] = useState<string | null>(initialWorkflowId);
+  const [published, setPublished] = useState(initialPublished);
   const [selectedStepId, setSelectedStepId] = useState<string | null>(
     initialSteps[0]?.id ?? null,
   );
@@ -439,6 +582,9 @@ export function AutomationWorkspace({
 
   function stepIsReady(step: Step) {
     if (step.capabilityStatus === "unsupported") return false;
+    if (["webhook_post", "http_request"].includes(step.type)) {
+      return Boolean(step.config?.endpoint?.trim());
+    }
     return inputsFor(step).every((input) => (values[inputId(step.id, input.key)] ?? input.value ?? "").trim());
   }
 
@@ -448,6 +594,7 @@ export function AutomationWorkspace({
   const resetBuilder = useCallback(() => {
     setWorkflow(null);
     setWorkflowId(null);
+    setPublished(false);
     setSelectedStepId(null);
     setValues({});
     setPrompt("");
@@ -466,6 +613,7 @@ export function AutomationWorkspace({
     if (!initialWorkflow || !initialWorkflowId) return;
 
     const restoreTimer = window.setTimeout(() => {
+      cleanLegacySensitiveValues();
       const ordered = orderWorkflowSteps(initialWorkflow.steps);
       let savedValues: InputValues = {};
       try {
@@ -481,7 +629,12 @@ export function AutomationWorkspace({
           ordered.flatMap((step) =>
             getStepInputs(step, initialWorkflowId).map((input) => {
               const id = inputId(step.id, input.key);
-              return [id, savedValues[id] ?? input.value ?? ""];
+              return [
+                id,
+                input.type === "secret" || isSensitiveFieldName(id)
+                  ? ""
+                  : savedValues[id] ?? input.value ?? "",
+              ];
             }),
           ),
         ),
@@ -506,7 +659,10 @@ export function AutomationWorkspace({
 
   useEffect(() => {
     if (!workflowId || !workflow) return;
-    window.localStorage.setItem(`flowmind:values:${workflowId}`, JSON.stringify(values));
+    window.localStorage.setItem(
+      `flowmind:values:${workflowId}`,
+      JSON.stringify(browserSafeValues(workflow, workflowId, values)),
+    );
     const wasWorking = window.localStorage.getItem(`flowmind:status:${workflowId}`) === "working";
     const status = workflowReady ? (wasWorking ? "Working" : "Ready") : "Draft";
     if (!workflowReady) window.localStorage.removeItem(`flowmind:status:${workflowId}`);
@@ -534,6 +690,7 @@ export function AutomationWorkspace({
       const initialValues = Object.fromEntries(ordered.flatMap((step) => getStepInputs(step, result.id).map((input) => [inputId(step.id, input.key), input.value ?? ""])));
       setWorkflow(result.workflow);
       setWorkflowId(result.id);
+      setPublished(false);
       setValues(initialValues);
       setSelectedStepId(ordered[0]?.id ?? null);
       setPrompt("");
@@ -632,6 +789,33 @@ export function AutomationWorkspace({
       ...current,
       [inputId(stepId, "document_template")]: template,
     }));
+    return null;
+  }
+
+  async function changePublication(publish: boolean): Promise<string | null> {
+    if (!workflowId) return "Create the workflow before publishing it.";
+    const result = await setWorkflowPublication(workflowId, publish);
+    if (!result.ok) {
+      setError(result.error);
+      return result.error;
+    }
+    setPublished(result.published);
+    setError(null);
+    return null;
+  }
+
+  async function persistWebhookEndpoint(
+    stepId: string,
+    endpoint: string,
+  ): Promise<string | null> {
+    if (!workflowId) return "Create the workflow before configuring delivery.";
+    const result = await saveWebhookEndpoint(workflowId, stepId, endpoint);
+    if (!result.ok) {
+      setError(result.error);
+      return result.error;
+    }
+    adoptCustomizedWorkflow(result.workflow);
+    setError(null);
     return null;
   }
 
@@ -755,6 +939,9 @@ export function AutomationWorkspace({
         onAiCustomizeDataTable={aiCustomizeDataTable}
         onAiCustomizeDocument={aiCustomizeDocument}
         onRestoreDocument={restoreDocumentTemplate}
+        published={published}
+        onPublicationChange={changePublication}
+        onSaveWebhook={persistWebhookEndpoint}
         onChange={(id, value) => {
           setValues((current) => ({ ...current, [id]: value }));
           setError(null);

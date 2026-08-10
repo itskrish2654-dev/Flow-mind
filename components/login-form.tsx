@@ -1,12 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { ArrowRight, CheckCircle2, LockKeyhole, Mail, Zap } from "lucide-react";
 
-import { createClient } from "@/lib/supabase/client";
+import { authenticateWithPassword } from "@/app/actions/auth";
 
 export function LoginForm({ nextPath }: { nextPath: string }) {
-  const supabase = useMemo(() => createClient(), []);
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -25,38 +24,21 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
     let navigationStarted = false;
 
     try {
-      if (mode === "login") {
-        const { error: signInError } = await supabase.auth.signInWithPassword({
-          email: email.trim(),
-          password,
-        });
-        if (signInError) {
-          setError(signInError.message);
-          return;
-        }
-        navigationStarted = true;
-        setProgress("opening");
-        window.location.replace(nextPath);
-        return;
-      }
-
-      const { data, error: signUpError } = await supabase.auth.signUp({
+      const result = await authenticateWithPassword({
+        mode,
         email: email.trim(),
         password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
-        },
       });
-      if (signUpError) {
-        setError(signUpError.message);
+      if (!result.ok) {
+        setError(result.error);
         return;
       }
-      if (data.session) {
+      if (result.sessionCreated) {
         navigationStarted = true;
         setProgress("opening");
         window.location.replace(nextPath);
       } else {
-        setNotice("Check your email to confirm your account, then return here to sign in.");
+        setNotice(result.notice ?? "Check your email, then return here to sign in.");
       }
     } catch {
       setError("Authentication is temporarily unavailable. Please try again.");

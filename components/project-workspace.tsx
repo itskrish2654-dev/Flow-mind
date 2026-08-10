@@ -12,10 +12,12 @@ import { getDataTableDefinition } from "@/lib/workflow-customization";
 export function ProjectWorkspace({
   workflowId,
   workflow,
+  published,
   initialExecutions,
 }: {
   workflowId: string;
   workflow: CompiledWorkflow;
+  published: boolean;
   initialExecutions: WorkflowExecutionRecord[];
 }) {
   const [view, setView] = useState<"builder" | "data">("builder");
@@ -72,6 +74,7 @@ export function ProjectWorkspace({
             key={workflowId}
             initialWorkflowId={workflowId}
             initialWorkflow={currentWorkflow}
+            initialPublished={published}
           />
         ) : (
           <ExecutionsDataTable

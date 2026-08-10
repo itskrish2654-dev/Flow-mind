@@ -17,6 +17,7 @@ import {
 
 import { deleteWorkflow, listWorkflows, type SavedWorkflow } from "@/app/actions/workflow";
 import { createClient } from "@/lib/supabase/client";
+import { isSensitiveFieldName } from "@/lib/security/redaction";
 import { getStepInputs, orderWorkflowSteps } from "@/lib/workflow-setup";
 
 type AutomationStatus = "Draft" | "Ready" | "Working";
@@ -48,9 +49,32 @@ function accountInitials(name: string): string {
 
 function readSavedValues(workflowId: string): Record<string, string> {
   try {
-    return JSON.parse(window.localStorage.getItem(`flowmind:values:${workflowId}`) ?? "{}") as Record<string, string>;
+    const values = JSON.parse(window.localStorage.getItem(`flowmind:values:${workflowId}`) ?? "{}") as Record<string, string>;
+    return Object.fromEntries(
+      Object.entries(values).filter(([key]) => !isSensitiveFieldName(key)),
+    );
   } catch {
     return {};
+  }
+}
+
+function cleanSensitiveLegacyStorage() {
+  for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
+    const key = window.localStorage.key(index);
+    if (!key?.startsWith("flowmind:values:")) continue;
+    try {
+      const values = JSON.parse(window.localStorage.getItem(key) ?? "{}") as Record<string, string>;
+      window.localStorage.setItem(
+        key,
+        JSON.stringify(
+          Object.fromEntries(
+            Object.entries(values).filter(([field]) => !isSensitiveFieldName(field)),
+          ),
+        ),
+      );
+    } catch {
+      window.localStorage.removeItem(key);
+    }
   }
 }
 
@@ -193,6 +217,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       setIsSigningOut(false);
       return;
     }
+    cleanSensitiveLegacyStorage();
     window.location.replace("/login");
   }
 

@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 
-import { executeAiText } from "@/lib/ai-execution";
+import { AI_MAX_OUTPUT_TOKENS, executeAiText } from "@/lib/ai-execution";
 import { getAuthenticatedContext } from "@/lib/auth";
 import { assessWorkflowCapabilities } from "@/lib/capability-registry";
 import { uploadGeneratedDocument } from "@/lib/document-storage";
@@ -12,6 +12,16 @@ import {
   type CompiledWorkflow,
 } from "@/lib/schemas/workflow";
 import type { Json } from "@/lib/supabase/types";
+import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  SECURITY_LIMITS,
+  SecurityGateError,
+  enforceRateLimit,
+  enforceUsageQuota,
+  withConcurrencyLease,
+} from "@/lib/security/limits";
+import { postTrustedWebhook } from "@/lib/security/outbound-webhook";
+import { securityLog } from "@/lib/security/redaction";
 import {
   executeWorkflowSteps,
   validateRequiredSetupInputs,
@@ -93,27 +103,80 @@ export async function runTestWorkflow(
 
   let execution: Awaited<ReturnType<typeof executeWorkflowSteps>>;
   try {
-    execution = await executeWorkflowSteps({
-      workflowId: request.data.workflowId,
-      workflowName: ownedWorkflow.name,
-      steps: savedWorkflow.data.steps,
-      inputValues: request.data.inputValues,
-      mode: "test",
-      executeAi: executeAiText,
-      uploadGeneratedDocument: async ({ bytes }) =>
-        uploadGeneratedDocument(
-          auth.supabase,
-          auth.user.id,
-          request.data.workflowId,
-          bytes,
-        ),
-    });
+    await enforceRateLimit(
+      "test-execution",
+      [auth.user.id, request.data.workflowId],
+      SECURITY_LIMITS.testExecution,
+    );
+    await enforceUsageQuota(auth.user.id, "executions");
+    const admin = createAdminClient();
+    execution = await withConcurrencyLease(
+      "user-execution",
+      [auth.user.id],
+      2,
+      () => withConcurrencyLease(
+        "workflow-execution",
+        [request.data.workflowId],
+        1,
+        () => executeWorkflowSteps({
+          workflowId: request.data.workflowId,
+          workflowName: ownedWorkflow.name,
+          steps: savedWorkflow.data.steps,
+          inputValues: request.data.inputValues,
+          mode: "test",
+          executeAi: async (input) => {
+            await enforceRateLimit("ai-execution", [auth.user.id], SECURITY_LIMITS.ai);
+            await enforceUsageQuota(auth.user.id, "ai_generations");
+            await enforceUsageQuota(
+              auth.user.id,
+              "ai_input_chars",
+              input.instruction.length + input.content.length,
+            );
+            await enforceUsageQuota(
+              auth.user.id,
+              "ai_output_tokens",
+              AI_MAX_OUTPUT_TOKENS,
+            );
+            return executeAiText(input);
+          },
+          uploadGeneratedDocument: async ({ bytes }) => {
+            await enforceRateLimit("pdf-generation", [auth.user.id], SECURITY_LIMITS.pdf);
+            await enforceUsageQuota(auth.user.id, "generated_documents");
+            await enforceUsageQuota(auth.user.id, "uploads");
+            await enforceUsageQuota(auth.user.id, "storage_bytes", bytes.byteLength);
+            return uploadGeneratedDocument(
+              admin,
+              auth.user.id,
+              request.data.workflowId,
+              bytes,
+            );
+          },
+          executeWebhook: async (endpoint, payload) => {
+            const host = new URL(endpoint).hostname.toLowerCase();
+            await enforceRateLimit("webhook-user", [auth.user.id], SECURITY_LIMITS.webhookUser);
+            await enforceRateLimit("webhook-destination", [host], SECURITY_LIMITS.webhookDestination);
+            return postTrustedWebhook(endpoint, payload);
+          },
+        }),
+      ),
+    );
   } catch (error: unknown) {
-    console.error("FlowMind workflow execution failed", error);
-    return { ok: false, error: "The workflow could not complete this test safely." };
+    securityLog("Workflow execution failed", {
+      error,
+      workflowId: request.data.workflowId,
+      userId: auth.user.id,
+    });
+    return {
+      ok: false,
+      error:
+        error instanceof SecurityGateError
+          ? error.message
+          : "The workflow could not complete this test safely.",
+    };
   }
 
-  const { data: savedExecution, error: executionError } = await auth.supabase
+  const admin = createAdminClient();
+  const { data: savedExecution, error: executionError } = await admin
     .from("workflow_executions")
     .insert({
       workflow_id: request.data.workflowId,
@@ -124,7 +187,7 @@ export async function runTestWorkflow(
     .single();
 
   if (executionError || !savedExecution) {
-    console.error("Supabase execution insert failed", {
+    securityLog("Execution persistence failed", {
       code: executionError?.code,
       message: executionError?.message,
     });

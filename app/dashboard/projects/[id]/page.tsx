@@ -34,6 +34,7 @@ export default async function ProjectPage({
     <ProjectWorkspace
       workflowId={id}
       workflow={result.workflow}
+      published={result.published}
       initialExecutions={executionsResult.ok ? executionsResult.executions : []}
     />
   );

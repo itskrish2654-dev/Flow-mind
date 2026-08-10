@@ -2,6 +2,7 @@
 
 import { useFormStatus } from "react-dom";
 import { LoaderCircle, LockKeyhole, Send, Zap } from "lucide-react";
+import Script from "next/script";
 
 import { submitPublicWorkflow } from "@/app/f/[projectId]/actions";
 import type { PublicFormDefinition } from "@/lib/schemas/workflow";
@@ -28,9 +29,13 @@ function SubmitButton({ label }: { label: string }) {
 export function PublicWorkflowForm({
   projectId,
   form,
+  challengeMode = "honeypot",
+  turnstileSiteKey,
 }: {
   projectId: string;
   form: PublicFormDefinition;
+  challengeMode?: "honeypot" | "turnstile";
+  turnstileSiteKey?: string;
 }) {
   const action = submitPublicWorkflow.bind(null, projectId);
 
@@ -133,6 +138,19 @@ export function PublicWorkflowForm({
           </div>
         ))}
 
+        {challengeMode === "turnstile" && turnstileSiteKey && (
+          <>
+            <Script
+              src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+              strategy="afterInteractive"
+            />
+            <div
+              className="cf-turnstile"
+              data-sitekey={turnstileSiteKey}
+              data-theme="light"
+            />
+          </>
+        )}
         <SubmitButton label={form.submitButtonLabel} />
         <p className="flex items-center justify-center gap-1.5 text-center text-[10px] text-slate-500">
           <LockKeyhole className="size-3 text-[#9a7007]" /> Sent securely to this automation

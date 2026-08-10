@@ -3,6 +3,7 @@
 import { z } from "zod";
 
 import { getAuthenticatedContext } from "@/lib/auth";
+import { securityLog } from "@/lib/security/redaction";
 import type { Json } from "@/lib/supabase/types";
 
 export type WorkflowExecutionRecord = {
@@ -47,7 +48,7 @@ export async function listWorkflowExecutions(
     .limit(200);
 
   if (error) {
-    console.error("Supabase execution list failed", {
+    securityLog("Execution list failed", {
       code: error.code,
       message: error.message,
     });

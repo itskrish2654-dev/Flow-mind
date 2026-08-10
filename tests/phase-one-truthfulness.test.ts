@@ -203,10 +203,10 @@ test("8. an acknowledged destination is marked succeeded and delivered", async (
     ]),
     inputValues: { name: "Alex" },
     mode: "test",
-    fetchImpl: async (_input, init) => {
-      contentType = new Headers(init?.headers).get("content-type");
-      requestBody = JSON.parse(String(init?.body));
-      return new Response(null, { status: 202 });
+    executeWebhook: async (_endpoint, payload) => {
+      contentType = "application/json";
+      requestBody = payload;
+      return { status: 202 };
     },
   });
 
@@ -253,9 +253,9 @@ test("10. an existing legacy workflow with an unsupported connector fails before
     ]),
     inputValues: { details: "Do not send" },
     mode: "test",
-    fetchImpl: async () => {
+    executeWebhook: async () => {
       fetchCalls += 1;
-      return new Response(null, { status: 200 });
+      return { status: 200 };
     },
   });
 

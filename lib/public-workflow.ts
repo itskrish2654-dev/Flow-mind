@@ -10,6 +10,7 @@ import {
 } from "@/lib/schemas/workflow";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createPublicClient } from "@/lib/supabase/public";
+import { securityLog } from "@/lib/security/redaction";
 
 const WorkflowIdSchema = z.string().uuid();
 
@@ -24,7 +25,7 @@ export async function getPublicWorkflow(workflowId: string) {
 
   if (error || !data) {
     if (error) {
-      console.error("Public workflow lookup failed", {
+      securityLog("Public workflow lookup failed", {
         code: error.code,
         message: error.message,
       });
@@ -47,6 +48,7 @@ export async function getPublicWorkflow(workflowId: string) {
     workflowName: data.workflow_name,
     summary: data.summary,
     form,
+    challengeMode: data.challenge_mode,
   };
 }
 
@@ -78,7 +80,7 @@ export async function getPublicExecutableWorkflow(workflowId: string) {
       admin,
     };
   } catch (error: unknown) {
-    console.error("Public executable workflow lookup failed", error);
+    securityLog("Public executable workflow lookup failed", { error });
     return null;
   }
 }

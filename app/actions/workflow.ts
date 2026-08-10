@@ -4,7 +4,20 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getAuthenticatedContext } from "@/lib/auth";
-import { annotateWorkflowCapabilities } from "@/lib/capability-registry";
+import {
+  annotateWorkflowCapabilities,
+  assessWorkflowCapabilities,
+} from "@/lib/capability-registry";
+import { GENERATED_DOCUMENTS_BUCKET } from "@/lib/document-storage";
+import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  PLAN_ENTITLEMENTS,
+  SECURITY_LIMITS,
+  SecurityGateError,
+  enforceRateLimit,
+} from "@/lib/security/limits";
+import { resolveTrustedWebhook } from "@/lib/security/outbound-webhook";
+import { securityLog } from "@/lib/security/redaction";
 import {
   CompiledWorkflowSchema,
   DataTableDefinitionSchema,
@@ -44,6 +57,7 @@ export type GetWorkflowResult =
       workflow: CompiledWorkflow | null;
       name: string;
       prompt: string;
+      published: boolean;
     }
   | { ok: false; error: string };
 
@@ -68,6 +82,10 @@ export type SaveDocumentTemplateResult =
 
 export type SaveWorkflowCustomizationResult =
   | { ok: true; workflow: CompiledWorkflow }
+  | { ok: false; error: string };
+
+export type WorkflowPublicationResult =
+  | { ok: true; published: boolean }
   | { ok: false; error: string };
 
 export async function saveWorkflowCustomization(
@@ -100,6 +118,7 @@ export async function saveWorkflowCustomization(
 
   const auth = await getAuthenticatedContext();
   if (!auth) return { ok: false, error: "Unauthorized" };
+  const admin = createAdminClient();
 
   const { data, error } = await auth.supabase
     .from("workflows")
@@ -123,14 +142,14 @@ export async function saveWorkflowCustomization(
         : {}),
     }),
   );
-  const { error: updateError } = await auth.supabase
+  const { error: updateError } = await admin
     .from("workflows")
     .update({ compiled_steps: workflow })
     .eq("id", request.data.workflowId)
     .eq("user_id", auth.user.id);
 
   if (updateError) {
-    console.error("Supabase workflow customization update failed", {
+    securityLog("Workflow customization persistence failed", {
       code: updateError.code,
       message: updateError.message,
     });
@@ -160,6 +179,7 @@ export async function saveDocumentTemplate(
 
   const auth = await getAuthenticatedContext();
   if (!auth) return { ok: false, error: "Unauthorized" };
+  const admin = createAdminClient();
   const { data, error } = await auth.supabase
     .from("workflows")
     .select("compiled_steps")
@@ -189,13 +209,13 @@ export async function saveDocumentTemplate(
     return { ok: false, error: "We couldn't find the PDF step to update." };
   }
 
-  const { error: updateError } = await auth.supabase
+  const { error: updateError } = await admin
     .from("workflows")
     .update({ compiled_steps: workflow })
     .eq("id", request.data.workflowId)
     .eq("user_id", auth.user.id);
   if (updateError) {
-    console.error("Supabase document template update failed", {
+    securityLog("Document template persistence failed", {
       code: updateError.code,
       message: updateError.message,
     });
@@ -213,13 +233,35 @@ export async function deleteWorkflow(
   }
   const auth = await getAuthenticatedContext();
   if (!auth) return { ok: false, error: "Unauthorized" };
-  const { error } = await auth.supabase
+  const admin = createAdminClient();
+  try {
+    const { data: documents, error: documentsError } = await admin
+      .from("generated_document_records")
+      .select("storage_path")
+      .eq("workflow_id", parsedWorkflowId.data)
+      .eq("user_id", auth.user.id);
+    if (documentsError) throw new Error("Document cleanup lookup failed.");
+    const paths = (documents ?? []).map((document) => document.storage_path);
+    if (paths.length > 0) {
+      const { error: removalError } = await admin.storage
+        .from(GENERATED_DOCUMENTS_BUCKET)
+        .remove(paths);
+      if (removalError) throw new Error("Document cleanup failed.");
+    }
+  } catch (error) {
+    securityLog("Workflow document cleanup failed", {
+      error,
+      workflowId: parsedWorkflowId.data,
+    });
+    return { ok: false, error: "We couldn't safely remove that automation's documents." };
+  }
+  const { error } = await admin
     .from("workflows")
     .delete()
     .eq("id", parsedWorkflowId.data)
     .eq("user_id", auth.user.id);
   if (error) {
-    console.error("Supabase workflow delete failed", {
+    securityLog("Workflow deletion failed", {
       code: error.code,
       message: error.message,
     });
@@ -238,7 +280,7 @@ export async function listWorkflows(): Promise<ListWorkflowsResult> {
     .eq("user_id", auth.user.id)
     .limit(30);
   if (error) {
-    console.error("Supabase workflow list failed", {
+    securityLog("Workflow list failed", {
       code: error.code,
       message: error.message,
     });
@@ -248,7 +290,7 @@ export async function listWorkflows(): Promise<ListWorkflowsResult> {
   const workflows: SavedWorkflow[] = (data ?? []).map((row) => {
     const parsed = CompiledWorkflowSchema.safeParse(row.compiled_steps);
     if (row.compiled_steps !== null && !parsed.success) {
-      console.error("Saved workflow list item could not be read", {
+      securityLog("Saved workflow list item could not be read", {
         workflowId: row.id,
         issues: parsed.error.issues,
       });
@@ -298,6 +340,23 @@ export async function compileWorkflow(
   const auth = await getAuthenticatedContext();
   if (!auth) return { success: false, status: "ERROR", error: "Unauthorized" };
 
+  try {
+    await enforceRateLimit(
+      "workflow-planning",
+      [auth.user.id],
+      SECURITY_LIMITS.planning,
+    );
+  } catch (error) {
+    return {
+      success: false,
+      status: "ERROR",
+      error:
+        error instanceof SecurityGateError
+          ? error.message
+          : "This request cannot be accepted safely right now.",
+    };
+  }
+
   const planning = planWorkflow(normalizedPrompt);
   if (planning.status !== "READY_TO_COMPILE") {
     return {
@@ -318,7 +377,7 @@ export async function compileWorkflow(
   try {
     compiledWorkflow = compileReadyPlan(normalizedPrompt, planning);
   } catch (error: unknown) {
-    console.error("FlowMind deterministic compiler failed", error);
+    securityLog("Deterministic compiler failed", { error });
     return {
       success: false,
       status: "ERROR",
@@ -331,17 +390,32 @@ export async function compileWorkflow(
     name: compiledWorkflow.workflowName.slice(0, 80),
     prompt: normalizedPrompt,
     compiled_steps: compiledWorkflow,
+    public_form_enabled: false,
+    published_at: null,
   };
+  if (!parsedExistingWorkflowId?.success) {
+    const { count, error: countError } = await auth.supabase
+      .from("workflows")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", auth.user.id);
+    if (countError || count === null) {
+      return { success: false, status: "ERROR", error: "Workflow capacity could not be verified." };
+    }
+    if (count >= PLAN_ENTITLEMENTS.free.workflows) {
+      return { success: false, status: "ERROR", error: "This account has reached its workflow limit." };
+    }
+  }
+  const admin = createAdminClient();
   const writeQuery = parsedExistingWorkflowId?.success
-    ? auth.supabase
+    ? admin
         .from("workflows")
         .update(workflowValues)
         .eq("id", parsedExistingWorkflowId.data)
         .eq("user_id", auth.user.id)
-    : auth.supabase.from("workflows").insert(workflowValues);
+    : admin.from("workflows").insert(workflowValues);
   const { data, error } = await writeQuery.select("id").single();
   if (error) {
-    console.error("Supabase compiled workflow write failed", {
+    securityLog("Compiled workflow persistence failed", {
       code: error.code,
       message: error.message,
       details: error.details,
@@ -380,7 +454,7 @@ export async function getWorkflow(workflowId: string): Promise<GetWorkflowResult
   if (!auth) return { ok: false, error: "Unauthorized" };
   const { data, error } = await auth.supabase
     .from("workflows")
-    .select("name, prompt, compiled_steps")
+    .select("name, prompt, compiled_steps, public_form_enabled")
     .eq("id", parsedWorkflowId.data)
     .eq("user_id", auth.user.id)
     .maybeSingle();
@@ -388,11 +462,20 @@ export async function getWorkflow(workflowId: string): Promise<GetWorkflowResult
     return { ok: false, error: "We could not find this automation." };
   }
   if (data.compiled_steps === null) {
-    return { ok: true, workflow: null, name: data.name, prompt: data.prompt };
+    return {
+      ok: true,
+      workflow: null,
+      name: data.name,
+      prompt: data.prompt,
+      published: data.public_form_enabled,
+    };
   }
   const parsedWorkflow = CompiledWorkflowSchema.safeParse(data.compiled_steps);
   if (!parsedWorkflow.success) {
-    console.error("Saved workflow could not be read", parsedWorkflow.error);
+    securityLog("Saved workflow could not be read", {
+      workflowId: parsedWorkflowId.data,
+      issues: parsedWorkflow.error.issues,
+    });
     return { ok: false, error: "This automation needs to be created again." };
   }
   return {
@@ -400,5 +483,96 @@ export async function getWorkflow(workflowId: string): Promise<GetWorkflowResult
     workflow: annotateWorkflowCapabilities(parsedWorkflow.data),
     name: data.name,
     prompt: data.prompt,
+    published: data.public_form_enabled,
   };
+}
+
+export async function setWorkflowPublication(
+  workflowId: string,
+  publish: boolean,
+): Promise<WorkflowPublicationResult> {
+  const parsedId = z.string().uuid().safeParse(workflowId);
+  if (!parsedId.success) return { ok: false, error: "Workflow not found." };
+  const auth = await getAuthenticatedContext();
+  if (!auth) return { ok: false, error: "Unauthorized" };
+  const admin = createAdminClient();
+  const { data, error } = await auth.supabase
+    .from("workflows")
+    .select("compiled_steps")
+    .eq("id", parsedId.data)
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+  if (error || !data) return { ok: false, error: "Workflow not found." };
+  if (publish) {
+    const workflow = CompiledWorkflowSchema.safeParse(data.compiled_steps);
+    if (!workflow.success || !workflow.data.publicForm) {
+      return { ok: false, error: "Add a hosted form before publishing." };
+    }
+    const unavailable = assessWorkflowCapabilities(workflow.data.steps, "production")
+      .find(({ assessment }) => !assessment.available);
+    if (unavailable) {
+      return {
+        ok: false,
+        error: unavailable.assessment.message ?? "This workflow cannot be published safely.",
+      };
+    }
+  }
+  const { error: updateError } = await admin
+    .from("workflows")
+    .update({
+      public_form_enabled: publish,
+      published_at: publish ? new Date().toISOString() : null,
+    })
+    .eq("id", parsedId.data)
+    .eq("user_id", auth.user.id);
+  if (updateError) return { ok: false, error: "Publication status could not be changed." };
+  revalidatePath(`/f/${parsedId.data}`);
+  revalidatePath(`/dashboard/projects/${parsedId.data}`);
+  return { ok: true, published: publish };
+}
+
+export async function saveWebhookEndpoint(
+  workflowId: string,
+  stepId: string,
+  endpoint: string,
+): Promise<SaveDocumentTemplateResult> {
+  const request = z.object({
+    workflowId: z.string().uuid(),
+    stepId: z.string().min(1).max(100),
+    endpoint: z.string().trim().max(2_000),
+  }).safeParse({ workflowId, stepId, endpoint });
+  if (!request.success) return { ok: false, error: "Webhook configuration is invalid." };
+  try {
+    await resolveTrustedWebhook(request.data.endpoint);
+  } catch {
+    return { ok: false, error: "Use a public HTTPS webhook URL. Private and redirected destinations are blocked." };
+  }
+  const auth = await getAuthenticatedContext();
+  if (!auth) return { ok: false, error: "Unauthorized" };
+  const admin = createAdminClient();
+  const { data } = await auth.supabase
+    .from("workflows")
+    .select("compiled_steps")
+    .eq("id", request.data.workflowId)
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+  const parsed = CompiledWorkflowSchema.safeParse(data?.compiled_steps);
+  if (!parsed.success) return { ok: false, error: "Workflow not found." };
+  let matched = false;
+  const workflow = annotateWorkflowCapabilities({
+    ...parsed.data,
+    steps: parsed.data.steps.map((step) => {
+      if (step.id !== request.data.stepId || !["webhook_post", "http_request"].includes(step.type)) return step;
+      matched = true;
+      return { ...step, config: { ...step.config, endpoint: request.data.endpoint, method: "POST" as const } };
+    }),
+  });
+  if (!matched) return { ok: false, error: "Webhook step not found." };
+  const { error } = await admin
+    .from("workflows")
+    .update({ compiled_steps: workflow })
+    .eq("id", request.data.workflowId)
+    .eq("user_id", auth.user.id);
+  if (error) return { ok: false, error: "Webhook configuration could not be saved." };
+  return { ok: true, workflow };
 }

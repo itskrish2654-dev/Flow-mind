@@ -19,6 +19,7 @@ import {
   listWorkflowExecutions,
   type WorkflowExecutionRecord,
 } from "@/app/actions/executions";
+import { createDocumentDownloadUrl } from "@/app/actions/documents";
 import type { Json } from "@/lib/supabase/types";
 import type { DataTableColumn } from "@/lib/schemas/workflow";
 
@@ -192,21 +193,17 @@ function StatusBadge({ value }: { value: Json }) {
   );
 }
 
-function executionDocuments(value: Json): Array<{ url: string; filename: string }> {
+function executionDocuments(value: Json): Array<{ id: string; filename: string }> {
   const output = asJsonObject(value);
-  const documents: Array<{ url: string; filename: string }> = [];
-
-  if (typeof output.pdf_url === "string" && output.pdf_url.startsWith("https://")) {
-    documents.push({ url: output.pdf_url, filename: "Generated document.pdf" });
-  }
+  const documents: Array<{ id: string; filename: string }> = [];
 
   if (Array.isArray(output.documents)) {
     for (const item of output.documents) {
       if (!item || typeof item !== "object" || Array.isArray(item)) continue;
-      if (typeof item.url !== "string" || !item.url.startsWith("https://")) continue;
-      if (documents.some((document) => document.url === item.url)) continue;
+      if (typeof item.id !== "string") continue;
+      if (documents.some((document) => document.id === item.id)) continue;
       documents.push({
-        url: item.url,
+        id: item.id,
         filename:
           typeof item.filename === "string" ? item.filename : "Generated document.pdf",
       });
@@ -214,6 +211,42 @@ function executionDocuments(value: Json): Array<{ url: string; filename: string 
   }
 
   return documents;
+}
+
+function SecureDocumentButton({
+  document,
+  label,
+}: {
+  document: { id: string; filename: string };
+  label: string;
+}) {
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div>
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => {
+          setError(null);
+          startTransition(async () => {
+            const result = await createDocumentDownloadUrl(document.id);
+            if (!result.ok) {
+              setError(result.error);
+              return;
+            }
+            window.open(result.url, "_blank", "noopener,noreferrer");
+          });
+        }}
+        className="flex min-h-11 w-full items-center gap-3 rounded-xl border border-[#e7c75f] bg-[#fff7dc] px-3.5 py-2.5 text-[10px] font-semibold text-[#7f5d00] transition hover:bg-[#fff0b9] disabled:opacity-60"
+      >
+        {pending ? <LoaderCircle className="size-4 shrink-0 animate-spin" /> : <FileText className="size-4 shrink-0" />}
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        <ExternalLink className="size-3.5 shrink-0" />
+      </button>
+      {error && <p className="mt-1 text-[9px] text-rose-600">{error}</p>}
+    </div>
+  );
 }
 
 function executionLogs(value: Json): Array<{ icon: string; message: string }> {
@@ -384,19 +417,11 @@ function ExecutionDetailsDrawer({
               </h4>
               <div className="mt-3 grid gap-2">
                 {documents.map((document, index) => (
-                  <a
-                    key={document.url}
-                    href={document.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex min-h-11 items-center gap-3 rounded-xl border border-[#e7c75f] bg-[#fff7dc] px-3.5 py-2.5 text-[10px] font-semibold text-[#7f5d00] transition hover:bg-[#fff0b9]"
-                  >
-                    <FileText className="size-4 shrink-0" />
-                    <span className="min-w-0 flex-1 truncate">
-                      {documents.length === 1 ? "Download PDF" : `Download PDF ${index + 1}`}
-                    </span>
-                    <ExternalLink className="size-3.5 shrink-0" />
-                  </a>
+                  <SecureDocumentButton
+                    key={document.id}
+                    document={document}
+                    label={documents.length === 1 ? "Download PDF" : `Download PDF ${index + 1}`}
+                  />
                 ))}
               </div>
             </section>

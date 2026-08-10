@@ -62,6 +62,21 @@ const outcomes: Record<
     title: "Workflow stopped",
     message: "A workflow step failed, so this submission was not marked successful.",
   },
+  rate_limited: {
+    success: false,
+    title: "Please wait a moment",
+    message: "Too many requests were received. Try again shortly.",
+  },
+  duplicate: {
+    success: false,
+    title: "Already received",
+    message: "This submission was already received. Wait a moment before trying again.",
+  },
+  challenge_failed: {
+    success: false,
+    title: "Verification needed",
+    message: "Please complete the bot verification and submit again.",
+  },
 };
 
 export default async function PublicFormResultPage({

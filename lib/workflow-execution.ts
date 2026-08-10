@@ -1,6 +1,3 @@
-import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
-
 import type {
   AiExecutionMetadata,
   AiTextExecutor,
@@ -15,6 +12,8 @@ import {
   type DocumentVariables,
 } from "@/lib/pdf-document";
 import type { CompiledWorkflow } from "@/lib/schemas/workflow";
+import { postTrustedWebhook } from "@/lib/security/outbound-webhook";
+import { securityLog } from "@/lib/security/redaction";
 
 export type StepExecutionStatus =
   | "pending"
@@ -44,7 +43,12 @@ type InputValues = Record<string, string>;
 
 export type GeneratedDocumentUpload = (input: {
   bytes: Uint8Array;
-}) => Promise<{ url: string; filename: string }>;
+}) => Promise<{ id: string; path: string; filename: string }>;
+
+export type TrustedWebhookExecutor = (
+  endpoint: string,
+  payload: unknown,
+) => Promise<{ status: number }>;
 
 export type WorkflowExecutionResult = {
   ok: boolean;
@@ -60,120 +64,10 @@ export type WorkflowExecutionResult = {
     steps: StepExecutionRecord[];
     logs: ExecutionLog[];
     delivered: boolean;
-    pdf_url: string | null;
-    documents: Array<{ url: string; filename: string }>;
+    pdf_url: null;
+    documents: Array<{ id: string; filename: string }>;
   };
 };
-
-function isBlockedIpAddress(address: string): boolean {
-  const normalized = address.toLowerCase().split("%")[0];
-
-  if (isIP(normalized) === 4) {
-    const [first, second] = normalized.split(".").map(Number);
-    return (
-      first === 0 ||
-      first === 10 ||
-      first === 127 ||
-      (first === 100 && second >= 64 && second <= 127) ||
-      (first === 169 && second === 254) ||
-      (first === 172 && second >= 16 && second <= 31) ||
-      (first === 192 && second === 0) ||
-      (first === 192 && second === 168) ||
-      (first === 198 && (second === 18 || second === 19)) ||
-      first >= 224
-    );
-  }
-
-  if (isIP(normalized) === 6) {
-    return (
-      normalized === "::" ||
-      normalized === "::1" ||
-      normalized.startsWith("fc") ||
-      normalized.startsWith("fd") ||
-      /^fe[89ab]/.test(normalized) ||
-      normalized.startsWith("::ffff:127.") ||
-      normalized.startsWith("::ffff:10.") ||
-      normalized.startsWith("::ffff:192.168.")
-    );
-  }
-
-  return true;
-}
-
-async function validatePublicDestination(value: string): Promise<URL | null> {
-  let destination: URL;
-  try {
-    destination = new URL(value);
-  } catch {
-    return null;
-  }
-
-  if (
-    !["http:", "https:"].includes(destination.protocol) ||
-    destination.username ||
-    destination.password
-  ) {
-    return null;
-  }
-
-  const hostname = destination.hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  if (
-    hostname === "localhost" ||
-    hostname.endsWith(".localhost") ||
-    hostname.endsWith(".local") ||
-    hostname.endsWith(".internal")
-  ) {
-    return null;
-  }
-
-  if (isIP(hostname)) {
-    return isBlockedIpAddress(hostname) ? null : destination;
-  }
-
-  try {
-    const addresses = await lookup(hostname, { all: true });
-    if (
-      addresses.length === 0 ||
-      addresses.some(({ address }) => isBlockedIpAddress(address))
-    ) {
-      return null;
-    }
-  } catch {
-    return null;
-  }
-
-  return destination;
-}
-
-function destinationCandidates(step: WorkflowStep, inputValues: InputValues): string[] {
-  const stepInputKeys = new Set(
-    (step.inputsRequired ?? []).flatMap((input) => [
-      input.key,
-      `${step.id}-${input.key}`,
-    ]),
-  );
-  const associatedValues = Object.entries(inputValues)
-    .filter(([key]) => stepInputKeys.has(key) || key.startsWith(`${step.id}-`))
-    .map(([, value]) => value);
-  const namedValues = Object.entries(inputValues)
-    .filter(([key]) => /destination|webhook|url|link|send/i.test(key))
-    .map(([, value]) => value);
-
-  return Array.from(
-    new Set([step.config?.endpoint ?? "", ...associatedValues, ...namedValues]),
-  ).filter((value) => /^https?:\/\//i.test(value.trim()));
-}
-
-async function findDestinationUrl(
-  step: WorkflowStep,
-  inputValues: InputValues,
-): Promise<URL | null> {
-  for (const candidate of destinationCandidates(step, inputValues)) {
-    const destination = await validatePublicDestination(candidate.trim());
-    if (destination) return destination;
-  }
-  return null;
-}
 
 export function validateRequiredSetupInputs(
   steps: WorkflowStep[],
@@ -192,6 +86,13 @@ export function validateRequiredSetupInputs(
         ""
       ).trim();
       if (!template) return "Document Template is required before running a test.";
+      continue;
+    }
+
+    if (["webhook_post", "http_request"].includes(step.type)) {
+      if (!step.config?.endpoint?.trim()) {
+        return "Save a trusted webhook destination before running a test.";
+      }
       continue;
     }
 
@@ -253,6 +154,7 @@ function executionVariables(
   };
   for (const step of steps) {
     for (const input of step.inputsRequired ?? []) {
+      if (input.type === "secret") continue;
       const value =
         inputValues[`${step.id}-${input.key}`] ??
         inputValues[input.key] ??
@@ -271,7 +173,7 @@ export async function executeWorkflowSteps({
   mode,
   uploadGeneratedDocument,
   executeAi,
-  fetchImpl = fetch,
+  executeWebhook = postTrustedWebhook,
 }: {
   workflowId: string;
   workflowName: string;
@@ -280,12 +182,12 @@ export async function executeWorkflowSteps({
   mode: "test" | "public-form";
   uploadGeneratedDocument?: GeneratedDocumentUpload;
   executeAi?: AiTextExecutor;
-  fetchImpl?: typeof fetch;
+  executeWebhook?: TrustedWebhookExecutor;
 }): Promise<WorkflowExecutionResult> {
   const logs: ExecutionLog[] = [];
   const records: StepExecutionRecord[] = [];
   const inputData = safeInputData(steps, inputValues);
-  const documents: Array<{ url: string; filename: string }> = [];
+  const documents: Array<{ id: string; filename: string }> = [];
   const aiMetadata: Array<AiExecutionMetadata & { stepId: string }> = [];
   const variables = executionVariables(
     steps,
@@ -320,7 +222,7 @@ export async function executeWorkflowSteps({
         steps: records,
         logs,
         delivered,
-        pdf_url: documents[0]?.url ?? null,
+        pdf_url: null,
         documents,
       },
     };
@@ -410,7 +312,7 @@ export async function executeWorkflowSteps({
         variables[step.id] = aiResult;
         succeed(`AI completed this step using ${result.metadata.provider}/${result.metadata.model}.`);
       } catch (error: unknown) {
-        console.error("FlowMind AI execution failed", error);
+        securityLog("AI execution failed", { error, workflowId, stepId: step.id });
         fail(error instanceof Error ? error.message : "The AI provider could not complete this step.");
         break;
       }
@@ -430,11 +332,11 @@ export async function executeWorkflowSteps({
           "# Document\n\n{{ai.result}}";
         const bytes = await generatePdfBuffer(populateDocumentTemplate(template, variables));
         const document = await uploadGeneratedDocument({ bytes });
-        documents.push(document);
-        variables.pdf_url = document.url;
+        documents.push({ id: document.id, filename: document.filename });
+        variables.document_id = document.id;
         succeed("PDF generated and stored in FlowMind document storage.");
       } catch (error: unknown) {
-        console.error("FlowMind PDF generation failed", error);
+        securityLog("PDF generation failed", { error });
         fail("The PDF could not be generated or stored.");
         break;
       }
@@ -447,34 +349,23 @@ export async function executeWorkflowSteps({
     }
 
     if (capabilityId === "webhook_post") {
-      const destinationUrl = await findDestinationUrl(step, inputValues);
+      const destinationUrl = step.config?.endpoint?.trim();
       if (!destinationUrl) {
-        fail("Webhook delivery was skipped because no valid public destination URL was configured.", "skipped");
+        fail("Webhook delivery was skipped because no trusted destination is configured.", "skipped");
         break;
       }
       try {
-        const response = await fetchImpl(destinationUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            event: "workflow_test",
-            workflow_id: workflowId,
-            timestamp: new Date().toISOString(),
-            input_data: inputData,
-            ai_result: aiResult,
-          }),
-          redirect: "manual",
-          cache: "no-store",
-          signal: AbortSignal.timeout(10_000),
+        const response = await executeWebhook(destinationUrl, {
+          event: "workflow_test",
+          workflow_id: workflowId,
+          timestamp: new Date().toISOString(),
+          input_data: inputData,
+          ai_result: aiResult,
         });
-        if (!response.ok) {
-          fail(`The webhook responded with status ${response.status}; delivery failed.`);
-          break;
-        }
         delivered = true;
         succeed(`The webhook acknowledged delivery with status ${response.status}.`);
       } catch (error: unknown) {
-        console.error("FlowMind webhook delivery failed", error);
+        securityLog("Webhook delivery failed", { error, workflowId, stepId: step.id });
         fail("Webhook delivery failed because the destination could not be reached.");
         break;
       }

@@ -119,6 +119,9 @@ function enrichInput(step: WorkflowStep, input: StepInput): StepInput {
           : undefined;
   return {
     ...input,
+    ...(["webhook_post", "http_request"].includes(step.type) && input.type === "url"
+      ? { value: step.config?.endpoint ?? input.value }
+      : {}),
     label: toPlainEnglish(fallbackLabel(step, input)),
     ...(safePlaceholder ? { placeholder: safePlaceholder } : {}),
     helpText: toPlainEnglish(input.helpText ?? fallbackHelpText(step, input)),

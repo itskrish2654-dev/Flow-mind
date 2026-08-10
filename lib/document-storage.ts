@@ -15,7 +15,7 @@ export async function uploadGeneratedDocument(
   ownerId: string,
   workflowId: string,
   bytes: Uint8Array,
-): Promise<{ url: string; path: string; filename: string }> {
+): Promise<{ id: string; path: string; filename: string }> {
   const filename = `${safeFilePart(workflowId)}_${Date.now()}_${crypto.randomUUID()}.pdf`;
   const path = `${ownerId}/${workflowId}/${filename}`;
   const { error } = await supabase.storage
@@ -28,9 +28,22 @@ export async function uploadGeneratedDocument(
 
   if (error) throw new Error(`Document upload failed: ${error.message}`);
 
-  const { data } = supabase.storage
-    .from(GENERATED_DOCUMENTS_BUCKET)
-    .getPublicUrl(path);
+  const { data: record, error: recordError } = await supabase
+    .from("generated_document_records")
+    .insert({
+      user_id: ownerId,
+      workflow_id: workflowId,
+      storage_path: path,
+      filename,
+      size_bytes: bytes.byteLength,
+    })
+    .select("id")
+    .single();
 
-  return { url: data.publicUrl, path, filename };
+  if (recordError || !record) {
+    await supabase.storage.from(GENERATED_DOCUMENTS_BUCKET).remove([path]);
+    throw new Error("Document metadata could not be saved.");
+  }
+
+  return { id: record.id, path, filename };
 }
