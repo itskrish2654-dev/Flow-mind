@@ -666,7 +666,6 @@ export function AutomationWorkspace({
           <div className="hidden min-w-0 items-center gap-2 lg:flex"><Workflow className="size-4 shrink-0 text-[#b18410]" /><span className="truncate text-[13px] font-semibold text-[#272536]">{workflow ? toPlainEnglish(workflow.workflowName) : initialWorkflowName ? toPlainEnglish(initialWorkflowName) : "New Automation"}</span></div>
           {workflow && <span className={`hidden rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.08em] sm:block ${workflowReady ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"}`}>{workflowReady ? "Ready" : `${steps.length - readySteps} steps need setup`}</span>}
           <div className="ml-auto flex items-center gap-2">
-            {workflow && <button type="button" onClick={resetBuilder} className="hidden h-8 rounded-lg border border-[#ded6ca] bg-white px-3 text-[10px] text-slate-600 transition hover:border-[#d7aa2f] hover:bg-[#fff7dc] hover:text-[#272536] sm:block">New</button>}
             <button type="button" onClick={() => void runTest()} disabled={!workflow || isTesting} className="flex h-8 items-center gap-2 rounded-lg border border-[#dcd4c8] bg-transparent px-3 text-[10px] font-semibold text-[#272536] transition hover:border-[#d7aa2f] hover:bg-[#fff8e3] disabled:cursor-not-allowed disabled:opacity-35">{isTesting ? <LoaderCircle className="size-3 animate-spin text-[#9a7007]" /> : <Play className="size-3 fill-current text-[#b18410]" />} Test Run</button>
           </div>
         </header>

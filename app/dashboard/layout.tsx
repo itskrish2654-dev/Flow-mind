@@ -2,10 +2,9 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
-  CircleHelp,
   Clock3,
   LoaderCircle,
   LogOut,
@@ -17,10 +16,35 @@ import {
 } from "lucide-react";
 
 import { deleteWorkflow, listWorkflows, type SavedWorkflow } from "@/app/actions/workflow";
-import { signOut } from "@/app/actions/auth";
+import { createClient } from "@/lib/supabase/client";
 import { getStepInputs, orderWorkflowSteps } from "@/lib/workflow-setup";
 
 type AutomationStatus = "Draft" | "Ready" | "Working";
+type AccountDetails = {
+  displayName: string;
+  email: string;
+  memberSince: string;
+};
+
+function readableAccountName(email: string, metadata: Record<string, unknown>): string {
+  const savedName = [metadata.full_name, metadata.name, metadata.display_name]
+    .find((value): value is string => typeof value === "string" && value.trim().length > 0);
+  if (savedName) return savedName.trim();
+
+  const emailName = email.split("@")[0]?.replace(/[._-]+/g, " ").trim();
+  if (!emailName) return "FlowMind user";
+  return emailName.replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function accountInitials(name: string): string {
+  const initials = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
+  return initials || "FM";
+}
 
 function readSavedValues(workflowId: string): Record<string, string> {
   try {
@@ -46,12 +70,16 @@ function workflowStatus(item: SavedWorkflow): AutomationStatus {
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const supabase = useMemo(() => createClient(), []);
   const [automations, setAutomations] = useState<Array<SavedWorkflow & { status: AutomationStatus }>>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SavedWorkflow | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [account, setAccount] = useState<AccountDetails | null>(null);
+  const [accountError, setAccountError] = useState<string | null>(null);
+  const [isSigningOut, setIsSigningOut] = useState(false);
 
   const loadAutomations = useCallback(async () => {
     const result = await listWorkflows();
@@ -83,6 +111,38 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     };
   }, [loadAutomations]);
 
+  useEffect(() => {
+    let active = true;
+
+    async function loadAccount() {
+      const {
+        data: { user },
+        error,
+      } = await supabase.auth.getUser();
+
+      if (!active) return;
+      if (error || !user?.email) {
+        setAccountError("We couldn’t load your account details.");
+        return;
+      }
+
+      const createdAt = new Date(user.created_at);
+      setAccount({
+        displayName: readableAccountName(user.email, user.user_metadata),
+        email: user.email,
+        memberSince: Number.isNaN(createdAt.getTime())
+          ? "FlowMind member"
+          : `Member since ${new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric" }).format(createdAt)}`,
+      });
+      setAccountError(null);
+    }
+
+    void loadAccount();
+    return () => {
+      active = false;
+    };
+  }, [supabase]);
+
   function newAutomation() {
     setActiveId(null);
     if (pathname === "/dashboard") {
@@ -112,6 +172,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     }
     setDeleteTarget(null);
     setIsDeleting(false);
+  }
+
+  async function logOut() {
+    if (isSigningOut) return;
+    setIsSigningOut(true);
+    setAccountError(null);
+    const { error } = await supabase.auth.signOut({ scope: "local" });
+    if (error) {
+      setAccountError("We couldn’t log you out. Please try again.");
+      setIsSigningOut(false);
+      return;
+    }
+    window.location.replace("/login");
   }
 
   return (
@@ -170,12 +243,28 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
 
         <div className="border-t border-[#e4ddd2] px-3 py-3">
-          <div className="flex items-center gap-3 rounded-xl px-3 py-2.5">
-            <span className="flex size-8 items-center justify-center rounded-xl bg-[#f4ead0] text-[#9a7007]"><CircleHelp className="size-4" /></span>
-            <span className="min-w-0 flex-1"><span className="block text-[11px] font-medium text-slate-700">Private workspace</span><span className="block text-[10px] text-slate-400">Drafts save automatically</span></span>
-            <form action={signOut}>
-              <button type="submit" aria-label="Log out" className="flex size-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-800"><LogOut className="size-3.5" /></button>
-            </form>
+          <p className="px-3 pb-2 text-[9px] font-semibold uppercase tracking-[0.15em] text-slate-400">Account</p>
+          <div className="rounded-xl border border-[#e4ddd2] bg-[#faf8f4] p-3">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd] text-[10px] font-bold text-[#805b00]">
+                {account ? accountInitials(account.displayName) : <LoaderCircle className="size-3.5 animate-spin" />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[11px] font-semibold text-slate-800">{account?.displayName ?? "Loading account…"}</span>
+                <span className="block truncate text-[9px] text-slate-500">{account?.email ?? "Secure workspace"}</span>
+              </span>
+            </div>
+            {account && <p className="mt-2 text-[8px] text-slate-400">{account.memberSince}</p>}
+            {accountError && <p role="alert" className="mt-2 text-[9px] leading-4 text-rose-600">{accountError}</p>}
+            <button
+              type="button"
+              onClick={() => void logOut()}
+              disabled={isSigningOut}
+              className="mt-3 flex h-8 w-full items-center justify-center gap-2 rounded-lg border border-[#ded6ca] bg-[#fffdfa] text-[10px] font-semibold text-slate-600 transition hover:border-[#c9b98f] hover:bg-[#fff8e3] hover:text-slate-900 disabled:cursor-wait disabled:opacity-60"
+            >
+              {isSigningOut ? <LoaderCircle className="size-3.5 animate-spin" /> : <LogOut className="size-3.5" />}
+              {isSigningOut ? "Logging out…" : "Log out"}
+            </button>
           </div>
         </div>
       </aside>
