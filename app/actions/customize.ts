@@ -53,14 +53,14 @@ const AiFormSchema = z.object({
           "select",
           "checkbox",
         ]),
-        placeholder: z.string().max(160).nullable(),
-        helpText: z.string().max(240).nullable(),
+        placeholder: z.string().max(160).nullish(),
+        helpText: z.string().max(240).nullish(),
         required: z.boolean(),
-        options: z.array(z.string().min(1).max(80)).max(20).nullable(),
-        minLength: z.number().int().min(0).max(5_000).nullable(),
-        maxLength: z.number().int().min(1).max(5_000).nullable(),
-        min: z.number().finite().nullable(),
-        max: z.number().finite().nullable(),
+        options: z.array(z.string().min(1).max(80)).max(20).nullish(),
+        minLength: z.number().int().min(0).max(5_000).nullish(),
+        maxLength: z.number().int().min(1).max(5_000).nullish(),
+        min: z.number().finite().nullish(),
+        max: z.number().finite().nullish(),
       }),
     )
     .min(1)
@@ -118,10 +118,10 @@ function normalizeAiForm(output: z.infer<typeof AiFormSchema>): PublicFormDefini
       ...(field.placeholder ? { placeholder: field.placeholder } : {}),
       ...(field.helpText ? { helpText: field.helpText } : {}),
       ...(options && options.length > 0 ? { options } : {}),
-      ...(field.minLength !== null ? { minLength: field.minLength } : {}),
-      ...(field.maxLength !== null ? { maxLength: field.maxLength } : {}),
-      ...(field.min !== null ? { min: field.min } : {}),
-      ...(field.max !== null ? { max: field.max } : {}),
+      ...(field.minLength != null ? { minLength: field.minLength } : {}),
+      ...(field.maxLength != null ? { maxLength: field.maxLength } : {}),
+      ...(field.min != null ? { min: field.min } : {}),
+      ...(field.max != null ? { max: field.max } : {}),
     };
   });
 

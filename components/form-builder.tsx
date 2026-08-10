@@ -265,6 +265,34 @@ export function FormBuilder({
     window.setTimeout(() => setOpen(false), 650);
   }
 
+  const aiCustomizationPanel = (
+    <>
+      <AiCustomizationBar
+        question="What should this form collect?"
+        placeholder="For example: Make this a client intake form. Ask for their service, budget, deadline, and a detailed project brief."
+        suggestions={[
+          "Add a required phone number",
+          "Turn this into a client intake form",
+          "Make the form shorter and friendlier",
+        ]}
+        onApply={applyAiChange}
+      />
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[9px] text-slate-500">AI changes are saved automatically.</p>
+        <div className="flex items-center gap-2">
+          {undoForm && (
+            <button type="button" onClick={() => void undoAiChange()} disabled={undoing} className="flex h-8 items-center gap-1.5 rounded-lg border border-[#ded6ca] px-2.5 text-[9px] font-semibold text-slate-600 hover:bg-[#f8f4ec] disabled:opacity-50">
+              {undoing ? <LoaderCircle className="size-3 animate-spin" /> : <RotateCcw className="size-3" />} Undo AI change
+            </button>
+          )}
+          <button type="button" onClick={() => setFineTune((current) => !current)} className="flex h-8 items-center gap-1.5 rounded-lg border border-[#ded6ca] px-2.5 text-[9px] font-semibold text-slate-600 hover:border-[#d7aa2f] hover:bg-[#fff7dc]">
+            {fineTune ? "Back to AI view" : "Fine tune manually"} <ChevronDown className={`size-3 transition ${fineTune ? "rotate-180" : ""}`} />
+          </button>
+        </div>
+      </div>
+    </>
+  );
+
   return (
     <>
       <button
@@ -303,34 +331,12 @@ export function FormBuilder({
               </button>
             </header>
 
-            <div className="shrink-0 border-b border-[#e4ddd2] bg-[#fffdfa] p-4 sm:p-5">
-              <AiCustomizationBar
-                question="What should this form collect?"
-                placeholder="For example: Make this a client intake form. Ask for their service, budget, deadline, and a detailed project brief."
-                suggestions={[
-                  "Add a required phone number",
-                  "Turn this into a client intake form",
-                  "Make the form shorter and friendlier",
-                ]}
-                onApply={applyAiChange}
-              />
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[9px] text-slate-500">AI changes are saved automatically.</p>
-                <div className="flex items-center gap-2">
-                  {undoForm && (
-                    <button type="button" onClick={() => void undoAiChange()} disabled={undoing} className="flex h-8 items-center gap-1.5 rounded-lg border border-[#ded6ca] px-2.5 text-[9px] font-semibold text-slate-600 hover:bg-[#f8f4ec] disabled:opacity-50">
-                      {undoing ? <LoaderCircle className="size-3 animate-spin" /> : <RotateCcw className="size-3" />} Undo AI change
-                    </button>
-                  )}
-                  <button type="button" onClick={() => setFineTune((current) => !current)} className="flex h-8 items-center gap-1.5 rounded-lg border border-[#ded6ca] px-2.5 text-[9px] font-semibold text-slate-600 hover:border-[#d7aa2f] hover:bg-[#fff7dc]">
-                    Fine tune manually <ChevronDown className={`size-3 transition ${fineTune ? "rotate-180" : ""}`} />
-                  </button>
-                </div>
-              </div>
-            </div>
-
             {fineTune ? (
-              <div className="grid min-h-0 flex-1 lg:grid-cols-[250px_minmax(300px,1fr)_minmax(320px,.9fr)]">
+              <>
+                <div className="shrink-0 border-b border-[#e4ddd2] bg-[#fffdfa] p-4 sm:p-5">
+                  {aiCustomizationPanel}
+                </div>
+                <div className="grid min-h-0 flex-1 lg:grid-cols-[250px_minmax(300px,1fr)_minmax(320px,.9fr)]">
               <aside className="min-h-0 overflow-y-auto border-b border-[#e4ddd2] bg-[#faf8f4] p-3 lg:border-b-0 lg:border-r">
                 <div className="flex items-center justify-between">
                   <p className="text-[9px] font-semibold uppercase tracking-[0.13em] text-slate-400">Fields · {draft.fields.length}/10</p>
@@ -440,13 +446,18 @@ export function FormBuilder({
               <aside className="min-h-0 overflow-y-auto bg-[#f7f4ee] p-4 sm:p-6">
                 <p className="flex items-center gap-2 text-[9px] font-semibold uppercase tracking-[0.13em] text-slate-400"><Eye className="size-3.5" /> Live preview</p>
                 <div className="mt-4"><FormPreview form={draft} /></div>
-              </aside>
-            </div>
-
+                  </aside>
+                </div>
+              </>
             ) : (
-              <div className="min-h-0 flex-1 overflow-y-auto bg-[#f7f4ee] p-5 sm:p-8">
-                <p className="mb-4 flex items-center justify-center gap-2 text-[9px] font-semibold uppercase tracking-[0.13em] text-slate-400"><Eye className="size-3.5" /> Current form preview</p>
-                <FormPreview form={draft} />
+              <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(340px,.88fr)_minmax(460px,1.12fr)]">
+                <div className="min-h-0 overflow-y-auto border-b border-[#e4ddd2] bg-[#fffdfa] p-4 sm:p-6 lg:border-b-0 lg:border-r">
+                  {aiCustomizationPanel}
+                </div>
+                <aside className="min-h-0 overflow-y-auto bg-[#f7f4ee] p-5 sm:p-8">
+                  <p className="mb-4 flex items-center justify-center gap-2 text-[9px] font-semibold uppercase tracking-[0.13em] text-slate-400"><Eye className="size-3.5" /> Current form preview</p>
+                  <FormPreview form={draft} />
+                </aside>
               </div>
             )}
 
