@@ -47,6 +47,7 @@ import type {
   PublicFormDefinition,
   StepInput,
 } from "@/lib/schemas/workflow";
+import type { WorkflowPlan } from "@/lib/workflow-planner";
 import {
   getDataTableDefinition,
   previewDocumentTemplate,
@@ -65,14 +66,17 @@ type AutomationWorkspaceProps = {
 };
 
 const examples = [
-  "Summarize customer emails and send them to Slack",
-  "Welcome every new customer with a personal message",
-  "Check new leads and tell my sales team about the best ones",
+  "Collect customer feedback in a form and store it in FlowMind",
+  "Collect support requests in a form, summarize them, and store them in FlowMind",
+  "Collect proposal details in a form, draft a proposal, and generate a PDF",
 ];
 
 const stepVisuals = {
+  public_form_trigger: { label: "Trigger", icon: Zap, tone: "emerald" },
   webhook_trigger: { label: "Trigger", icon: Zap, tone: "emerald" },
   ai_transform: { label: "AI Process", icon: Sparkles, tone: "indigo" },
+  store_data: { label: "FlowMind Storage", icon: Database, tone: "violet" },
+  webhook_post: { label: "Test Webhook", icon: Send, tone: "violet" },
   http_request: { label: "Destination", icon: Send, tone: "violet" },
   generate_pdf: { label: "PDF Document", icon: FileText, tone: "rose" },
   filter_condition: { label: "Condition", icon: Filter, tone: "amber" },
@@ -119,9 +123,15 @@ function WorkflowNode({ step, index, selected, ready, onSelect }: { step: Step; 
         <span className={`flex size-9 shrink-0 items-center justify-center rounded-[10px] border ${toneClasses[visual.tone]}`}><Icon className="size-4" /></span>
         <span className="min-w-0"><span className="block text-[9px] uppercase tracking-[0.1em] text-slate-400">Step {index + 1} · {visual.label}</span><span className="mt-1 block truncate text-[12px] font-semibold text-slate-900">{toPlainEnglish(step.title)}</span></span>
       </span>
-      <span className={`mt-3 flex items-center gap-1.5 text-[10px] ${ready ? "text-emerald-400" : "text-amber-400"}`}>
+      <span className={`mt-3 flex items-center gap-1.5 text-[10px] ${step.capabilityStatus === "unsupported" || step.capabilityStatus === "test_only" ? "text-rose-500" : ready ? "text-emerald-500" : "text-amber-500"}`}>
         {ready ? <CheckCircle2 className="size-3" /> : <CircleDot className="size-3" />}
-        {ready ? "Ready" : "Setup needed"}
+        {step.capabilityStatus === "unsupported"
+          ? "Unsupported"
+          : step.capabilityStatus === "test_only"
+            ? "Test only"
+            : ready
+              ? "Ready"
+              : "Setup needed"}
       </span>
     </button>
   );
@@ -213,8 +223,14 @@ function Inspector({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         <p className="text-[11px] leading-5 text-slate-500">{toPlainEnglish(step.description)}</p>
+        {(step.capabilityStatus === "unsupported" || step.capabilityStatus === "test_only") && (
+          <div role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-[10px] leading-4 text-rose-700">
+            <p className="font-semibold">This step cannot run in production.</p>
+            <p className="mt-1">{step.capabilityMessage ?? "This capability is not currently supported."}</p>
+          </div>
+        )}
         <div className="my-4 h-px bg-[#eee8de]" />
-        {step.type === "webhook_trigger" && publicFormPath && (
+        {(step.type === "public_form_trigger" || step.type === "webhook_trigger") && publicFormPath && (
           <div className="mb-4 rounded-xl border border-[#e7c75f] bg-[#fff7dc] p-3.5">
             <p className="text-[10px] font-semibold text-slate-900">Your hosted form is ready</p>
             <p className="mt-1 text-[9px] leading-4 text-slate-500">
@@ -255,7 +271,7 @@ function Inspector({
             </div>
           </div>
         )}
-        {step.type === "http_request" && workflowId && (
+        {step.type === "store_data" && workflowId && (
           <div className="mb-4 rounded-xl border border-[#ded6ca] bg-[#f7f2e8] p-3.5">
             <p className="text-[10px] font-semibold text-slate-900">Internal data table connected</p>
             <p className="mt-1 text-[9px] leading-4 text-slate-500">
@@ -299,7 +315,7 @@ function Inspector({
           </div>
         )}
         {inputs.length === 0 ? (
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-center"><CheckCircle2 className="mx-auto size-5 text-emerald-500" /><p className="mt-2 text-[11px] font-medium text-slate-900">{step.type === "webhook_trigger" ? "Native form connected" : step.type === "http_request" ? "Native data table connected" : "No setup needed"}</p></div>
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-center"><CheckCircle2 className="mx-auto size-5 text-emerald-500" /><p className="mt-2 text-[11px] font-medium text-slate-900">{step.type === "public_form_trigger" || step.type === "webhook_trigger" ? "Native form connected" : step.type === "store_data" ? "Native data table connected" : "No setup needed"}</p></div>
         ) : (
           <div className="space-y-4">
             <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">Required details</p>
@@ -406,20 +422,23 @@ export function AutomationWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<TestExecutionLog[]>([]);
   const [delivered, setDelivered] = useState<boolean | null>(null);
+  const [testSucceeded, setTestSucceeded] = useState<boolean | null>(null);
+  const [planning, setPlanning] = useState<WorkflowPlan | null>(null);
   const buildRequestInFlight = useRef(false);
 
   const steps = useMemo(() => workflow ? orderWorkflowSteps(workflow.steps) : [], [workflow]);
   const selectedStep = steps.find((step) => step.id === selectedStepId) ?? steps[0] ?? null;
-  const selectedInputs = selectedStep && !["webhook_trigger", "http_request"].includes(selectedStep.type)
+  const selectedInputs = selectedStep && !["public_form_trigger", "webhook_trigger", "store_data"].includes(selectedStep.type)
     ? getStepInputs(selectedStep, workflowId)
     : [];
 
   function inputsFor(step: Step) {
-    if (step.type === "webhook_trigger" || step.type === "http_request") return [];
+    if (["public_form_trigger", "webhook_trigger", "store_data"].includes(step.type)) return [];
     return getStepInputs(step, workflowId);
   }
 
   function stepIsReady(step: Step) {
+    if (step.capabilityStatus === "unsupported") return false;
     return inputsFor(step).every((input) => (values[inputId(step.id, input.key)] ?? input.value ?? "").trim());
   }
 
@@ -434,6 +453,8 @@ export function AutomationWorkspace({
     setPrompt("");
     setLogs([]);
     setDelivered(null);
+    setTestSucceeded(null);
+    setPlanning(null);
     setError(null);
     window.dispatchEvent(new CustomEvent("flowmind:active-workflow", { detail: null }));
     if (window.location.pathname !== "/dashboard") {
@@ -500,9 +521,12 @@ export function AutomationWorkspace({
     setError(null);
     setLogs([]);
     setDelivered(null);
+    setTestSucceeded(null);
+    setPlanning(null);
     try {
       const result = await compileWorkflow(description, workflowId);
       if (!result.success) {
+        setPlanning(result.planning ?? null);
         setError(result.error);
         return;
       }
@@ -513,6 +537,7 @@ export function AutomationWorkspace({
       setValues(initialValues);
       setSelectedStepId(ordered[0]?.id ?? null);
       setPrompt("");
+      setPlanning(result.planning);
       window.dispatchEvent(new CustomEvent("flowmind:active-workflow", { detail: result.id }));
       window.dispatchEvent(new Event("flowmind:automations-changed"));
       const projectPath = `/dashboard/projects/${result.id}`;
@@ -541,18 +566,19 @@ export function AutomationWorkspace({
     try {
       const result = await runTestWorkflow(workflowId, steps, values);
       if (!result.ok) {
+        setLogs(result.logs ?? []);
+        setTestSucceeded(false);
         setError(result.error);
         return;
       }
       setLogs(result.logs);
       setDelivered(result.delivered);
+      setTestSucceeded(true);
       window.dispatchEvent(
         new CustomEvent("flowmind:executions-changed", { detail: workflowId }),
       );
-      if (result.delivered) {
-        window.localStorage.setItem(`flowmind:status:${workflowId}`, "working");
-        window.dispatchEvent(new CustomEvent("flowmind:status-changed", { detail: { id: workflowId, status: "Working" } }));
-      }
+      window.localStorage.setItem(`flowmind:status:${workflowId}`, "working");
+      window.dispatchEvent(new CustomEvent("flowmind:status-changed", { detail: { id: workflowId, status: "Working" } }));
     } catch {
       setError("The test couldn’t run. Please try again.");
     } finally {
@@ -692,16 +718,23 @@ export function AutomationWorkspace({
               <div className="flex items-start gap-3"><span className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd]"><Bot className="size-4 text-[#8a6200]" /></span><div className="max-w-xl rounded-2xl rounded-tl-sm border border-[#e4ddd2] bg-[#fffdfa] px-4 py-3 text-[11px] leading-5 text-slate-600 shadow-sm">Describe an outcome below and I’ll turn it into connected, configurable steps.</div></div>
             )}
             {workflow && (
-              <div className="flex items-start gap-3"><span className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd]"><Sparkles className="size-4 text-[#8a6200]" /></span><div className="max-w-2xl rounded-2xl rounded-tl-sm border border-[#e4ddd2] bg-[#fffdfa] px-4 py-3 shadow-sm"><p className="text-[11px] font-semibold text-slate-900">{toPlainEnglish(workflow.workflowName)}</p><p className="mt-1 text-[11px] leading-5 text-slate-500">{toPlainEnglish(workflow.summary)}</p><p className="mt-2 text-[10px] font-medium text-[#805b00]">Select each node to complete its setup.</p></div></div>
+              <div className="flex items-start gap-3"><span className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd]"><Sparkles className="size-4 text-[#8a6200]" /></span><div className="max-w-2xl rounded-2xl rounded-tl-sm border border-[#e4ddd2] bg-[#fffdfa] px-4 py-3 shadow-sm"><p className="text-[11px] font-semibold text-slate-900">{toPlainEnglish(workflow.workflowName)}</p><p className="mt-1 text-[11px] leading-5 text-slate-500">{toPlainEnglish(workflow.summary)}</p><p className="mt-3 text-[9px] font-bold uppercase tracking-[0.12em] text-[#805b00]">What will happen</p><div className="mt-2 grid gap-1.5">{steps.map((step, index) => <p key={step.id} className="text-[10px] leading-4 text-slate-600"><span className="font-semibold text-slate-800">{index + 1}. {stepVisuals[step.type].label}:</span> {toPlainEnglish(step.title)}</p>)}</div></div></div>
             )}
             {isBuilding && <div className="flex items-center gap-3"><span className="flex size-8 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd]"><Bot className="size-4 text-[#8a6200]" /></span><span className="flex items-center gap-2 rounded-2xl rounded-tl-sm border border-[#e4ddd2] bg-[#fffdfa] px-4 py-3 text-[11px] text-slate-500 shadow-sm"><LoaderCircle className="size-3.5 animate-spin text-[#b18410]" />Building your workflow…</span></div>}
             {error && <div role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[11px] text-rose-700">{error}</div>}
-            {logs.length > 0 && <div className={`mt-4 rounded-xl border p-3 ${delivered ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"}`}><p className="flex items-center gap-2 text-[11px] font-semibold text-slate-900"><CirclePlay className={`size-3.5 ${delivered ? "text-emerald-500" : "text-amber-500"}`} />Test results</p><div className="mt-2 space-y-1.5">{logs.map((log, index) => <p key={`${log.message}-${index}`} className="text-[10px] leading-4 text-slate-600">{log.icon} {log.message}</p>)}</div></div>}
+            {planning && planning.status !== "READY_TO_COMPILE" && (
+              <div className="mt-3 rounded-xl border border-[#e7c75f] bg-[#fff7dc] px-4 py-3 text-[10px] leading-4 text-slate-700">
+                <p className="font-semibold text-slate-900">{planning.status === "NEEDS_CLARIFICATION" ? "A little more detail is needed" : planning.status === "UNSUPPORTED" ? "Not supported yet" : "Requirements conflict"}</p>
+                {planning.clarificationQuestions.map((question) => <p key={question} className="mt-1.5">{question}</p>)}
+                {planning.requestedUnsupportedCapabilities.map((capability) => <p key={capability.capabilityId} className="mt-1.5">{capability.displayName}: not currently supported.</p>)}
+              </div>
+            )}
+            {logs.length > 0 && <div className={`mt-4 rounded-xl border p-3 ${testSucceeded ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}><p className="flex items-center gap-2 text-[11px] font-semibold text-slate-900"><CirclePlay className={`size-3.5 ${testSucceeded ? "text-emerald-500" : "text-rose-500"}`} />Test results{testSucceeded && delivered ? " · external delivery acknowledged" : ""}</p><div className="mt-2 space-y-1.5">{logs.map((log, index) => <p key={`${log.message}-${index}`} className="text-[10px] leading-4 text-slate-600">{log.icon} {log.message}</p>)}</div></div>}
           </div>
 
           <div className="shrink-0 border-t border-[#e4ddd2] bg-[#fffdfa] px-4 pb-4 pt-3 sm:px-5">
             <div className="flex items-end gap-2 rounded-2xl border-[1.5px] border-[#ded6ca] bg-white px-3 py-2.5 shadow-[0_8px_30px_rgba(39,37,54,.06)] transition focus-within:border-[#d7aa2f] focus-within:ring-4 focus-within:ring-[#f4e5ad]">
-              <textarea value={prompt} onChange={(event) => { setPrompt(event.target.value); setError(null); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void buildAutomation(); } }} rows={1} maxLength={10_000} placeholder={workflow ? "Describe a different automation to replace this one…" : "Describe the automation you want to build…"} className="max-h-28 min-h-8 flex-1 resize-none bg-transparent py-1 text-[12px] leading-5 text-slate-800 outline-none placeholder:text-slate-400" />
+              <textarea value={prompt} onChange={(event) => { setPrompt(event.target.value); setError(null); setPlanning(null); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void buildAutomation(); } }} rows={1} maxLength={10_000} placeholder={workflow ? "Describe a different automation to replace this one…" : "Describe the automation you want to build…"} className="max-h-28 min-h-8 flex-1 resize-none bg-transparent py-1 text-[12px] leading-5 text-slate-800 outline-none placeholder:text-slate-400" />
               <button type="button" onClick={() => void buildAutomation()} disabled={!prompt.trim() || isBuilding} aria-label={isBuilding ? "Generating workflow" : "Generate workflow"} className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-[#dfbd4c] bg-[#fff2bd] text-[#725300] transition hover:bg-[#f1c94b] hover:text-[#272536] disabled:cursor-not-allowed disabled:opacity-35">{isBuilding ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}</button>
             </div>
             {!workflow && <div className="mt-2 flex gap-2 overflow-x-auto pb-0.5">{examples.map((example) => <button key={example} type="button" onClick={() => setPrompt(example)} className="shrink-0 rounded-lg border border-[#ded6ca] bg-[#f8f4ec] px-2.5 py-1.5 text-[9px] text-slate-500 transition hover:border-[#d7aa2f] hover:bg-[#fff7dc] hover:text-[#7f5d00]">{example}</button>)}</div>}

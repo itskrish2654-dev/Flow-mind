@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "tsx --test tests/*.test.ts",
     "verify:rls": "node scripts/verify-anonymous-rls.mjs"
   },
   "dependencies": {
@@ -29,6 +30,7 @@
     "eslint": "^9",
     "eslint-config-next": "^16.3.0",
     "tailwindcss": "^4",
+    "tsx": "^4.23.12",
     "typescript": "^5"
   }
 }

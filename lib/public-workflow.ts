@@ -2,6 +2,7 @@ import "server-only";
 
 import { z } from "zod";
 
+import { assessWorkflowCapabilities } from "@/lib/capability-registry";
 import { createPublicFormDefinition } from "@/lib/public-form";
 import {
   CompiledWorkflowSchema,
@@ -64,11 +65,16 @@ export async function getPublicExecutableWorkflow(workflowId: string) {
 
     const parsed = CompiledWorkflowSchema.safeParse(data?.compiled_steps);
     if (error || !data?.user_id || !parsed.success) return null;
+    const unavailable = assessWorkflowCapabilities(
+      parsed.data.steps,
+      "production",
+    ).find(({ assessment }) => !assessment.available);
 
     return {
       ...publicWorkflow,
       ownerId: data.user_id,
       workflow: parsed.data,
+      capabilityError: unavailable?.assessment.message ?? null,
       admin,
     };
   } catch (error: unknown) {

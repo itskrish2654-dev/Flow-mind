@@ -2,6 +2,8 @@
 
 import { z } from "zod";
 
+import { executeAiText } from "@/lib/ai-execution";
+import { resolveStepCapabilityId } from "@/lib/capability-registry";
 import type { PublicFormSubmissionState } from "@/lib/public-form";
 import { uploadGeneratedDocument } from "@/lib/document-storage";
 import { getPublicExecutableWorkflow } from "@/lib/public-workflow";
@@ -37,8 +39,8 @@ export async function submitPublicWorkflow(
 
   if (String(formData.get("company_website") ?? "").trim()) {
     return {
-      status: "success",
-      message: "Thank you! Your submission has been processed.",
+      status: "error",
+      message: "This submission was rejected.",
     };
   }
 
@@ -47,6 +49,12 @@ export async function submitPublicWorkflow(
     return {
       status: "error",
       message: "This form is no longer accepting submissions.",
+    };
+  }
+  if (publicWorkflow.capabilityError) {
+    return {
+      status: "error",
+      message: publicWorkflow.capabilityError,
     };
   }
 
@@ -151,6 +159,7 @@ export async function submitPublicWorkflow(
       steps: publicWorkflow.workflow.steps,
       inputValues: inputData,
       mode: "public-form",
+      executeAi: executeAiText,
       uploadGeneratedDocument: async ({ bytes }) =>
         uploadGeneratedDocument(
           publicWorkflow.admin,
@@ -163,7 +172,7 @@ export async function submitPublicWorkflow(
     console.error("Public workflow execution failed", error);
     return {
       status: "error",
-      message: "We couldn’t generate the document. Please try again.",
+      message: "We couldn't complete this workflow safely. Please try again.",
     };
   }
 
@@ -184,8 +193,25 @@ export async function submitPublicWorkflow(
     };
   }
 
+  if (!execution.ok) {
+    return {
+      status: "error",
+      message:
+        execution.failureReason ?? "This workflow could not complete the submission.",
+    };
+  }
+
+  const storesInternally = publicWorkflow.workflow.steps.some(
+    (step) => resolveStepCapabilityId(step) === "flowmind_data_store",
+  );
+  const generatedDocument = execution.outputData.documents.length > 0;
+
   return {
     status: "success",
-    message: "Thank you! Your submission has been processed.",
+    message: storesInternally
+      ? "Thank you! Your submission has been stored in FlowMind."
+      : generatedDocument
+        ? "Thank you! Your PDF has been generated and stored in FlowMind."
+        : "Thank you! The workflow completed successfully.",
   };
 }

@@ -38,7 +38,9 @@ const INTERNAL_OUTPUT_FIELDS = new Set([
 const HANDLED_OUTPUT_FIELDS = new Set([
   ...INTERNAL_OUTPUT_FIELDS,
   "ai_result",
+  "ai_metadata",
   "delivered",
+  "steps",
   "status",
   "summary",
 ]);
@@ -170,10 +172,10 @@ function executionStatus(value: Json): string {
 
 function statusClasses(status: string): string {
   const normalized = status.toLowerCase();
-  if (["delivered", "success", "completed"].includes(normalized)) {
+  if (["delivered", "success", "succeeded", "completed"].includes(normalized)) {
     return "bg-emerald-50 text-emerald-700 ring-emerald-600/10";
   }
-  if (["failed", "error"].includes(normalized)) {
+  if (["failed", "partial", "error"].includes(normalized)) {
     return "bg-rose-50 text-rose-700 ring-rose-600/10";
   }
   return "bg-[#fff0b9] text-[#7f5d00] ring-[#d7aa2f]/20";
@@ -333,7 +335,7 @@ function ExecutionDetailsDrawer({
             {delivered !== null && (
               <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[9px] font-semibold ${delivered ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
                 <CheckCircle2 className="size-3" />
-                {delivered ? "Delivered" : "Processed locally"}
+                {delivered ? "External delivery acknowledged" : "No external delivery"}
               </span>
             )}
           </div>

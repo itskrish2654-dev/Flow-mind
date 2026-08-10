@@ -2,7 +2,9 @@
 
 import { z } from "zod";
 
+import { executeAiText } from "@/lib/ai-execution";
 import { getAuthenticatedContext } from "@/lib/auth";
+import { assessWorkflowCapabilities } from "@/lib/capability-registry";
 import { uploadGeneratedDocument } from "@/lib/document-storage";
 import {
   CompiledWorkflowSchema,
@@ -25,7 +27,12 @@ export type TestWorkflowResult =
       delivered: boolean;
       executionId: string;
     }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      error: string;
+      logs?: TestExecutionLog[];
+      executionId?: string;
+    };
 
 type InputValues = Record<string, string>;
 
@@ -72,11 +79,17 @@ export async function runTestWorkflow(
     return { ok: false, error: "This automation needs to be created again." };
   }
 
-  const validationError = validateRequiredSetupInputs(
+  const hasUnavailableCapability = assessWorkflowCapabilities(
     savedWorkflow.data.steps,
-    request.data.inputValues,
-  );
-  if (validationError) return { ok: false, error: validationError };
+    "test",
+  ).some(({ assessment }) => !assessment.available);
+  if (!hasUnavailableCapability) {
+    const validationError = validateRequiredSetupInputs(
+      savedWorkflow.data.steps,
+      request.data.inputValues,
+    );
+    if (validationError) return { ok: false, error: validationError };
+  }
 
   let execution: Awaited<ReturnType<typeof executeWorkflowSteps>>;
   try {
@@ -86,6 +99,7 @@ export async function runTestWorkflow(
       steps: savedWorkflow.data.steps,
       inputValues: request.data.inputValues,
       mode: "test",
+      executeAi: executeAiText,
       uploadGeneratedDocument: async ({ bytes }) =>
         uploadGeneratedDocument(
           auth.supabase,
@@ -96,10 +110,7 @@ export async function runTestWorkflow(
     });
   } catch (error: unknown) {
     console.error("FlowMind workflow execution failed", error);
-    return {
-      ok: false,
-      error: "The workflow could not finish generating its document.",
-    };
+    return { ok: false, error: "The workflow could not complete this test safely." };
   }
 
   const { data: savedExecution, error: executionError } = await auth.supabase
@@ -120,6 +131,15 @@ export async function runTestWorkflow(
     return {
       ok: false,
       error: "The workflow ran, but its result could not be saved.",
+    };
+  }
+
+  if (!execution.ok) {
+    return {
+      ok: false,
+      error: execution.failureReason ?? "The workflow could not complete this test.",
+      logs: execution.logs,
+      executionId: savedExecution.id,
     };
   }
 

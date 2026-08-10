@@ -57,6 +57,15 @@ function readSavedValues(workflowId: string): Record<string, string> {
 function workflowStatus(item: SavedWorkflow): AutomationStatus {
   if (window.localStorage.getItem(`flowmind:status:${item.id}`) === "working") return "Working";
   if (!item.workflow) return "Draft";
+  if (
+    item.workflow.steps.some(
+      (step) =>
+        step.capabilityStatus === "unsupported" ||
+        step.capabilityStatus === "test_only",
+    )
+  ) {
+    return "Draft";
+  }
   const values = readSavedValues(item.id);
   const steps = orderWorkflowSteps(item.workflow.steps);
   const ready = steps.every((step) =>

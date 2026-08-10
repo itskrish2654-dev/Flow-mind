@@ -1,17 +1,41 @@
-import "server-only";
-
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
-import type { CompiledWorkflow } from "@/lib/schemas/workflow";
+import type {
+  AiExecutionMetadata,
+  AiTextExecutor,
+} from "@/lib/ai-execution-core";
+import {
+  assessWorkflowCapabilities,
+  resolveStepCapabilityId,
+} from "@/lib/capability-registry";
 import {
   generatePdfBuffer,
   populateDocumentTemplate,
   type DocumentVariables,
 } from "@/lib/pdf-document";
+import type { CompiledWorkflow } from "@/lib/schemas/workflow";
+
+export type StepExecutionStatus =
+  | "pending"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "skipped"
+  | "unsupported";
 
 export type ExecutionLog = {
   icon: string;
+  message: string;
+  stepId?: string;
+  status?: StepExecutionStatus;
+};
+
+export type StepExecutionRecord = {
+  stepId: string;
+  capabilityId: string;
+  title: string;
+  status: StepExecutionStatus;
   message: string;
 };
 
@@ -23,13 +47,17 @@ export type GeneratedDocumentUpload = (input: {
 }) => Promise<{ url: string; filename: string }>;
 
 export type WorkflowExecutionResult = {
+  ok: boolean;
+  failureReason: string | null;
   logs: ExecutionLog[];
   delivered: boolean;
   inputData: Record<string, string>;
   outputData: {
-    status: "processed" | "delivered";
+    status: "succeeded" | "failed" | "partial";
     summary: string;
     ai_result: string | null;
+    ai_metadata: Array<AiExecutionMetadata & { stepId: string }>;
+    steps: StepExecutionRecord[];
     logs: ExecutionLog[];
     delivered: boolean;
     pdf_url: string | null;
@@ -74,7 +102,6 @@ function isBlockedIpAddress(address: string): boolean {
 
 async function validatePublicDestination(value: string): Promise<URL | null> {
   let destination: URL;
-
   try {
     destination = new URL(value);
   } catch {
@@ -118,31 +145,23 @@ async function validatePublicDestination(value: string): Promise<URL | null> {
   return destination;
 }
 
-function destinationCandidates(
-  step: WorkflowStep,
-  inputValues: InputValues,
-): string[] {
+function destinationCandidates(step: WorkflowStep, inputValues: InputValues): string[] {
   const stepInputKeys = new Set(
     (step.inputsRequired ?? []).flatMap((input) => [
       input.key,
       `${step.id}-${input.key}`,
     ]),
   );
-  const entries = Object.entries(inputValues);
-  const associatedValues = entries
+  const associatedValues = Object.entries(inputValues)
     .filter(([key]) => stepInputKeys.has(key) || key.startsWith(`${step.id}-`))
     .map(([, value]) => value);
-  const destinationNamedValues = entries
-    .filter(
-      ([key]) =>
-        /destination|webhook|url|link|send|save/i.test(key) &&
-        !/trigger|listen|source/i.test(key),
-    )
+  const namedValues = Object.entries(inputValues)
+    .filter(([key]) => /destination|webhook|url|link|send/i.test(key))
     .map(([, value]) => value);
 
-  return Array.from(new Set([...associatedValues, ...destinationNamedValues])).filter(
-    (value) => /^https?:\/\//i.test(value.trim()),
-  );
+  return Array.from(
+    new Set([step.config?.endpoint ?? "", ...associatedValues, ...namedValues]),
+  ).filter((value) => /^https?:\/\//i.test(value.trim()));
 }
 
 async function findDestinationUrl(
@@ -153,7 +172,6 @@ async function findDestinationUrl(
     const destination = await validatePublicDestination(candidate.trim());
     if (destination) return destination;
   }
-
   return null;
 }
 
@@ -162,7 +180,9 @@ export function validateRequiredSetupInputs(
   inputValues: InputValues,
 ): string | null {
   for (const step of steps) {
-    if (step.type === "webhook_trigger" || step.type === "http_request") continue;
+    if (["public_form_trigger", "webhook_trigger", "store_data"].includes(step.type)) {
+      continue;
+    }
 
     if (step.type === "generate_pdf") {
       const template = (
@@ -182,7 +202,6 @@ export function validateRequiredSetupInputs(
         input.value ??
         ""
       ).trim();
-
       if (!value) return `${input.label} is required before running a test.`;
       if (input.type === "url") {
         try {
@@ -196,7 +215,6 @@ export function validateRequiredSetupInputs(
       }
     }
   }
-
   return null;
 }
 
@@ -211,7 +229,6 @@ function safeInputData(
         .flatMap((input) => [input.key, `${step.id}-${input.key}`]),
     ),
   );
-
   return Object.fromEntries(
     Object.entries(inputValues).filter(
       ([key, value]) =>
@@ -234,7 +251,6 @@ function executionVariables(
     trigger: { ...inputData },
     workflow: { id: workflowId, name: workflowName },
   };
-
   for (const step of steps) {
     for (const input of step.inputsRequired ?? []) {
       const value =
@@ -244,7 +260,6 @@ function executionVariables(
       if (value !== undefined) variables[input.key] = value;
     }
   }
-
   return variables;
 }
 
@@ -255,6 +270,8 @@ export async function executeWorkflowSteps({
   inputValues,
   mode,
   uploadGeneratedDocument,
+  executeAi,
+  fetchImpl = fetch,
 }: {
   workflowId: string;
   workflowName: string;
@@ -262,12 +279,14 @@ export async function executeWorkflowSteps({
   inputValues: InputValues;
   mode: "test" | "public-form";
   uploadGeneratedDocument?: GeneratedDocumentUpload;
+  executeAi?: AiTextExecutor;
+  fetchImpl?: typeof fetch;
 }): Promise<WorkflowExecutionResult> {
   const logs: ExecutionLog[] = [];
+  const records: StepExecutionRecord[] = [];
   const inputData = safeInputData(steps, inputValues);
-  let delivered = false;
-  let aiResult: string | null = null;
   const documents: Array<{ url: string; filename: string }> = [];
+  const aiMetadata: Array<AiExecutionMetadata & { stepId: string }> = [];
   const variables = executionVariables(
     steps,
     inputValues,
@@ -275,143 +294,196 @@ export async function executeWorkflowSteps({
     workflowId,
     workflowName,
   );
+  let delivered = false;
+  let aiResult: string | null = null;
+  let failureReason: string | null = null;
+
+  const finish = (): WorkflowExecutionResult => {
+    const succeeded = records.filter((record) => record.status === "succeeded").length;
+    const failed = records.some((record) =>
+      ["failed", "unsupported", "skipped"].includes(record.status),
+    );
+    const status = failed ? (succeeded > 0 ? "partial" : "failed") : "succeeded";
+    return {
+      ok: !failed,
+      failureReason,
+      logs,
+      delivered,
+      inputData,
+      outputData: {
+        status,
+        summary: failureReason
+          ? `${workflowName} stopped: ${failureReason}`
+          : `${workflowName} completed ${records.length} step${records.length === 1 ? "" : "s"}.`,
+        ai_result: aiResult,
+        ai_metadata: aiMetadata,
+        steps: records,
+        logs,
+        delivered,
+        pdf_url: documents[0]?.url ?? null,
+        documents,
+      },
+    };
+  };
+
+  const capabilityChecks = assessWorkflowCapabilities(
+    steps,
+    mode === "test" ? "test" : "production",
+  );
+  const unavailable = capabilityChecks.find(({ assessment }) => !assessment.available);
+  if (unavailable) {
+    failureReason = unavailable.assessment.message ?? "This workflow contains an unsupported step.";
+    for (const { step, assessment } of capabilityChecks) {
+      const isUnavailable = step.id === unavailable.step.id;
+      const status: StepExecutionStatus = isUnavailable ? "unsupported" : "skipped";
+      const message = isUnavailable
+        ? failureReason
+        : "Not run because this workflow contains an unsupported capability.";
+      records.push({
+        stepId: step.id,
+        capabilityId: assessment.capabilityId,
+        title: step.title,
+        status,
+        message,
+      });
+      logs.push({ icon: isUnavailable ? "⛔" : "⏭", message, stepId: step.id, status });
+    }
+    return finish();
+  }
+
+  const skipRemaining = (startIndex: number, reason: string) => {
+    for (const step of steps.slice(startIndex)) {
+      const message = `Skipped because an earlier step failed: ${reason}`;
+      records.push({
+        stepId: step.id,
+        capabilityId: resolveStepCapabilityId(step) ?? "unknown",
+        title: step.title,
+        status: "skipped",
+        message,
+      });
+      logs.push({ icon: "⏭", message, stepId: step.id, status: "skipped" });
+    }
+  };
 
   for (const [index, step] of steps.entries()) {
-    if (step.type === "webhook_trigger") {
-      logs.push({
-        icon: "✅",
-        message:
-          mode === "public-form"
-            ? `Step ${index + 1}: Received ${Object.keys(inputData).length} submitted field${Object.keys(inputData).length === 1 ? "" : "s"}.`
-            : `Step ${index + 1}: A safe sample event started the automation.`,
-      });
+    const capabilityId = resolveStepCapabilityId(step) ?? "unknown";
+    const succeed = (message: string) => {
+      records.push({ stepId: step.id, capabilityId, title: step.title, status: "succeeded", message });
+      logs.push({ icon: "✅", message, stepId: step.id, status: "succeeded" });
+    };
+    const fail = (message: string, status: "failed" | "skipped" = "failed") => {
+      failureReason = message;
+      records.push({ stepId: step.id, capabilityId, title: step.title, status, message });
+      logs.push({ icon: status === "skipped" ? "⏭" : "❌", message, stepId: step.id, status });
+      skipRemaining(index + 1, message);
+    };
+
+    if (capabilityId === "public_form_submission") {
+      succeed(
+        mode === "public-form"
+          ? `Received ${Object.keys(inputData).length} submitted field${Object.keys(inputData).length === 1 ? "" : "s"}.`
+          : "A safe sample form submission started the test.",
+      );
       continue;
     }
 
-    if (step.type === "ai_transform") {
-      aiResult = `${step.title} processed the submission for ${workflowName}.`;
-      variables.ai_result = aiResult;
-      variables.ai_summary = aiResult;
-      variables.ai = { result: aiResult, summary: aiResult };
-      variables.ai_output = aiResult;
-      variables.ai_content = aiResult;
-      variables.ai_transformed_content = aiResult;
-      variables.generated_content = aiResult;
-      variables[step.id] = aiResult;
-      logs.push({
-        icon: "✨",
-        message: `Step ${index + 1}: FlowPilot created the automation result.`,
-      });
-      continue;
-    }
-
-    if (step.type === "generate_pdf") {
-      if (!uploadGeneratedDocument) {
-        throw new Error("Document storage is not configured for this execution.");
+    if (capabilityId === "ai_text_transform") {
+      if (!executeAi) {
+        fail("AI execution is not configured for this run.");
+        break;
       }
-
-      const template =
-        inputValues[`${step.id}-document_template`] ??
-        inputValues.document_template ??
-        step.config?.documentTemplate ??
-        "# Document\n\n{{ai_summary}}";
-      const populatedDocument = populateDocumentTemplate(template, variables);
-      const bytes = await generatePdfBuffer(populatedDocument);
-      const uploadedDocument = await uploadGeneratedDocument({ bytes });
-      const document = {
-        url: uploadedDocument.url,
-        filename: uploadedDocument.filename,
-      };
-      documents.push(document);
-      variables.pdf_url = document.url;
-      delivered = true;
-      logs.push({
-        icon: "📄",
-        message: `Step ${index + 1}: Your PDF was generated and saved successfully.`,
-      });
-      continue;
-    }
-
-    if (step.type === "filter_condition") {
-      logs.push({
-        icon: "🔍",
-        message: `Step ${index + 1}: The submitted information passed your rule.`,
-      });
-      continue;
-    }
-
-    if (step.type === "http_request" && mode === "public-form") {
-      delivered = true;
-      logs.push({
-        icon: "📥",
-        message: `Step ${index + 1}: The result was prepared for your FlowMind data table.`,
-      });
-      continue;
-    }
-
-    if (step.type === "http_request") {
-      const destinationUrl = await findDestinationUrl(step, inputValues);
-
-      if (!destinationUrl) {
-        delivered = true;
-        logs.push({
-          icon: "📥",
-          message: `Step ${index + 1}: The result was prepared for your FlowMind data table.`,
-        });
-        continue;
-      }
-
       try {
-        const response = await fetch(destinationUrl, {
+        const result = await executeAi({
+          instruction:
+            step.config?.transformPrompt ?? step.description ?? "Transform the submission.",
+          content: JSON.stringify({ input: inputData, previous_ai_result: aiResult }),
+        });
+        aiResult = result.text;
+        aiMetadata.push({ ...result.metadata, stepId: step.id });
+        variables.ai_result = aiResult;
+        variables.ai_summary = aiResult;
+        variables.ai = { result: aiResult, summary: aiResult };
+        variables.ai_output = aiResult;
+        variables.ai_content = aiResult;
+        variables.ai_transformed_content = aiResult;
+        variables.generated_content = aiResult;
+        variables[step.id] = aiResult;
+        succeed(`AI completed this step using ${result.metadata.provider}/${result.metadata.model}.`);
+      } catch (error: unknown) {
+        console.error("FlowMind AI execution failed", error);
+        fail(error instanceof Error ? error.message : "The AI provider could not complete this step.");
+        break;
+      }
+      continue;
+    }
+
+    if (capabilityId === "generate_pdf") {
+      if (!uploadGeneratedDocument) {
+        fail("Document storage is not configured for this execution.");
+        break;
+      }
+      try {
+        const template =
+          inputValues[`${step.id}-document_template`] ??
+          inputValues.document_template ??
+          step.config?.documentTemplate ??
+          "# Document\n\n{{ai.result}}";
+        const bytes = await generatePdfBuffer(populateDocumentTemplate(template, variables));
+        const document = await uploadGeneratedDocument({ bytes });
+        documents.push(document);
+        variables.pdf_url = document.url;
+        succeed("PDF generated and stored in FlowMind document storage.");
+      } catch (error: unknown) {
+        console.error("FlowMind PDF generation failed", error);
+        fail("The PDF could not be generated or stored.");
+        break;
+      }
+      continue;
+    }
+
+    if (capabilityId === "flowmind_data_store") {
+      succeed("Submission stored in FlowMind.");
+      continue;
+    }
+
+    if (capabilityId === "webhook_post") {
+      const destinationUrl = await findDestinationUrl(step, inputValues);
+      if (!destinationUrl) {
+        fail("Webhook delivery was skipped because no valid public destination URL was configured.", "skipped");
+        break;
+      }
+      try {
+        const response = await fetchImpl(destinationUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            event: "test_run",
-            message: "Hello from FlowMind! Your automation is wired up correctly.",
+            event: "workflow_test",
             workflow_id: workflowId,
             timestamp: new Date().toISOString(),
             input_data: inputData,
+            ai_result: aiResult,
           }),
           redirect: "manual",
           cache: "no-store",
           signal: AbortSignal.timeout(10_000),
         });
-
-        delivered = response.ok;
-        logs.push(
-          response.ok
-            ? {
-                icon: "🚀",
-                message: `Step ${index + 1}: Real data sent! The destination accepted it (Status: ${response.status}).`,
-              }
-            : {
-                icon: "⚠️",
-                message: `Step ${index + 1}: Data was sent, but the destination returned an error (Status: ${response.status}).`,
-              },
-        );
+        if (!response.ok) {
+          fail(`The webhook responded with status ${response.status}; delivery failed.`);
+          break;
+        }
+        delivered = true;
+        succeed(`The webhook acknowledged delivery with status ${response.status}.`);
       } catch (error: unknown) {
-        console.error("FlowMind test delivery failed", error);
-        logs.push({
-          icon: "❌",
-          message: `Step ${index + 1}: Failed to send data because of a network error or invalid link.`,
-        });
+        console.error("FlowMind webhook delivery failed", error);
+        fail("Webhook delivery failed because the destination could not be reached.");
+        break;
       }
+      continue;
     }
+
+    fail("This workflow step has no execution implementation.");
+    break;
   }
 
-  const status = delivered ? "delivered" : "processed";
-  return {
-    logs,
-    delivered,
-    inputData,
-    outputData: {
-      status,
-      summary: `${workflowName} processed ${Object.keys(inputData).length} populated field${Object.keys(inputData).length === 1 ? "" : "s"}.`,
-      ai_result: aiResult,
-      logs,
-      delivered,
-      pdf_url: documents[0]?.url ?? null,
-      documents,
-    },
-  };
+  return finish();
 }

@@ -124,12 +124,18 @@ export const DataTableDefinitionSchema = z
 export const WorkflowStepSchema = z.object({
   id: z.string(),
   type: z.enum([
+    "public_form_trigger",
     "webhook_trigger",
     "ai_transform",
+    "store_data",
+    "webhook_post",
     "http_request",
     "generate_pdf",
     "filter_condition",
   ]),
+  capabilityId: z.string().min(1).max(80).optional(),
+  capabilityStatus: z.enum(["supported", "test_only", "unsupported"]).optional(),
+  capabilityMessage: z.string().max(300).optional(),
   title: z.string(),
   description: z.string(),
   inputsRequired: z.array(StepInputSchema).optional(),
@@ -146,7 +152,7 @@ export const WorkflowStepSchema = z.object({
 export const CompiledWorkflowSchema = z.object({
   workflowName: z.string(),
   summary: z.string(),
-  steps: z.array(WorkflowStepSchema),
+  steps: z.array(WorkflowStepSchema).min(1).max(10),
   publicForm: PublicFormDefinitionSchema.optional(),
   dataTable: DataTableDefinitionSchema.optional(),
 });

@@ -34,7 +34,7 @@ export function PublicWorkflowForm({
           {form.successTitle}
         </h1>
         <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-slate-500">
-          {form.successMessage}
+          {state.message || form.successMessage}
         </p>
         <p className="mt-8 text-[11px] text-slate-500">You can safely close this page.</p>
       </section>
