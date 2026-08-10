@@ -294,3 +294,22 @@ test("31. browser workflow mutations cannot bypass publication or quotas", () =>
   );
   assert.match(workflowAction, /const admin = createAdminClient\(\)/);
 });
+
+test("32. use-server modules export only async functions at runtime", () => {
+  for (const path of [
+    "app/actions/auth.ts",
+    "app/actions/credentials.ts",
+    "app/actions/customize.ts",
+    "app/actions/documents.ts",
+    "app/actions/execute.ts",
+    "app/actions/executions.ts",
+    "app/actions/workflow.ts",
+    "app/f/[projectId]/actions.ts",
+  ]) {
+    assert.doesNotMatch(
+      source(path),
+      /^export\s+(?!type\b|interface\b|async\s+function\b)/m,
+      `${path} exports a runtime value that is not an async function`,
+    );
+  }
+});

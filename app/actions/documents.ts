@@ -7,7 +7,7 @@ import { GENERATED_DOCUMENTS_BUCKET } from "@/lib/document-storage";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { securityLog } from "@/lib/security/redaction";
 
-export const DOCUMENT_SIGNED_URL_TTL_SECONDS = 15 * 60;
+const DOCUMENT_SIGNED_URL_TTL_SECONDS = 15 * 60;
 
 export type SignedDocumentResult =
   | { ok: true; url: string; expiresInSeconds: number }
