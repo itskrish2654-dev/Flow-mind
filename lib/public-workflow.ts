@@ -4,7 +4,6 @@ import { z } from "zod";
 
 import { assessWorkflowCapabilities } from "@/lib/capability-registry";
 import { createPublicFormDefinition } from "@/lib/public-form";
-import type { PublicFormTrace } from "@/lib/public-form-trace";
 import {
   CompiledWorkflowSchema,
   PublicFormDefinitionSchema,
@@ -14,19 +13,14 @@ import { createPublicClient } from "@/lib/supabase/public";
 
 const WorkflowIdSchema = z.string().uuid();
 
-export async function getPublicWorkflow(
-  workflowId: string,
-  trace?: PublicFormTrace,
-) {
+export async function getPublicWorkflow(workflowId: string) {
   const parsedId = WorkflowIdSchema.safeParse(workflowId);
   if (!parsedId.success) return null;
 
   const supabase = createPublicClient();
-  trace?.("PUBLIC_WORKFLOW_RPC_START");
   const { data, error } = await supabase
     .rpc("get_public_workflow", { p_workflow_id: parsedId.data })
     .maybeSingle();
-  trace?.("PUBLIC_WORKFLOW_RPC_END", { ok: !error && Boolean(data) });
 
   if (error || !data) {
     if (error) {
@@ -56,25 +50,18 @@ export async function getPublicWorkflow(
   };
 }
 
-export async function getPublicExecutableWorkflow(
-  workflowId: string,
-  trace?: PublicFormTrace,
-) {
-  const publicWorkflow = await getPublicWorkflow(workflowId, trace);
+export async function getPublicExecutableWorkflow(workflowId: string) {
+  const publicWorkflow = await getPublicWorkflow(workflowId);
   if (!publicWorkflow) return null;
 
   try {
     const admin = createAdminClient();
-    trace?.("EXECUTABLE_WORKFLOW_SELECT_START");
     const { data, error } = await admin
       .from("workflows")
       .select("user_id, compiled_steps")
       .eq("id", publicWorkflow.id)
       .eq("public_form_enabled", true)
       .maybeSingle();
-    trace?.("EXECUTABLE_WORKFLOW_SELECT_END", {
-      ok: !error && Boolean(data?.user_id),
-    });
 
     const parsed = CompiledWorkflowSchema.safeParse(data?.compiled_steps);
     if (error || !data?.user_id || !parsed.success) return null;
