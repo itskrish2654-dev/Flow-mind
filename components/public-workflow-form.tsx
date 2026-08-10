@@ -31,10 +31,10 @@ export function PublicWorkflowForm({
           <CheckCircle2 className="size-8" />
         </span>
         <h1 className="mt-6 text-2xl font-semibold tracking-[-0.035em] text-slate-950 sm:text-3xl">
-          Thank you!
+          {form.successTitle}
         </h1>
         <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-slate-500">
-          Your submission has been processed.
+          {form.successMessage}
         </p>
         <p className="mt-8 text-[11px] text-slate-500">You can safely close this page.</p>
       </section>
@@ -74,31 +74,68 @@ export function PublicWorkflowForm({
 
         {form.fields.map((field) => (
           <div key={field.key}>
-            <label htmlFor={field.key} className="text-xs font-semibold text-slate-700">
-              {field.label}
-              {!field.required && <span className="ml-1 font-normal text-slate-500">Optional</span>}
-            </label>
-            {field.type === "textarea" ? (
+            {field.type === "checkbox" ? (
+              <label htmlFor={field.key} className="flex cursor-pointer items-start gap-3 rounded-xl border border-[#ddd5c9] bg-[#faf8f4] px-3.5 py-3 text-sm text-slate-700 transition hover:border-[#cfc5b6]">
+                <input
+                  id={field.key}
+                  name={field.key}
+                  type="checkbox"
+                  value="true"
+                  required={field.required}
+                  className="mt-0.5 size-4 shrink-0 accent-[#d7aa2f]"
+                />
+                <span>
+                  <span className="font-semibold">{field.label}</span>
+                  {!field.required && <span className="ml-1 text-xs font-normal text-slate-500">Optional</span>}
+                  {field.helpText && <span className="mt-1 block text-xs leading-5 text-slate-500">{field.helpText}</span>}
+                </span>
+              </label>
+            ) : (
+              <>
+                <label htmlFor={field.key} className="text-xs font-semibold text-slate-700">
+                  {field.label}
+                  {!field.required && <span className="ml-1 font-normal text-slate-500">Optional</span>}
+                </label>
+                {field.type === "textarea" ? (
               <textarea
                 id={field.key}
                 name={field.key}
                 required={field.required}
-                maxLength={5_000}
+                minLength={field.minLength}
+                maxLength={field.maxLength ?? 5_000}
                 rows={5}
                 placeholder={field.placeholder}
                 className="mt-2 min-h-28 w-full resize-y rounded-xl border border-[#ddd5c9] bg-[#faf8f4] px-3.5 py-3 text-sm leading-6 text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-[#cfc5b6] focus:border-[#d7aa2f] focus:bg-white focus:ring-4 focus:ring-[#f4e5ad]"
               />
-            ) : (
+                ) : field.type === "select" ? (
+                  <select
+                    id={field.key}
+                    name={field.key}
+                    required={field.required}
+                    defaultValue=""
+                    className="mt-2 h-12 w-full rounded-xl border border-[#ddd5c9] bg-[#faf8f4] px-3.5 text-sm text-slate-900 outline-none transition hover:border-[#cfc5b6] focus:border-[#d7aa2f] focus:bg-white focus:ring-4 focus:ring-[#f4e5ad]"
+                  >
+                    <option value="" disabled>{field.placeholder || "Choose an option"}</option>
+                    {(field.options ?? []).map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                ) : (
               <input
                 id={field.key}
                 name={field.key}
-                type={field.type}
+                type={field.type === "phone" ? "tel" : field.type}
                 required={field.required}
-                maxLength={5_000}
+                minLength={field.minLength}
+                maxLength={field.maxLength ?? 5_000}
+                min={field.type === "number" ? field.min : undefined}
+                max={field.type === "number" ? field.max : undefined}
+                inputMode={field.type === "phone" ? "tel" : field.type === "number" ? "decimal" : undefined}
                 autoComplete={field.type === "email" ? "email" : field.key === "name" ? "name" : undefined}
                 placeholder={field.placeholder}
                 className="mt-2 h-12 w-full rounded-xl border border-[#ddd5c9] bg-[#faf8f4] px-3.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-[#cfc5b6] focus:border-[#d7aa2f] focus:bg-white focus:ring-4 focus:ring-[#f4e5ad]"
               />
+                )}
+                {field.helpText && <p className="mt-1.5 text-xs leading-5 text-slate-500">{field.helpText}</p>}
+              </>
             )}
           </div>
         ))}
@@ -115,7 +152,7 @@ export function PublicWorkflowForm({
           className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-[#dfbd4c] bg-[#f1c94b] text-sm font-semibold text-[#272536] shadow-[0_10px_28px_-18px_rgba(138,98,0,.65)] transition hover:bg-[#f4d66c] disabled:cursor-wait disabled:opacity-70"
         >
           {pending ? <LoaderCircle className="size-4 animate-spin" /> : <Send className="size-4" />}
-          {pending ? "Processing your submission…" : "Submit response"}
+          {pending ? "Processing your submission…" : form.submitButtonLabel}
         </button>
         <p className="flex items-center justify-center gap-1.5 text-center text-[10px] text-slate-500">
           <LockKeyhole className="size-3 text-[#9a7007]" /> Sent securely to this automation

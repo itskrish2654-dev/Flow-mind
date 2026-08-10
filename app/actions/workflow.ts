@@ -2,15 +2,21 @@
 
 import { groq } from "@ai-sdk/groq";
 import { generateText, Output } from "ai";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import {
   CompiledWorkflowSchema,
+  DataTableDefinitionSchema,
+  PublicFormDefinitionSchema,
   type CompiledWorkflow,
+  type DataTableDefinition,
+  type PublicFormDefinition,
   type StepInput,
 } from "@/lib/schemas/workflow";
 import { getAuthenticatedContext } from "@/lib/auth";
 import { createPublicFormDefinition } from "@/lib/public-form";
+import { createDefaultDataTableDefinition } from "@/lib/workflow-customization";
 
 const MAX_PROMPT_LENGTH = 10_000;
 
@@ -60,7 +66,7 @@ function isPdfWorkflow(prompt: string): boolean {
 }
 
 function defaultDocumentTemplate(workflowName: string): string {
-  return `# ${workflowName}\n\nPrepared for {{name}}\n\n{{query}}\n\n## Summary\n\n{{ai_summary}}`;
+  return `# ${workflowName}\n\nPrepared for {{trigger.name}}\n\n{{trigger.query}}\n\n## Summary\n\n{{ai.summary}}`;
 }
 
 function normalizeDocumentTemplate(
@@ -214,6 +220,82 @@ export type DeleteWorkflowResult =
 export type SaveDocumentTemplateResult =
   | { ok: true; workflow: CompiledWorkflow }
   | { ok: false; error: string };
+
+export type SaveWorkflowCustomizationResult =
+  | { ok: true; workflow: CompiledWorkflow }
+  | { ok: false; error: string };
+
+export async function saveWorkflowCustomization(
+  workflowId: string,
+  customization: {
+    publicForm?: PublicFormDefinition;
+    dataTable?: DataTableDefinition;
+  },
+): Promise<SaveWorkflowCustomizationResult> {
+  const request = z
+    .object({
+      workflowId: z.string().uuid(),
+      customization: z
+        .object({
+          publicForm: PublicFormDefinitionSchema.optional(),
+          dataTable: DataTableDefinitionSchema.optional(),
+        })
+        .refine((value) => value.publicForm || value.dataTable, {
+          message: "Choose something to customize before saving.",
+        }),
+    })
+    .safeParse({ workflowId, customization });
+
+  if (!request.success) {
+    return {
+      ok: false,
+      error: request.error.issues[0]?.message ?? "The customization is invalid.",
+    };
+  }
+
+  const auth = await getAuthenticatedContext();
+  if (!auth) return { ok: false, error: "Unauthorized" };
+
+  const { data, error } = await auth.supabase
+    .from("workflows")
+    .select("compiled_steps")
+    .eq("id", request.data.workflowId)
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+
+  const parsed = CompiledWorkflowSchema.safeParse(data?.compiled_steps);
+  if (error || !parsed.success) {
+    return { ok: false, error: "We couldn't find this workflow." };
+  }
+
+  const workflow = CompiledWorkflowSchema.parse({
+    ...parsed.data,
+    ...(request.data.customization.publicForm
+      ? { publicForm: request.data.customization.publicForm }
+      : {}),
+    ...(request.data.customization.dataTable
+      ? { dataTable: request.data.customization.dataTable }
+      : {}),
+  });
+
+  const { error: updateError } = await auth.supabase
+    .from("workflows")
+    .update({ compiled_steps: workflow })
+    .eq("id", request.data.workflowId)
+    .eq("user_id", auth.user.id);
+
+  if (updateError) {
+    console.error("Supabase workflow customization update failed", {
+      code: updateError.code,
+      message: updateError.message,
+    });
+    return { ok: false, error: "We couldn't save these changes." };
+  }
+
+  revalidatePath(`/f/${request.data.workflowId}`);
+  revalidatePath(`/dashboard/projects/${request.data.workflowId}`);
+  return { ok: true, workflow };
+}
 
 export async function saveDocumentTemplate(
   workflowId: string,
@@ -502,7 +584,7 @@ System Rules for Step Order:
 3. STEP 3 must ALWAYS be the Destination Action. Use type generate_pdf for a PDF,
    invoice, proposal, report, or document. Otherwise use type http_request for sending
    to another app. A generate_pdf config must include a useful Markdown documentTemplate
-   with variables such as {{name}}, {{query}}, and {{ai_summary}}.
+   with variables such as {{trigger.name}}, {{trigger.query}}, and {{ai.summary}}.
 NEVER place the Destination step before the AI Generation step.
 Return exactly three steps in this exact order. Do not add a filter_condition step.
 
@@ -563,14 +645,16 @@ Use null for configuration values that do not apply to a step.`,
     }
 
     const youtubeWorkflow = isYouTubeScriptWorkflow(normalizedPrompt);
+    const publicForm = createPublicFormDefinition(
+      normalizedPrompt,
+      output.workflowName,
+      output.summary,
+    );
     const compiledWorkflow = CompiledWorkflowSchema.parse({
       workflowName: output.workflowName,
       summary: output.summary,
-      publicForm: createPublicFormDefinition(
-        normalizedPrompt,
-        output.workflowName,
-        output.summary,
-      ),
+      publicForm,
+      dataTable: createDefaultDataTableDefinition(publicForm),
       steps: orderedSteps.map((orderedStep, stepIndex) => {
         const step = orderedStep!;
         const config = {

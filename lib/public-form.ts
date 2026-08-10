@@ -82,6 +82,9 @@ export function createPublicFormDefinition(
     title: workflowName,
     description: summary,
     fields: uniqueFields(fields).slice(0, 6),
+    submitButtonLabel: "Submit response",
+    successTitle: "Thank you!",
+    successMessage: "Your submission has been processed.",
   };
 }
 

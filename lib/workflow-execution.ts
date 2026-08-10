@@ -226,8 +226,14 @@ function executionVariables(
   steps: WorkflowStep[],
   inputValues: InputValues,
   inputData: Record<string, string>,
+  workflowId: string,
+  workflowName: string,
 ): DocumentVariables {
-  const variables: DocumentVariables = { ...inputData };
+  const variables: DocumentVariables = {
+    ...inputData,
+    trigger: { ...inputData },
+    workflow: { id: workflowId, name: workflowName },
+  };
 
   for (const step of steps) {
     for (const input of step.inputsRequired ?? []) {
@@ -262,7 +268,13 @@ export async function executeWorkflowSteps({
   let delivered = false;
   let aiResult: string | null = null;
   const documents: Array<{ url: string; filename: string }> = [];
-  const variables = executionVariables(steps, inputValues, inputData);
+  const variables = executionVariables(
+    steps,
+    inputValues,
+    inputData,
+    workflowId,
+    workflowName,
+  );
 
   for (const [index, step] of steps.entries()) {
     if (step.type === "webhook_trigger") {
@@ -280,6 +292,7 @@ export async function executeWorkflowSteps({
       aiResult = `${step.title} processed the submission for ${workflowName}.`;
       variables.ai_result = aiResult;
       variables.ai_summary = aiResult;
+      variables.ai = { result: aiResult, summary: aiResult };
       variables.ai_output = aiResult;
       variables.ai_content = aiResult;
       variables.ai_transformed_content = aiResult;

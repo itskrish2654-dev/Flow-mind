@@ -234,15 +234,15 @@ function defaultInputs(step: WorkflowStep, workflowId: string | null): StepInput
           type: "text",
           value:
             step.config?.documentTemplate ??
-            `# ${step.title}\n\nPrepared for {{name}}\n\n{{query}}\n\n## Summary\n\n{{ai_summary}}`,
+            `# ${step.title}\n\nPrepared for {{trigger.name}}\n\n{{trigger.query}}\n\n## Summary\n\n{{ai.summary}}`,
           placeholder:
-            "# Customer Proposal\n\nHello {{name}},\n\n{{ai_summary}}",
+            "# Customer Proposal\n\nHello {{trigger.name}},\n\n{{ai.summary}}",
           helpText:
-            "Write your document in plain text or Markdown. Add earlier values with curly braces, such as {{name}} or {{ai_summary}}.",
+            "Write your document in plain text or Markdown. Add earlier values with curly braces, such as {{trigger.name}} or {{ai.summary}}.",
           howToGetIt: [
             "1. Add a title and the text that should appear in the document.",
-            "2. Insert form values using double curly braces, such as {{name}}.",
-            "3. Use {{ai_summary}} where the AI result should appear.",
+            "2. Insert form values using double curly braces, such as {{trigger.name}}.",
+            "3. Use {{ai.summary}} where the AI result should appear.",
           ].join("\n"),
         },
       ];

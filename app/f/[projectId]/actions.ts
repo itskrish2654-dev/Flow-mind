@@ -11,6 +11,20 @@ import { executeWorkflowSteps } from "@/lib/workflow-execution";
 const WorkflowIdSchema = z.string().uuid();
 const FieldValueSchema = z.string().trim().max(5_000);
 
+function isValidIsoDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
 export async function submitPublicWorkflow(
   projectId: string,
   _previousState: PublicFormSubmissionState,
@@ -52,6 +66,24 @@ export async function submitPublicWorkflow(
       return { status: "error", message: `${field.label} is required.` };
     }
     if (
+      field.minLength !== undefined &&
+      parsedValue.data.length < field.minLength
+    ) {
+      return {
+        status: "error",
+        message: `${field.label} must contain at least ${field.minLength} characters.`,
+      };
+    }
+    if (
+      field.maxLength !== undefined &&
+      parsedValue.data.length > field.maxLength
+    ) {
+      return {
+        status: "error",
+        message: `${field.label} must contain ${field.maxLength} characters or fewer.`,
+      };
+    }
+    if (
       field.type === "email" &&
       parsedValue.data &&
       !z.string().email().safeParse(parsedValue.data).success
@@ -67,7 +99,48 @@ export async function submitPublicWorkflow(
       }
     }
 
-    if (parsedValue.data) inputData[field.key] = parsedValue.data;
+    if (
+      field.type === "phone" &&
+      parsedValue.data &&
+      !/^[+()\d\s.-]{7,24}$/.test(parsedValue.data)
+    ) {
+      return { status: "error", message: `${field.label} must be a valid phone number.` };
+    }
+
+    if (field.type === "number" && parsedValue.data) {
+      const numericValue = Number(parsedValue.data);
+      if (!Number.isFinite(numericValue)) {
+        return { status: "error", message: `${field.label} must be a valid number.` };
+      }
+      if (field.min !== undefined && numericValue < field.min) {
+        return { status: "error", message: `${field.label} must be at least ${field.min}.` };
+      }
+      if (field.max !== undefined && numericValue > field.max) {
+        return { status: "error", message: `${field.label} must be ${field.max} or less.` };
+      }
+    }
+
+    if (
+      field.type === "date" &&
+      parsedValue.data &&
+      !isValidIsoDate(parsedValue.data)
+    ) {
+      return { status: "error", message: `${field.label} must be a valid date.` };
+    }
+
+    if (
+      field.type === "select" &&
+      parsedValue.data &&
+      !(field.options ?? []).includes(parsedValue.data)
+    ) {
+      return { status: "error", message: `Choose a valid option for ${field.label}.` };
+    }
+
+    if (field.type === "checkbox") {
+      inputData[field.key] = parsedValue.data ? "Yes" : "No";
+    } else if (parsedValue.data) {
+      inputData[field.key] = parsedValue.data;
+    }
   }
 
   let execution: Awaited<ReturnType<typeof executeWorkflowSteps>>;

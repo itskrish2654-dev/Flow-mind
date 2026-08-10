@@ -7,6 +7,7 @@ import type { WorkflowExecutionRecord } from "@/app/actions/executions";
 import { AutomationWorkspace } from "@/components/automation-workspace";
 import { ExecutionsDataTable } from "@/components/executions-data-table";
 import type { CompiledWorkflow } from "@/lib/schemas/workflow";
+import { getDataTableDefinition } from "@/lib/workflow-customization";
 
 export function ProjectWorkspace({
   workflowId,
@@ -19,6 +20,7 @@ export function ProjectWorkspace({
 }) {
   const [view, setView] = useState<"builder" | "data">("builder");
   const [executionCount, setExecutionCount] = useState(initialExecutions.length);
+  const [currentWorkflow, setCurrentWorkflow] = useState(workflow);
 
   useEffect(() => {
     const handleExecution = (event: Event) => {
@@ -28,10 +30,14 @@ export function ProjectWorkspace({
     };
     window.addEventListener("flowmind:executions-changed", handleExecution);
     const showExecutions = () => setView("data");
+    const updateWorkflow = (event: Event) =>
+      setCurrentWorkflow((event as CustomEvent<CompiledWorkflow>).detail);
     window.addEventListener("flowmind:show-executions", showExecutions);
+    window.addEventListener("flowmind:workflow-customized", updateWorkflow);
     return () => {
       window.removeEventListener("flowmind:executions-changed", handleExecution);
       window.removeEventListener("flowmind:show-executions", showExecutions);
+      window.removeEventListener("flowmind:workflow-customized", updateWorkflow);
     };
   }, [workflowId]);
 
@@ -65,12 +71,13 @@ export function ProjectWorkspace({
           <AutomationWorkspace
             key={workflowId}
             initialWorkflowId={workflowId}
-            initialWorkflow={workflow}
+            initialWorkflow={currentWorkflow}
           />
         ) : (
           <ExecutionsDataTable
             workflowId={workflowId}
             initialExecutions={initialExecutions}
+            columns={getDataTableDefinition(currentWorkflow).columns}
           />
         )}
       </div>

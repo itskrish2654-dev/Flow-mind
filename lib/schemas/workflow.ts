@@ -10,19 +10,116 @@ export const StepInputSchema = z.object({
   howToGetIt: z.string().min(1).optional(),
 });
 
-export const PublicFormFieldSchema = z.object({
-  key: z.string().regex(/^[a-z][a-z0-9_]{0,49}$/),
+export const PublicFormFieldTypeSchema = z.enum([
+  "text",
+  "email",
+  "phone",
+  "number",
+  "date",
+  "url",
+  "textarea",
+  "select",
+  "checkbox",
+]);
+
+export const PublicFormFieldSchema = z
+  .object({
+    key: z.string().regex(/^[a-z][a-z0-9_]{0,49}$/),
+    label: z.string().min(1).max(80),
+    type: PublicFormFieldTypeSchema,
+    placeholder: z.string().max(160).optional(),
+    helpText: z.string().max(240).optional(),
+    required: z.boolean().default(true),
+    options: z.array(z.string().trim().min(1).max(80)).max(20).optional(),
+    minLength: z.number().int().min(0).max(5_000).optional(),
+    maxLength: z.number().int().min(1).max(5_000).optional(),
+    min: z.number().finite().optional(),
+    max: z.number().finite().optional(),
+  })
+  .superRefine((field, context) => {
+    if (field.type === "select" && (!field.options || field.options.length === 0)) {
+      context.addIssue({
+        code: "custom",
+        message: "Select fields need at least one option.",
+        path: ["options"],
+      });
+    }
+    if (
+      field.type === "select" &&
+      field.options &&
+      new Set(field.options).size !== field.options.length
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Dropdown options must be unique.",
+        path: ["options"],
+      });
+    }
+    if (
+      field.minLength !== undefined &&
+      field.maxLength !== undefined &&
+      field.minLength > field.maxLength
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Minimum length cannot be greater than maximum length.",
+        path: ["minLength"],
+      });
+    }
+    if (field.min !== undefined && field.max !== undefined && field.min > field.max) {
+      context.addIssue({
+        code: "custom",
+        message: "Minimum value cannot be greater than maximum value.",
+        path: ["min"],
+      });
+    }
+  });
+
+export const PublicFormDefinitionSchema = z
+  .object({
+    title: z.string().min(1).max(120),
+    description: z.string().max(300),
+    fields: z.array(PublicFormFieldSchema).min(1).max(10),
+    submitButtonLabel: z.string().min(1).max(60).default("Submit response"),
+    successTitle: z.string().min(1).max(100).default("Thank you!"),
+    successMessage: z
+      .string()
+      .min(1)
+      .max(240)
+      .default("Your submission has been processed."),
+  })
+  .superRefine((form, context) => {
+    if (new Set(form.fields.map((field) => field.key)).size !== form.fields.length) {
+      context.addIssue({
+        code: "custom",
+        message: "Every form field needs a unique variable key.",
+        path: ["fields"],
+      });
+    }
+  });
+
+export const DataTableColumnSchema = z.object({
+  key: z.string().regex(/^[a-z][a-z0-9_.-]{0,79}$/),
   label: z.string().min(1).max(80),
-  type: z.enum(["text", "email", "url", "textarea"]),
-  placeholder: z.string().max(160).optional(),
-  required: z.boolean().default(true),
+  source: z.enum(["input", "output"]),
 });
 
-export const PublicFormDefinitionSchema = z.object({
-  title: z.string().min(1).max(120),
-  description: z.string().min(1).max(300),
-  fields: z.array(PublicFormFieldSchema).min(1).max(10),
-});
+export const DataTableDefinitionSchema = z
+  .object({
+    columns: z.array(DataTableColumnSchema).min(1).max(10),
+  })
+  .superRefine((table, context) => {
+    const identifiers = table.columns.map(
+      (column) => `${column.source}:${column.key}`,
+    );
+    if (new Set(identifiers).size !== identifiers.length) {
+      context.addIssue({
+        code: "custom",
+        message: "Every data column must be unique.",
+        path: ["columns"],
+      });
+    }
+  });
 
 export const WorkflowStepSchema = z.object({
   id: z.string(),
@@ -51,9 +148,13 @@ export const CompiledWorkflowSchema = z.object({
   summary: z.string(),
   steps: z.array(WorkflowStepSchema),
   publicForm: PublicFormDefinitionSchema.optional(),
+  dataTable: DataTableDefinitionSchema.optional(),
 });
 
 export type CompiledWorkflow = z.infer<typeof CompiledWorkflowSchema>;
 export type StepInput = z.infer<typeof StepInputSchema>;
 export type PublicFormDefinition = z.infer<typeof PublicFormDefinitionSchema>;
 export type PublicFormField = z.infer<typeof PublicFormFieldSchema>;
+export type PublicFormFieldType = z.infer<typeof PublicFormFieldTypeSchema>;
+export type DataTableColumn = z.infer<typeof DataTableColumnSchema>;
+export type DataTableDefinition = z.infer<typeof DataTableDefinitionSchema>;

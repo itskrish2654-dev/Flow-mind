@@ -20,6 +20,7 @@ import {
   type WorkflowExecutionRecord,
 } from "@/app/actions/executions";
 import type { Json } from "@/lib/supabase/types";
+import type { DataTableColumn } from "@/lib/schemas/workflow";
 
 type JsonObject = Record<string, Json | undefined>;
 
@@ -70,6 +71,48 @@ function readableValue(value: Json | undefined): string {
     return String(value);
   }
   return JSON.stringify(value);
+}
+
+function valueAtPath(data: JsonObject, path: string): Json | undefined {
+  if (data[path] !== undefined) return data[path];
+  return path.split(".").reduce<Json | undefined>((value, segment) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    return (value as JsonObject)[segment];
+  }, data);
+}
+
+function configuredColumnValue(
+  execution: WorkflowExecutionRecord,
+  column: DataTableColumn,
+): Json | undefined {
+  const source = column.source === "input" ? execution.inputData : execution.outputData;
+  return valueAtPath(asJsonObject(source), column.key);
+}
+
+function ConfiguredValue({
+  execution,
+  column,
+}: {
+  execution: WorkflowExecutionRecord;
+  column: DataTableColumn;
+}) {
+  const value = configuredColumnValue(execution, column);
+  if (column.source === "output" && column.key === "status") {
+    return <StatusBadge value={execution.outputData} />;
+  }
+  if (
+    column.source === "output" &&
+    column.key === "pdf_url" &&
+    typeof value === "string" &&
+    value.startsWith("https://")
+  ) {
+    return (
+      <a href={value} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-[#7f5d00] hover:underline">
+        <FileText className="size-3.5" /> Download PDF
+      </a>
+    );
+  }
+  return <span className="block max-w-[230px] truncate text-[10px] text-slate-600" title={readableValue(value)}>{readableValue(value)}</span>;
 }
 
 function formatJsonToChips(
@@ -198,33 +241,19 @@ function csvColumnName(value: string): string {
     .toLowerCase();
 }
 
-function flattenJson(
-  value: Json | undefined,
-  prefix: string,
-  target: Record<string, string>,
-) {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    for (const [key, childValue] of Object.entries(value)) {
-      if (prefix === "output" && INTERNAL_OUTPUT_FIELDS.has(key)) continue;
-      const childPrefix = `${prefix}_${csvColumnName(key)}`;
-      flattenJson(childValue, childPrefix, target);
-    }
-    return;
-  }
-
-  target[prefix] = readableValue(value);
-}
-
-function executionCsvRecord(execution: WorkflowExecutionRecord): Record<string, string> {
+function executionCsvRecord(
+  execution: WorkflowExecutionRecord,
+  columns: DataTableColumn[],
+): Record<string, string> {
   const record: Record<string, string> = {
     execution_id: execution.id,
     received_date: execution.createdAt,
-    status: executionStatus(execution.outputData),
   };
-  const documents = executionDocuments(execution.outputData);
-  if (documents[0]) record.pdf_url = documents[0].url;
-  flattenJson(execution.inputData, "trigger", record);
-  flattenJson(execution.outputData, "output", record);
+  for (const column of columns) {
+    record[`${column.source}_${csvColumnName(column.label)}`] = readableValue(
+      configuredColumnValue(execution, column),
+    );
+  }
   return record;
 }
 
@@ -407,9 +436,11 @@ function ExecutionDetailsDrawer({
 export function ExecutionsDataTable({
   workflowId,
   initialExecutions,
+  columns,
 }: {
   workflowId: string;
   initialExecutions: WorkflowExecutionRecord[];
+  columns: DataTableColumn[];
 }) {
   const [executions, setExecutions] = useState(initialExecutions);
   const [selectedExecution, setSelectedExecution] =
@@ -444,7 +475,7 @@ export function ExecutionsDataTable({
   }, [refresh, workflowId]);
 
   function exportCsv() {
-    const records = executions.map(executionCsvRecord);
+    const records = executions.map((execution) => executionCsvRecord(execution, columns));
     const headers = Array.from(
       new Set(records.flatMap((record) => Object.keys(record))),
     );
@@ -533,21 +564,29 @@ export function ExecutionsDataTable({
                     </button>
                   </div>
                   <div className="mt-4 border-t border-slate-100 pt-3">
-                    <p className="mb-2 text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-400">Trigger input</p>
-                    {formatJsonToChips(asJsonObject(execution.inputData), { limit: 2, compact: true })}
+                    <p className="mb-2 text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-400">Saved data</p>
+                    <div className="grid gap-2">
+                      {columns.slice(0, 4).map((column) => (
+                        <div key={`${column.source}-${column.key}`} className="flex items-center justify-between gap-3 rounded-lg bg-[#f8f4ec] px-2.5 py-2">
+                          <span className="text-[9px] font-semibold text-slate-500">{column.label}</span>
+                          <ConfiguredValue execution={execution} column={column} />
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </article>
               ))}
             </div>
 
-            <div className="hidden overflow-hidden rounded-2xl border border-[#e4ddd2] bg-[#fffdfa] shadow-sm md:block">
-              <table className="w-full table-fixed border-collapse text-left">
+            <div className="hidden overflow-x-auto rounded-2xl border border-[#e4ddd2] bg-[#fffdfa] shadow-sm md:block">
+              <table className="min-w-full border-collapse text-left">
                 <thead className="bg-[#f8f4ec]">
                   <tr className="border-b border-[#e4ddd2] text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-                    <th className="w-[22%] px-4 py-3">Received Date</th>
-                    <th className="w-[14%] px-4 py-3">Status</th>
-                    <th className="w-[46%] px-4 py-3">Trigger Input</th>
-                    <th className="w-[18%] px-4 py-3 text-right">Actions</th>
+                    <th className="min-w-44 px-4 py-3">Received Date</th>
+                    {columns.map((column) => (
+                      <th key={`${column.source}-${column.key}`} className="min-w-40 px-4 py-3">{column.label}</th>
+                    ))}
+                    <th className="min-w-36 px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -556,12 +595,11 @@ export function ExecutionsDataTable({
                       <td className="px-4 py-4 text-[10px] text-slate-500">
                         {executionDateFormatter.format(new Date(execution.createdAt))}
                       </td>
-                      <td className="px-4 py-4">
-                        <StatusBadge value={execution.outputData} />
-                      </td>
-                      <td className="min-w-0 px-4 py-4">
-                        {formatJsonToChips(asJsonObject(execution.inputData), { limit: 2, compact: true })}
-                      </td>
+                      {columns.map((column) => (
+                        <td key={`${column.source}-${column.key}`} className="px-4 py-4">
+                          <ConfiguredValue execution={execution} column={column} />
+                        </td>
+                      ))}
                       <td className="px-4 py-4 text-right">
                         <button
                           type="button"

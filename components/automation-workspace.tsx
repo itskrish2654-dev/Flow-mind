@@ -27,9 +27,25 @@ import {
 } from "lucide-react";
 
 import { runTestWorkflow, type TestExecutionLog } from "@/app/actions/execute";
-import { compileWorkflow, saveDocumentTemplate } from "@/app/actions/workflow";
+import {
+  compileWorkflow,
+  saveDocumentTemplate,
+  saveWorkflowCustomization,
+} from "@/app/actions/workflow";
+import { DataTableBuilder } from "@/components/data-table-builder";
+import { FormBuilder } from "@/components/form-builder";
 import { getPublicFormPath, getPublicFormUrl } from "@/lib/public-form";
-import type { CompiledWorkflow, StepInput } from "@/lib/schemas/workflow";
+import type {
+  CompiledWorkflow,
+  DataTableDefinition,
+  PublicFormDefinition,
+  StepInput,
+} from "@/lib/schemas/workflow";
+import {
+  getDataTableDefinition,
+  previewDocumentTemplate,
+  workflowVariables,
+} from "@/lib/workflow-customization";
 import { getStepInputs, orderWorkflowSteps, toPlainEnglish } from "@/lib/workflow-setup";
 
 type Step = CompiledWorkflow["steps"][number];
@@ -118,19 +134,25 @@ function EmptyCanvas() {
 }
 
 function Inspector({
+  workflow,
   step,
   workflowId,
   inputs,
   values,
   onChange,
   onSaveTemplate,
+  onSavePublicForm,
+  onSaveDataTable,
 }: {
+  workflow: CompiledWorkflow | null;
   step: Step | null;
   workflowId: string | null;
   inputs: StepInput[];
   values: InputValues;
   onChange: (id: string, value: string) => void;
   onSaveTemplate: (stepId: string, template: string) => Promise<string | null>;
+  onSavePublicForm: (form: PublicFormDefinition) => Promise<string | null>;
+  onSaveDataTable: (definition: DataTableDefinition) => Promise<string | null>;
 }) {
   const [copied, setCopied] = useState<string | null>(null);
   const [templateStatus, setTemplateStatus] = useState<string | null>(null);
@@ -155,6 +177,8 @@ function Inspector({
   const visual = stepVisuals[step.type];
   const Icon = visual.icon;
   const publicFormPath = workflowId ? getPublicFormPath(workflowId) : null;
+  const publicForm = workflow?.publicForm;
+  const documentVariables = workflowVariables(publicForm);
   return (
     <aside className="hidden w-[292px] shrink-0 flex-col border-l border-[#e4ddd2] bg-[#fffdfa] xl:flex">
       <div className="flex min-h-[65px] items-center gap-2.5 border-b border-[#e4ddd2] px-4">
@@ -195,6 +219,9 @@ function Inspector({
                 <ExternalLink className="size-3.5" />
                 Preview Form
               </a>
+              {publicForm && (
+                <FormBuilder form={publicForm} onSave={onSavePublicForm} />
+              )}
             </div>
           </div>
         )}
@@ -212,6 +239,13 @@ function Inspector({
               <Database className="size-3.5" />
               View Executions &amp; Data
             </button>
+            {publicForm && workflow && (
+              <DataTableBuilder
+                form={publicForm}
+                definition={getDataTableDefinition(workflow)}
+                onSave={onSaveDataTable}
+              />
+            )}
           </div>
         )}
         {step.type === "generate_pdf" && (
@@ -221,8 +255,15 @@ function Inspector({
               Native PDF generator
             </p>
             <p className="mt-1 text-[9px] leading-4 text-slate-500">
-              Use variables from the form or earlier steps with double curly braces, such as {"{{name}}"} and {"{{ai_summary}}"}.
+              Use variables from the form or earlier steps with double curly braces, such as {"{{trigger.name}}"} and {"{{ai.summary}}"}.
             </p>
+            {publicForm && workflow && (
+              <DataTableBuilder
+                form={publicForm}
+                definition={getDataTableDefinition(workflow)}
+                onSave={onSaveDataTable}
+              />
+            )}
           </div>
         )}
         {inputs.length === 0 ? (
@@ -239,6 +280,27 @@ function Inspector({
                   {input.helpText && <p className="mt-1 text-[9px] leading-4 text-slate-400">{toPlainEnglish(input.helpText)}</p>}
                   {step.type === "generate_pdf" && input.key === "document_template" ? (
                     <>
+                      <div className="mt-2 rounded-lg border border-[#e4ddd2] bg-[#fffdfa] p-2.5">
+                        <p className="text-[9px] font-semibold text-slate-700">Insert a variable</p>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {documentVariables.map((variable) => (
+                            <button
+                              key={variable.token}
+                              type="button"
+                              title={`${variable.group}: ${variable.label}`}
+                              onClick={() =>
+                                onChange(
+                                  id,
+                                  `${value}${value && !/\s$/.test(value) ? " " : ""}${variable.token}`,
+                                )
+                              }
+                              className="rounded-md border border-[#e7c75f] bg-[#fff7dc] px-2 py-1 font-mono text-[8px] text-[#7f5d00] transition hover:bg-[#fff0b9]"
+                            >
+                              {variable.token}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                       <textarea
                         id={id}
                         rows={13}
@@ -252,6 +314,12 @@ function Inspector({
                         spellCheck
                         className="mt-2 w-full resize-y rounded-lg border border-[#ded6ca] bg-[#f8f4ec] px-3 py-2.5 font-mono text-[10px] leading-5 text-slate-800 outline-none placeholder:text-slate-400 focus:border-[#d7aa2f] focus:bg-white focus:ring-4 focus:ring-[#f4e5ad]"
                       />
+                      <div className="mt-2 rounded-lg border border-[#ded6ca] bg-white p-3">
+                        <p className="text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-400">Document preview</p>
+                        <div className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-[9px] leading-4 text-slate-600">
+                          {previewDocumentTemplate(value, documentVariables) || "Your populated document will appear here."}
+                        </div>
+                      </div>
                       <button
                         type="button"
                         disabled={!workflowId || !value.trim() || isSavingTemplate}
@@ -489,6 +557,40 @@ export function AutomationWorkspace({
     }
   }
 
+  async function persistPublicForm(
+    publicForm: PublicFormDefinition,
+  ): Promise<string | null> {
+    try {
+      if (!workflowId) return "Create the workflow before customizing its form.";
+      const result = await saveWorkflowCustomization(workflowId, { publicForm });
+      if (!result.ok) return result.error;
+      setWorkflow(result.workflow);
+      window.dispatchEvent(
+        new CustomEvent("flowmind:workflow-customized", { detail: result.workflow }),
+      );
+      return null;
+    } catch {
+      return "We couldn't save the form. Please try again.";
+    }
+  }
+
+  async function persistDataTable(
+    dataTable: DataTableDefinition,
+  ): Promise<string | null> {
+    try {
+      if (!workflowId) return "Create the workflow before customizing its data table.";
+      const result = await saveWorkflowCustomization(workflowId, { dataTable });
+      if (!result.ok) return result.error;
+      setWorkflow(result.workflow);
+      window.dispatchEvent(
+        new CustomEvent("flowmind:workflow-customized", { detail: result.workflow }),
+      );
+      return null;
+    } catch {
+      return "We couldn't save the data columns. Please try again.";
+    }
+  }
+
   return (
     <div className="flex h-full min-w-0 overflow-hidden">
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -542,7 +644,21 @@ export function AutomationWorkspace({
         </section>
       </main>
 
-      <Inspector workflowId={workflowId} step={selectedStep} inputs={selectedInputs} values={values} onSaveTemplate={persistDocumentTemplate} onChange={(id, value) => { setValues((current) => ({ ...current, [id]: value })); setError(null); setLogs([]); }} />
+      <Inspector
+        workflow={workflow}
+        workflowId={workflowId}
+        step={selectedStep}
+        inputs={selectedInputs}
+        values={values}
+        onSaveTemplate={persistDocumentTemplate}
+        onSavePublicForm={persistPublicForm}
+        onSaveDataTable={persistDataTable}
+        onChange={(id, value) => {
+          setValues((current) => ({ ...current, [id]: value }));
+          setError(null);
+          setLogs([]);
+        }}
+      />
     </div>
   );
 }
