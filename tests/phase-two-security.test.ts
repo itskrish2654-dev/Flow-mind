@@ -20,6 +20,9 @@ const source = (path: string) => readFileSync(`${root}/${path}`, "utf8");
 const phaseTwoMigration = source(
   "supabase/migrations/20260810000100_phase2_security_boundaries.sql",
 );
+const rateLimitClockMigration = source(
+  "supabase/migrations/20260810000200_fix_rate_limit_clock.sql",
+);
 const ownershipMigration = source(
   "supabase/migrations/20260807000100_workflow_ownership_rls.sql",
 );
@@ -312,4 +315,10 @@ test("32. use-server modules export only async functions at runtime", () => {
       `${path} exports a runtime value that is not an async function`,
     );
   }
+});
+
+test("33. durable rate limiting uses an unambiguous timestamp variable", () => {
+  assert.match(rateLimitClockMigration, /v_now timestamptz := clock_timestamp\(\)/i);
+  assert.match(rateLimitClockMigration, /window_seconds\) <= v_now/i);
+  assert.doesNotMatch(rateLimitClockMigration, /current_time timestamptz/i);
 });
