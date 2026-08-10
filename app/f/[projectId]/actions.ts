@@ -1,18 +1,30 @@
 "use server";
 
+import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { executeAiText } from "@/lib/ai-execution";
 import { resolveStepCapabilityId } from "@/lib/capability-registry";
-import type { PublicFormSubmissionState } from "@/lib/public-form";
-import { createPublicFormTrace } from "@/lib/public-form-trace";
 import { uploadGeneratedDocument } from "@/lib/document-storage";
+import { createPublicFormTrace } from "@/lib/public-form-trace";
 import { getPublicExecutableWorkflow } from "@/lib/public-workflow";
 import type { Json } from "@/lib/supabase/types";
 import { executeWorkflowSteps } from "@/lib/workflow-execution";
 
 const WorkflowIdSchema = z.string().uuid();
 const FieldValueSchema = z.string().trim().max(5_000);
+
+type PublicFormOutcome =
+  | "stored"
+  | "pdf_generated"
+  | "completed"
+  | "invalid_link"
+  | "rejected"
+  | "invalid_submission"
+  | "unavailable"
+  | "execution_failed"
+  | "persistence_failed"
+  | "workflow_failed";
 
 function isValidIsoDate(value: string): boolean {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
@@ -28,17 +40,19 @@ function isValidIsoDate(value: string): boolean {
   );
 }
 
+function resultPath(projectId: string, outcome: PublicFormOutcome): string {
+  return `/f/${encodeURIComponent(projectId)}/result?outcome=${outcome}`;
+}
+
 export async function submitPublicWorkflow(
   projectId: string,
-  _previousState: PublicFormSubmissionState,
   formData: FormData,
-): Promise<PublicFormSubmissionState> {
+): Promise<never> {
   const requestId = crypto.randomUUID();
   const trace = createPublicFormTrace(requestId);
-  const finish = (state: PublicFormSubmissionState) => {
-    trace("ACTION_RETURN_START", { status: state.status });
-    trace("ACTION_RETURN_VALUE_READY", { status: state.status });
-    return state;
+  const complete = (outcome: PublicFormOutcome): never => {
+    trace("REDIRECT_START", { outcome });
+    redirect(resultPath(projectId, outcome));
   };
 
   trace("PUBLIC_FORM_START");
@@ -46,32 +60,20 @@ export async function submitPublicWorkflow(
   const parsedId = WorkflowIdSchema.safeParse(projectId);
   if (!parsedId.success) {
     trace("VALIDATION_END", { ok: false });
-    return finish({ status: "error", message: "This form link is invalid." });
+    return complete("invalid_link");
   }
 
   if (String(formData.get("company_website") ?? "").trim()) {
     trace("VALIDATION_END", { ok: false });
-    return finish({
-      status: "error",
-      message: "This submission was rejected.",
-    });
+    return complete("rejected");
   }
   trace("VALIDATION_END", { ok: true });
 
   trace("WORKFLOW_LOAD_START");
   const publicWorkflow = await getPublicExecutableWorkflow(parsedId.data, trace);
   trace("WORKFLOW_LOAD_END", { found: Boolean(publicWorkflow) });
-  if (!publicWorkflow) {
-    return finish({
-      status: "error",
-      message: "This form is no longer accepting submissions.",
-    });
-  }
-  if (publicWorkflow.capabilityError) {
-    return finish({
-      status: "error",
-      message: publicWorkflow.capabilityError,
-    });
+  if (!publicWorkflow || publicWorkflow.capabilityError) {
+    return complete("unavailable");
   }
 
   trace("FIELD_VALIDATION_START", {
@@ -84,83 +86,78 @@ export async function submitPublicWorkflow(
     const parsedValue = FieldValueSchema.safeParse(value);
 
     if (!parsedValue.success) {
-      return {
-        status: "error",
-        message: `${field.label} must be 5,000 characters or fewer.`,
-      };
+      trace("FIELD_VALIDATION_END", { ok: false });
+      return complete("invalid_submission");
     }
     if (field.required && !parsedValue.data) {
-      return { status: "error", message: `${field.label} is required.` };
+      trace("FIELD_VALIDATION_END", { ok: false });
+      return complete("invalid_submission");
     }
     if (
       field.minLength !== undefined &&
       parsedValue.data.length < field.minLength
     ) {
-      return {
-        status: "error",
-        message: `${field.label} must contain at least ${field.minLength} characters.`,
-      };
+      trace("FIELD_VALIDATION_END", { ok: false });
+      return complete("invalid_submission");
     }
     if (
       field.maxLength !== undefined &&
       parsedValue.data.length > field.maxLength
     ) {
-      return {
-        status: "error",
-        message: `${field.label} must contain ${field.maxLength} characters or fewer.`,
-      };
+      trace("FIELD_VALIDATION_END", { ok: false });
+      return complete("invalid_submission");
     }
     if (
       field.type === "email" &&
       parsedValue.data &&
       !z.string().email().safeParse(parsedValue.data).success
     ) {
-      return { status: "error", message: "Enter a valid email address." };
+      trace("FIELD_VALIDATION_END", { ok: false });
+      return complete("invalid_submission");
     }
     if (field.type === "url" && parsedValue.data) {
       try {
         const url = new URL(parsedValue.data);
         if (!["http:", "https:"].includes(url.protocol)) throw new Error();
       } catch {
-        return { status: "error", message: `${field.label} must be a valid link.` };
+        trace("FIELD_VALIDATION_END", { ok: false });
+        return complete("invalid_submission");
       }
     }
-
     if (
       field.type === "phone" &&
       parsedValue.data &&
       !/^[+()\d\s.-]{7,24}$/.test(parsedValue.data)
     ) {
-      return { status: "error", message: `${field.label} must be a valid phone number.` };
+      trace("FIELD_VALIDATION_END", { ok: false });
+      return complete("invalid_submission");
     }
-
     if (field.type === "number" && parsedValue.data) {
       const numericValue = Number(parsedValue.data);
-      if (!Number.isFinite(numericValue)) {
-        return { status: "error", message: `${field.label} must be a valid number.` };
-      }
-      if (field.min !== undefined && numericValue < field.min) {
-        return { status: "error", message: `${field.label} must be at least ${field.min}.` };
-      }
-      if (field.max !== undefined && numericValue > field.max) {
-        return { status: "error", message: `${field.label} must be ${field.max} or less.` };
+      if (
+        !Number.isFinite(numericValue) ||
+        (field.min !== undefined && numericValue < field.min) ||
+        (field.max !== undefined && numericValue > field.max)
+      ) {
+        trace("FIELD_VALIDATION_END", { ok: false });
+        return complete("invalid_submission");
       }
     }
-
     if (
       field.type === "date" &&
       parsedValue.data &&
       !isValidIsoDate(parsedValue.data)
     ) {
-      return { status: "error", message: `${field.label} must be a valid date.` };
+      trace("FIELD_VALIDATION_END", { ok: false });
+      return complete("invalid_submission");
     }
-
     if (
       field.type === "select" &&
       parsedValue.data &&
       !(field.options ?? []).includes(parsedValue.data)
     ) {
-      return { status: "error", message: `Choose a valid option for ${field.label}.` };
+      trace("FIELD_VALIDATION_END", { ok: false });
+      return complete("invalid_submission");
     }
 
     if (field.type === "checkbox") {
@@ -212,18 +209,17 @@ export async function submitPublicWorkflow(
   } catch (error: unknown) {
     trace("EXECUTION_END", { ok: false });
     console.error("Public workflow execution failed", error);
-    return finish({
-      status: "error",
-      message: "We couldn't complete this workflow safely. Please try again.",
-    });
+    return complete("execution_failed");
   }
 
   trace("EXECUTION_PERSIST_START");
-  const { error } = await publicWorkflow.admin.from("workflow_executions").insert({
-    workflow_id: publicWorkflow.id,
-    input_data: execution.inputData as Json,
-    output_data: execution.outputData as Json,
-  });
+  const { error } = await publicWorkflow.admin
+    .from("workflow_executions")
+    .insert({
+      workflow_id: publicWorkflow.id,
+      input_data: execution.inputData as Json,
+      output_data: execution.outputData as Json,
+    });
   trace("EXECUTION_PERSIST_END", { ok: !error });
 
   if (error) {
@@ -231,33 +227,19 @@ export async function submitPublicWorkflow(
       code: error.code,
       message: error.message,
     });
-    return finish({
-      status: "error",
-      message: "We couldn’t process this submission. Please try again.",
-    });
+    return complete("persistence_failed");
   }
-
-  if (!execution.ok) {
-    return finish({
-      status: "error",
-      message:
-        execution.failureReason ?? "This workflow could not complete the submission.",
-    });
-  }
+  if (!execution.ok) return complete("workflow_failed");
 
   const storesInternally = publicWorkflow.workflow.steps.some(
     (step) => resolveStepCapabilityId(step) === "flowmind_data_store",
   );
   const generatedDocument = execution.outputData.documents.length > 0;
-
-  trace("REVALIDATION_SKIPPED");
-  trace("REDIRECT_SKIPPED");
-  return finish({
-    status: "success",
-    message: storesInternally
-      ? "Thank you! Your submission has been stored in FlowMind."
+  return complete(
+    storesInternally
+      ? "stored"
       : generatedDocument
-        ? "Thank you! Your PDF has been generated and stored in FlowMind."
-        : "Thank you! The workflow completed successfully.",
-  });
+        ? "pdf_generated"
+        : "completed",
+  );
 }
