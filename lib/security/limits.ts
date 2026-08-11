@@ -17,6 +17,7 @@ export class SecurityGateError extends Error {
 export const SECURITY_LIMITS = {
   signup: { limit: 5, windowSeconds: 3_600 },
   login: { limit: 10, windowSeconds: 15 * 60 },
+  recovery: { limit: 5, windowSeconds: 3_600 },
   planning: { limit: 12, windowSeconds: 60 },
   ai: { limit: 10, windowSeconds: 60 },
   customization: { limit: 8, windowSeconds: 60 },

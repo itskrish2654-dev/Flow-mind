@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
-import { AI_MAX_OUTPUT_TOKENS, executeAiText } from "@/lib/ai-execution";
+import { executeAiText } from "@/lib/ai-execution";
 import { resolveStepCapabilityId } from "@/lib/capability-registry";
 import { uploadGeneratedDocument } from "@/lib/document-storage";
 import { getPublicExecutableWorkflow } from "@/lib/public-workflow";
@@ -222,7 +222,6 @@ export async function submitPublicWorkflow(
       SECURITY_LIMITS.publicFormDuplicate,
     );
     await enforceUsageQuota(publicWorkflow.ownerId, "public_form_submissions");
-    await enforceUsageQuota(publicWorkflow.ownerId, "executions");
   } catch (error) {
     return complete(
       error instanceof SecurityGateError && error.code === "RATE_LIMITED"
@@ -241,48 +240,53 @@ export async function submitPublicWorkflow(
         "workflow-execution",
         [publicWorkflow.id],
         1,
-        () => executeWorkflowSteps({
-          workflowId: publicWorkflow.id,
-          workflowName: publicWorkflow.name,
-          steps: publicWorkflow.workflow.steps,
-          inputValues: inputData,
-          mode: "public-form",
-          executeAi: async (input) => {
-            await enforceRateLimit(
-              "ai-execution",
-              [publicWorkflow.ownerId],
-              SECURITY_LIMITS.ai,
-            );
-            await enforceUsageQuota(publicWorkflow.ownerId, "ai_generations");
-            await enforceUsageQuota(
-              publicWorkflow.ownerId,
-              "ai_input_chars",
-              input.instruction.length + input.content.length,
-            );
-            await enforceUsageQuota(
-              publicWorkflow.ownerId,
-              "ai_output_tokens",
-              AI_MAX_OUTPUT_TOKENS,
-            );
-            return executeAiText(input);
-          },
-          uploadGeneratedDocument: async ({ bytes }) => {
-            await enforceRateLimit(
-              "pdf-generation",
-              [publicWorkflow.ownerId],
-              SECURITY_LIMITS.pdf,
-            );
-            await enforceUsageQuota(publicWorkflow.ownerId, "generated_documents");
-            await enforceUsageQuota(publicWorkflow.ownerId, "uploads");
-            await enforceUsageQuota(publicWorkflow.ownerId, "storage_bytes", bytes.byteLength);
-            return uploadGeneratedDocument(
-              publicWorkflow.admin,
-              publicWorkflow.ownerId,
-              publicWorkflow.id,
-              bytes,
-            );
-          },
-        }),
+        async () => {
+          // Concurrency is acquired before execution usage is consumed.
+          await enforceUsageQuota(publicWorkflow.ownerId, "executions");
+          return executeWorkflowSteps({
+            workflowId: publicWorkflow.id,
+            workflowName: publicWorkflow.name,
+            steps: publicWorkflow.workflow.steps,
+            inputValues: inputData,
+            mode: "public-form",
+            executeAi: async (input) => {
+              await enforceRateLimit(
+                "ai-execution",
+                [publicWorkflow.ownerId],
+                SECURITY_LIMITS.ai,
+              );
+              await enforceUsageQuota(publicWorkflow.ownerId, "ai_generations");
+              await enforceUsageQuota(
+                publicWorkflow.ownerId,
+                "ai_input_chars",
+                input.instruction.length + input.content.length,
+              );
+              const result = await executeAiText(input);
+              await enforceUsageQuota(
+                publicWorkflow.ownerId,
+                "ai_output_tokens",
+                result.metadata.outputTokens ?? Math.max(1, Math.ceil(result.text.length / 4)),
+              );
+              return result;
+            },
+            uploadGeneratedDocument: async ({ bytes }) => {
+              await enforceRateLimit(
+                "pdf-generation",
+                [publicWorkflow.ownerId],
+                SECURITY_LIMITS.pdf,
+              );
+              await enforceUsageQuota(publicWorkflow.ownerId, "generated_documents");
+              await enforceUsageQuota(publicWorkflow.ownerId, "uploads");
+              await enforceUsageQuota(publicWorkflow.ownerId, "storage_bytes", bytes.byteLength);
+              return uploadGeneratedDocument(
+                publicWorkflow.admin,
+                publicWorkflow.ownerId,
+                publicWorkflow.id,
+                bytes,
+              );
+            },
+          });
+        },
       ),
     );
   } catch (error: unknown) {

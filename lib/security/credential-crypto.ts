@@ -20,9 +20,20 @@ export type EncryptedCredential = {
 
 function parseMasterKey(encodedKey = process.env.FLOWMIND_CREDENTIAL_MASTER_KEY): Buffer {
   if (!encodedKey) throw new Error("Credential encryption is not configured.");
+
+  // One representation is accepted: canonical padded standard Base64 for
+  // exactly 32 bytes. Buffer.from(..., "base64") is deliberately not used
+  // until syntax has been checked because its decoder ignores some junk.
+  if (!/^[A-Za-z0-9+/]{43}=$/.test(encodedKey)) {
+    throw new Error(
+      "Credential encryption key must be canonical padded Base64 for exactly 32 bytes.",
+    );
+  }
   const key = Buffer.from(encodedKey, "base64");
-  if (key.length !== 32) {
-    throw new Error("Credential encryption key must be a base64-encoded 32-byte key.");
+  if (key.length !== 32 || key.toString("base64") !== encodedKey) {
+    throw new Error(
+      "Credential encryption key must be canonical padded Base64 for exactly 32 bytes.",
+    );
   }
   return key;
 }

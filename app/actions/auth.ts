@@ -6,27 +6,47 @@ import { SECURITY_LIMITS, SecurityGateError, enforceRateLimit } from "@/lib/secu
 import { getClientIp } from "@/lib/security/request-context";
 import { createClient } from "@/lib/supabase/server";
 
-const AuthRequestSchema = z.object({
-  mode: z.enum(["login", "signup"]),
-  email: z.string().trim().email().max(320),
-  password: z.string().min(8).max(256),
-});
+const EmailSchema = z.string().trim().email().max(320);
+const CaptchaTokenSchema = z.string().min(1).max(4_096);
+const AuthRequestSchema = z.discriminatedUnion("mode", [
+  z.object({
+    mode: z.enum(["login", "signup"]),
+    email: EmailSchema,
+    password: z.string().min(8).max(256),
+    captchaToken: CaptchaTokenSchema,
+  }),
+  z.object({
+    mode: z.literal("recovery"),
+    email: EmailSchema,
+    captchaToken: CaptchaTokenSchema,
+  }),
+]);
 
 export type AuthenticateResult =
   | { ok: true; sessionCreated: boolean; notice?: string }
   | { ok: false; error: string };
 
 export async function authenticateWithPassword(input: {
-  mode: "login" | "signup";
+  mode: "login" | "signup" | "recovery";
   email: string;
-  password: string;
+  password?: string;
+  captchaToken: string;
 }): Promise<AuthenticateResult> {
   const parsed = AuthRequestSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: "Enter a valid email and password." };
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: input.captchaToken
+        ? "Enter valid account details."
+        : "Complete the security challenge and try again.",
+    };
+  }
   const email = parsed.data.email.toLowerCase();
   try {
     const ip = await getClientIp();
-    const rule = parsed.data.mode === "signup" ? SECURITY_LIMITS.signup : SECURITY_LIMITS.login;
+    const rule = SECURITY_LIMITS[parsed.data.mode];
+    // Defense in depth only. Supabase Auth's CAPTCHA validation is the
+    // authoritative boundary because direct Auth endpoints bypass this action.
     await enforceRateLimit(`${parsed.data.mode}-ip`, [ip], rule);
     await enforceRateLimit(`${parsed.data.mode}-email`, [email], rule);
   } catch (error) {
@@ -41,19 +61,56 @@ export async function authenticateWithPassword(input: {
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password: parsed.data.password,
+      options: { captchaToken: parsed.data.captchaToken },
     });
-    return error
-      ? { ok: false, error: "Email or password is incorrect." }
-      : { ok: true, sessionCreated: true };
+    if (error) {
+      return {
+        ok: false,
+        error: /captcha/i.test(`${error.code ?? ""} ${error.message}`)
+          ? "The security challenge could not be verified. Please try again."
+          : "Email or password is incorrect.",
+      };
+    }
+    return { ok: true, sessionCreated: true };
   }
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "");
+  if (parsed.data.mode === "recovery") {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      captchaToken: parsed.data.captchaToken,
+      ...(siteUrl ? { redirectTo: `${siteUrl}/auth/callback` } : {}),
+    });
+    if (error) {
+      return {
+        ok: false,
+        error: /captcha/i.test(`${error.code ?? ""} ${error.message}`)
+          ? "The security challenge could not be verified. Please try again."
+          : "A recovery email could not be requested right now.",
+      };
+    }
+    return {
+      ok: true,
+      sessionCreated: false,
+      notice: "If an account exists for that email, a recovery link is on its way.",
+    };
+  }
+
   const { data, error } = await supabase.auth.signUp({
     email,
     password: parsed.data.password,
-    options: siteUrl ? { emailRedirectTo: `${siteUrl}/auth/callback` } : undefined,
+    options: {
+      captchaToken: parsed.data.captchaToken,
+      ...(siteUrl ? { emailRedirectTo: `${siteUrl}/auth/callback` } : {}),
+    },
   });
-  if (error) return { ok: false, error: "Account creation could not be completed." };
+  if (error) {
+    return {
+      ok: false,
+      error: /captcha/i.test(`${error.code ?? ""} ${error.message}`)
+        ? "The security challenge could not be verified. Please try again."
+        : "Account creation could not be completed.",
+    };
+  }
   return data.session
     ? { ok: true, sessionCreated: true }
     : {

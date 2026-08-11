@@ -194,6 +194,16 @@ export type Database = {
           reset_at: string;
         }>;
       };
+      create_workflow_with_quota: {
+        Args: {
+          p_user_id: string;
+          p_name: string;
+          p_prompt: string;
+          p_compiled_steps: Json;
+          p_limit: number;
+        };
+        Returns: string | null;
+      };
       consume_usage_quota: {
         Args: {
           p_user_id: string;

@@ -33,6 +33,10 @@ Open [http://localhost:3000](http://localhost:3000). Unauthenticated dashboard r
 - Next.js `proxy.ts` refreshes sessions and protects every `/dashboard` route.
 - Every Server Action independently verifies the user with `supabase.auth.getUser()`.
 - Every owner query includes the authenticated `user_id`.
+- Cloudflare Turnstile must be enabled in Supabase Auth Bot and Abuse Protection.
+  Supabase Auth CAPTCHA is the authoritative control for direct signup, password
+  sign-in, and password-recovery endpoints. FlowMind's Postgres auth limiter is
+  additional defense in depth and does not protect requests sent directly to Supabase.
 - Authenticated browser roles can read only owner-scoped workflows and executions.
   Workflow mutations and trusted execution inserts use server actions and a
   server-only service role so quotas, publication, and derived fields cannot be bypassed.
@@ -40,13 +44,19 @@ Open [http://localhost:3000](http://localhost:3000). Unauthenticated dashboard r
   workflow/connector context, and ciphertext version metadata. Plaintext is never
   returned after submission. Version 1 supports one active environment master key;
   rotate by decrypting and re-encrypting records before replacing that key. Automatic
-  multi-key rotation is intentionally deferred.
+  multi-key rotation is intentionally deferred. The master key format is canonical
+  padded standard Base64 for exactly 32 bytes; whitespace, alternate encodings,
+  malformed padding, and trailing data are rejected.
 - Rate limits, monthly usage counters, and concurrency leases are stored atomically
   in Postgres and fail closed when unavailable.
 - Generated PDFs use a private bucket. Owners receive signed download links that
   expire after 15 minutes. Workflow deletion removes its recorded files; account-level
   storage garbage collection remains a later retention task.
 - Hosted forms are private by default and require explicit Publish / Unpublish actions.
+- Public-form Turnstile remains mandatory before broad launch for costly AI/PDF
+  workflows. Until production Turnstile keys are configured, keep those forms
+  unpublished or use them only with controlled testers; the existing IP/workflow
+  limits, quotas, and honeypot do not stop a genuinely distributed attacker.
 
 ## Verification
 

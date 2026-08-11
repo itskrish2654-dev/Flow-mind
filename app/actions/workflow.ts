@@ -7,8 +7,10 @@ import { getAuthenticatedContext } from "@/lib/auth";
 import {
   annotateWorkflowCapabilities,
   assessWorkflowCapabilities,
+  resolveStepCapabilityId,
 } from "@/lib/capability-registry";
 import { GENERATED_DOCUMENTS_BUCKET } from "@/lib/document-storage";
+import type { Json } from "@/lib/supabase/types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   PLAN_ENTITLEMENTS,
@@ -393,27 +395,37 @@ export async function compileWorkflow(
     public_form_enabled: false,
     published_at: null,
   };
-  if (!parsedExistingWorkflowId?.success) {
-    const { count, error: countError } = await auth.supabase
+  const admin = createAdminClient();
+  let data: { id: string } | null = null;
+  let error: { code?: string; message: string; details?: string; hint?: string } | null = null;
+  if (parsedExistingWorkflowId?.success) {
+    const result = await admin
       .from("workflows")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", auth.user.id);
-    if (countError || count === null) {
-      return { success: false, status: "ERROR", error: "Workflow capacity could not be verified." };
-    }
-    if (count >= PLAN_ENTITLEMENTS.free.workflows) {
-      return { success: false, status: "ERROR", error: "This account has reached its workflow limit." };
+      .update(workflowValues)
+      .eq("id", parsedExistingWorkflowId.data)
+      .eq("user_id", auth.user.id)
+      .select("id")
+      .single();
+    data = result.data;
+    error = result.error;
+  } else {
+    const result = await admin.rpc("create_workflow_with_quota", {
+      p_user_id: auth.user.id,
+      p_name: workflowValues.name,
+      p_prompt: workflowValues.prompt,
+      p_compiled_steps: compiledWorkflow as unknown as Json,
+      p_limit: PLAN_ENTITLEMENTS.free.workflows,
+    });
+    data = result.data ? { id: result.data } : null;
+    error = result.error;
+    if (!error && !data) {
+      return {
+        success: false,
+        status: "ERROR",
+        error: "This account has reached its workflow limit.",
+      };
     }
   }
-  const admin = createAdminClient();
-  const writeQuery = parsedExistingWorkflowId?.success
-    ? admin
-        .from("workflows")
-        .update(workflowValues)
-        .eq("id", parsedExistingWorkflowId.data)
-        .eq("user_id", auth.user.id)
-    : admin.from("workflows").insert(workflowValues);
-  const { data, error } = await writeQuery.select("id").single();
   if (error) {
     securityLog("Compiled workflow persistence failed", {
       code: error.code,
@@ -542,11 +554,8 @@ export async function saveWebhookEndpoint(
     endpoint: z.string().trim().max(2_000),
   }).safeParse({ workflowId, stepId, endpoint });
   if (!request.success) return { ok: false, error: "Webhook configuration is invalid." };
-  try {
-    await resolveTrustedWebhook(request.data.endpoint);
-  } catch {
-    return { ok: false, error: "Use a public HTTPS webhook URL. Private and redirected destinations are blocked." };
-  }
+
+  // Authenticate and establish ownership before any DNS or endpoint work.
   const auth = await getAuthenticatedContext();
   if (!auth) return { ok: false, error: "Unauthorized" };
   const admin = createAdminClient();
@@ -558,16 +567,26 @@ export async function saveWebhookEndpoint(
     .maybeSingle();
   const parsed = CompiledWorkflowSchema.safeParse(data?.compiled_steps);
   if (!parsed.success) return { ok: false, error: "Workflow not found." };
-  let matched = false;
+  const registeredStep = parsed.data.steps.find(
+    (step) =>
+      step.id === request.data.stepId &&
+      resolveStepCapabilityId(step) === "webhook_post",
+  );
+  if (!registeredStep) return { ok: false, error: "Webhook step not found." };
+
+  try {
+    await resolveTrustedWebhook(request.data.endpoint);
+  } catch {
+    return { ok: false, error: "Use a public HTTPS webhook URL. Private and redirected destinations are blocked." };
+  }
+
   const workflow = annotateWorkflowCapabilities({
     ...parsed.data,
     steps: parsed.data.steps.map((step) => {
-      if (step.id !== request.data.stepId || !["webhook_post", "http_request"].includes(step.type)) return step;
-      matched = true;
+      if (step.id !== registeredStep.id) return step;
       return { ...step, config: { ...step.config, endpoint: request.data.endpoint, method: "POST" as const } };
     }),
   });
-  if (!matched) return { ok: false, error: "Webhook step not found." };
   const { error } = await admin
     .from("workflows")
     .update({ compiled_steps: workflow })

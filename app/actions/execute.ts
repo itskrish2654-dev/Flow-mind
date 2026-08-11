@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 
-import { AI_MAX_OUTPUT_TOKENS, executeAiText } from "@/lib/ai-execution";
+import { executeAiText } from "@/lib/ai-execution";
 import { getAuthenticatedContext } from "@/lib/auth";
 import { assessWorkflowCapabilities } from "@/lib/capability-registry";
 import { uploadGeneratedDocument } from "@/lib/document-storage";
@@ -108,7 +108,6 @@ export async function runTestWorkflow(
       [auth.user.id, request.data.workflowId],
       SECURITY_LIMITS.testExecution,
     );
-    await enforceUsageQuota(auth.user.id, "executions");
     const admin = createAdminClient();
     execution = await withConcurrencyLease(
       "user-execution",
@@ -118,46 +117,52 @@ export async function runTestWorkflow(
         "workflow-execution",
         [request.data.workflowId],
         1,
-        () => executeWorkflowSteps({
-          workflowId: request.data.workflowId,
-          workflowName: ownedWorkflow.name,
-          steps: savedWorkflow.data.steps,
-          inputValues: request.data.inputValues,
-          mode: "test",
-          executeAi: async (input) => {
-            await enforceRateLimit("ai-execution", [auth.user.id], SECURITY_LIMITS.ai);
-            await enforceUsageQuota(auth.user.id, "ai_generations");
-            await enforceUsageQuota(
-              auth.user.id,
-              "ai_input_chars",
-              input.instruction.length + input.content.length,
-            );
-            await enforceUsageQuota(
-              auth.user.id,
-              "ai_output_tokens",
-              AI_MAX_OUTPUT_TOKENS,
-            );
-            return executeAiText(input);
-          },
-          uploadGeneratedDocument: async ({ bytes }) => {
-            await enforceRateLimit("pdf-generation", [auth.user.id], SECURITY_LIMITS.pdf);
-            await enforceUsageQuota(auth.user.id, "generated_documents");
-            await enforceUsageQuota(auth.user.id, "uploads");
-            await enforceUsageQuota(auth.user.id, "storage_bytes", bytes.byteLength);
-            return uploadGeneratedDocument(
-              admin,
-              auth.user.id,
-              request.data.workflowId,
-              bytes,
-            );
-          },
-          executeWebhook: async (endpoint, payload) => {
-            const host = new URL(endpoint).hostname.toLowerCase();
-            await enforceRateLimit("webhook-user", [auth.user.id], SECURITY_LIMITS.webhookUser);
-            await enforceRateLimit("webhook-destination", [host], SECURITY_LIMITS.webhookDestination);
-            return postTrustedWebhook(endpoint, payload);
-          },
-        }),
+        async () => {
+          // Busy requests stop before this reservation and consume no usage.
+          // If quota fails, both nested leases are released by their finally blocks.
+          await enforceUsageQuota(auth.user.id, "executions");
+          return executeWorkflowSteps({
+            workflowId: request.data.workflowId,
+            workflowName: ownedWorkflow.name,
+            steps: savedWorkflow.data.steps,
+            inputValues: request.data.inputValues,
+            mode: "test",
+            executeAi: async (input) => {
+              await enforceRateLimit("ai-execution", [auth.user.id], SECURITY_LIMITS.ai);
+              await enforceUsageQuota(auth.user.id, "ai_generations");
+              await enforceUsageQuota(
+                auth.user.id,
+                "ai_input_chars",
+                input.instruction.length + input.content.length,
+              );
+              const result = await executeAiText(input);
+              await enforceUsageQuota(
+                auth.user.id,
+                "ai_output_tokens",
+                result.metadata.outputTokens ?? Math.max(1, Math.ceil(result.text.length / 4)),
+              );
+              return result;
+            },
+            uploadGeneratedDocument: async ({ bytes }) => {
+              await enforceRateLimit("pdf-generation", [auth.user.id], SECURITY_LIMITS.pdf);
+              await enforceUsageQuota(auth.user.id, "generated_documents");
+              await enforceUsageQuota(auth.user.id, "uploads");
+              await enforceUsageQuota(auth.user.id, "storage_bytes", bytes.byteLength);
+              return uploadGeneratedDocument(
+                admin,
+                auth.user.id,
+                request.data.workflowId,
+                bytes,
+              );
+            },
+            executeWebhook: async (endpoint, payload) => {
+              const host = new URL(endpoint).hostname.toLowerCase();
+              await enforceRateLimit("webhook-user", [auth.user.id], SECURITY_LIMITS.webhookUser);
+              await enforceRateLimit("webhook-destination", [host], SECURITY_LIMITS.webhookDestination);
+              return postTrustedWebhook(endpoint, payload);
+            },
+          });
+        },
       ),
     );
   } catch (error: unknown) {
