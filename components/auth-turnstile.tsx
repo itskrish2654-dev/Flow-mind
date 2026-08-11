@@ -13,6 +13,8 @@ type TurnstileApi = {
       callback: (token: string) => void;
       "expired-callback": () => void;
       "error-callback": () => void;
+      "response-field": boolean;
+      "response-field-name": string;
     },
   ) => string;
   reset: (widgetId: string) => void;
@@ -30,11 +32,13 @@ export function AuthTurnstile({
   resetSignal,
   onToken,
   onError,
+  helperText = "Bot protection is verified directly by Supabase Auth.",
 }: {
   siteKey: string;
   resetSignal: number;
   onToken: (token: string | null) => void;
   onError: (message: string | null) => void;
+  helperText?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetIdRef = useRef<string | null>(null);
@@ -51,6 +55,8 @@ export function AuthTurnstile({
       sitekey: siteKey,
       theme: "light",
       appearance: "interaction-only",
+      "response-field": true,
+      "response-field-name": "cf-turnstile-response",
       callback: (token) => {
         callbacksRef.current.onError(null);
         callbacksRef.current.onToken(token);
@@ -94,9 +100,7 @@ export function AuthTurnstile({
         onError={() => onError("The security challenge could not load. Please retry.")}
       />
       <div ref={containerRef} className="min-h-[65px]" aria-label="Security challenge" />
-      <p className="mt-1 text-center text-[10px] text-slate-500">
-        Bot protection is verified directly by Supabase Auth.
-      </p>
+      <p className="mt-1 text-center text-[10px] text-slate-500">{helperText}</p>
     </div>
   );
 }

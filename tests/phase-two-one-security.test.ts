@@ -13,11 +13,16 @@ const authAction = source("app/actions/auth.ts");
 const executionAction = source("app/actions/execute.ts");
 const publicAction = source("app/f/[projectId]/actions.ts");
 const workflowAction = source("app/actions/workflow.ts");
+const capabilityRegistry = source("lib/capability-registry.ts");
 const limitsSource = source("lib/security/limits.ts");
 const readme = source("README.md");
 const migration = source(
   "supabase/migrations/20260811000100_phase21_atomic_workflow_creation.sql",
 );
+const turnstileMigration = source(
+  "supabase/migrations/20260811000200_phase21_public_form_turnstile.sql",
+);
+const contentionCheck = source("scripts/phase2-contention-check.mjs");
 
 const workflowId = "00000000-0000-4000-8000-000000000001";
 const context = {
@@ -158,7 +163,24 @@ test("2.1-11. webhook authentication and ownership precede DNS validation", () =
   assert.ok(auth >= 0 && owner > auth && capability > owner && dns > capability);
 });
 
-test("2.1-12. public-form Turnstile remains an explicit pre-launch requirement", () => {
-  assert.match(readme, /Public-form Turnstile remains mandatory before broad launch/i);
-  assert.match(readme, /costly AI\/PDF\s+workflows/i);
+test("2.1-12. costly public forms automatically require Turnstile", () => {
+  assert.match(capabilityRegistry, /COSTLY_PUBLIC_CAPABILITIES[\s\S]*ai_text_transform[\s\S]*generate_pdf/);
+  assert.match(
+    workflowAction,
+    /public_form_challenge_mode:[\s\S]{0,100}requiresPublicFormTurnstile/,
+  );
+  assert.match(publicAction, /challengeMode === "turnstile"[\s\S]*verifyTurnstile/);
+  assert.match(
+    turnstileMigration,
+    /public_form_challenge_mode = case[\s\S]*then 'turnstile'/,
+  );
+  assert.match(readme, /automatically enables\s+Cloudflare Turnstile/i);
+});
+
+test("2.1-13. production contention check covers atomic boundaries and cleans fixtures", () => {
+  assert.match(contentionCheck, /Promise\.all\(Array\.from\(\{ length: 10 \}/);
+  assert.match(contentionCheck, /started === 1 && results\.executionConcurrency\.busy === 4/);
+  assert.match(contentionCheck, /quotaCounter\.used === 500/);
+  assert.match(contentionCheck, /recoveredSecond === true/);
+  assert.match(contentionCheck, /finally[\s\S]*deleteUser\(userId\)/);
 });

@@ -1,19 +1,20 @@
 "use client";
 
 import { useFormStatus } from "react-dom";
+import { useState } from "react";
 import { LoaderCircle, LockKeyhole, Send, Zap } from "lucide-react";
-import Script from "next/script";
 
 import { submitPublicWorkflow } from "@/app/f/[projectId]/actions";
+import { AuthTurnstile } from "@/components/auth-turnstile";
 import type { PublicFormDefinition } from "@/lib/schemas/workflow";
 
-function SubmitButton({ label }: { label: string }) {
+function SubmitButton({ label, challengeReady }: { label: string; challengeReady: boolean }) {
   const { pending } = useFormStatus();
 
   return (
     <button
       type="submit"
-      disabled={pending}
+      disabled={pending || !challengeReady}
       className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-[#dfbd4c] bg-[#f1c94b] text-sm font-semibold text-[#272536] shadow-[0_10px_28px_-18px_rgba(138,98,0,.65)] transition hover:bg-[#f4d66c] disabled:cursor-wait disabled:opacity-70"
     >
       {pending ? (
@@ -38,6 +39,10 @@ export function PublicWorkflowForm({
   turnstileSiteKey?: string;
 }) {
   const action = submitPublicWorkflow.bind(null, projectId);
+  const [challengeToken, setChallengeToken] = useState<string | null>(
+    challengeMode === "honeypot" ? "not-required" : null,
+  );
+  const [challengeError, setChallengeError] = useState<string | null>(null);
 
   return (
     <section className="relative w-full max-w-xl overflow-hidden rounded-[28px] border border-[#ddd5c9] bg-[#fffdfa] p-6 shadow-[0_30px_90px_-52px_rgba(72,61,35,.32)] sm:p-9">
@@ -139,19 +144,23 @@ export function PublicWorkflowForm({
         ))}
 
         {challengeMode === "turnstile" && turnstileSiteKey && (
-          <>
-            <Script
-              src="https://challenges.cloudflare.com/turnstile/v0/api.js"
-              strategy="afterInteractive"
-            />
-            <div
-              className="cf-turnstile"
-              data-sitekey={turnstileSiteKey}
-              data-theme="light"
-            />
-          </>
+          <AuthTurnstile
+            siteKey={turnstileSiteKey}
+            resetSignal={0}
+            onToken={setChallengeToken}
+            onError={setChallengeError}
+            helperText="Bot protection is verified before this automation runs."
+          />
         )}
-        <SubmitButton label={form.submitButtonLabel} />
+        {challengeError && (
+          <p role="alert" className="text-center text-xs font-medium text-red-600">
+            {challengeError}
+          </p>
+        )}
+        <SubmitButton
+          label={form.submitButtonLabel}
+          challengeReady={challengeMode === "honeypot" || Boolean(challengeToken)}
+        />
         <p className="flex items-center justify-center gap-1.5 text-center text-[10px] text-slate-500">
           <LockKeyhole className="size-3 text-[#9a7007]" /> Sent securely to this automation
         </p>

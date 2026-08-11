@@ -7,6 +7,7 @@ import { getAuthenticatedContext } from "@/lib/auth";
 import {
   annotateWorkflowCapabilities,
   assessWorkflowCapabilities,
+  requiresPublicFormTurnstile,
   resolveStepCapabilityId,
 } from "@/lib/capability-registry";
 import { GENERATED_DOCUMENTS_BUCKET } from "@/lib/document-storage";
@@ -515,9 +516,12 @@ export async function setWorkflowPublication(
     .eq("user_id", auth.user.id)
     .maybeSingle();
   if (error || !data) return { ok: false, error: "Workflow not found." };
+  const workflow = CompiledWorkflowSchema.safeParse(data.compiled_steps);
   if (publish) {
-    const workflow = CompiledWorkflowSchema.safeParse(data.compiled_steps);
-    if (!workflow.success || !workflow.data.publicForm) {
+    if (!workflow.success) {
+      return { ok: false, error: "This automation needs to be created again." };
+    }
+    if (!workflow.data.publicForm) {
       return { ok: false, error: "Add a hosted form before publishing." };
     }
     const unavailable = assessWorkflowCapabilities(workflow.data.steps, "production")
@@ -533,6 +537,9 @@ export async function setWorkflowPublication(
     .from("workflows")
     .update({
       public_form_enabled: publish,
+      public_form_challenge_mode: workflow.success && requiresPublicFormTurnstile(workflow.data.steps)
+        ? "turnstile"
+        : "honeypot",
       published_at: publish ? new Date().toISOString() : null,
     })
     .eq("id", parsedId.data)

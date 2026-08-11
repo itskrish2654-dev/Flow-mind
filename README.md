@@ -53,10 +53,10 @@ Open [http://localhost:3000](http://localhost:3000). Unauthenticated dashboard r
   expire after 15 minutes. Workflow deletion removes its recorded files; account-level
   storage garbage collection remains a later retention task.
 - Hosted forms are private by default and require explicit Publish / Unpublish actions.
-- Public-form Turnstile remains mandatory before broad launch for costly AI/PDF
-  workflows. Until production Turnstile keys are configured, keep those forms
-  unpublished or use them only with controlled testers; the existing IP/workflow
-  limits, quotas, and honeypot do not stop a genuinely distributed attacker.
+- Publishing a public form that uses AI or PDF generation automatically enables
+  Cloudflare Turnstile. The form fails closed when production Turnstile keys are
+  unavailable. Lower-cost internal-storage forms retain the honeypot plus durable
+  IP/workflow limits; distributed public-form abuse remains a monitored residual risk.
 
 ## Verification
 

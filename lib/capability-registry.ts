@@ -419,6 +419,21 @@ export function assessWorkflowCapabilities(
   }));
 }
 
+const COSTLY_PUBLIC_CAPABILITIES = new Set<CapabilityId>([
+  "ai_text_transform",
+  "generate_pdf",
+]);
+
+/** Costly public workflows must pass a bot challenge before consuming quota. */
+export function requiresPublicFormTurnstile(
+  steps: CompiledWorkflow["steps"],
+): boolean {
+  return steps.some((step) => {
+    const capabilityId = resolveStepCapabilityId(step);
+    return capabilityId !== null && COSTLY_PUBLIC_CAPABILITIES.has(capabilityId as CapabilityId);
+  });
+}
+
 export function annotateWorkflowCapabilities(
   workflow: CompiledWorkflow,
   mode: ExecutionMode = "production",
