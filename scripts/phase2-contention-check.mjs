@@ -34,10 +34,10 @@ const envPath = process.argv[2];
 assert(envPath, "Usage: node scripts/phase2-contention-check.mjs <production-env-file>");
 const env = loadEnv(envPath);
 const rawUrl = env.NEXT_PUBLIC_SUPABASE_URL;
-const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;
-assert(rawUrl && serviceKey, "Production Supabase URL/service-role environment is unavailable.");
+const secretKey = env.SUPABASE_SECRET_KEY;
+assert(rawUrl && secretKey, "Production Supabase URL/secret-key environment is unavailable.");
 const supabaseUrl = rawUrl.replace(/\/rest\/v1\/?$/, "");
-const admin = createClient(supabaseUrl, serviceKey, {
+const admin = createClient(supabaseUrl, secretKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 

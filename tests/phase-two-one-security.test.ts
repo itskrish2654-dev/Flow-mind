@@ -23,6 +23,7 @@ const turnstileMigration = source(
   "supabase/migrations/20260811000200_phase21_public_form_turnstile.sql",
 );
 const contentionCheck = source("scripts/phase2-contention-check.mjs");
+const adminClient = source("lib/supabase/admin.ts");
 
 const workflowId = "00000000-0000-4000-8000-000000000001";
 const context = {
@@ -183,4 +184,11 @@ test("2.1-13. production contention check covers atomic boundaries and cleans fi
   assert.match(contentionCheck, /quotaCounter\.used === 500/);
   assert.match(contentionCheck, /recoveredSecond === true/);
   assert.match(contentionCheck, /finally[\s\S]*deleteUser\(userId\)/);
+});
+
+test("2.1-14. privileged Supabase access uses only the modern server secret", () => {
+  assert.match(adminClient, /process\.env\.SUPABASE_SECRET_KEY/);
+  assert.doesNotMatch(adminClient, /SUPABASE_SERVICE_ROLE_KEY/);
+  assert.match(adminClient, /import "server-only"/);
+  assert.match(contentionCheck, /env\.SUPABASE_SECRET_KEY/);
 });

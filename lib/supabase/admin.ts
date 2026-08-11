@@ -8,13 +8,13 @@ import type { Database } from "@/lib/supabase/types";
 
 export function createAdminClient() {
   const { url } = getSupabaseConfig();
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const secretKey = process.env.SUPABASE_SECRET_KEY;
 
-  if (!serviceRoleKey) {
-    throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY on the server.");
+  if (!secretKey) {
+    throw new Error("Missing SUPABASE_SECRET_KEY on the server.");
   }
 
-  return createClient<Database>(url, serviceRoleKey, {
+  return createClient<Database>(url, secretKey, {
     global: { fetch: boundedSupabaseFetch },
     auth: {
       autoRefreshToken: false,
