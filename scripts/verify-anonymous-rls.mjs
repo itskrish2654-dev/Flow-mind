@@ -19,9 +19,7 @@ const publicUrl = environment.NEXT_PUBLIC_SUPABASE_URL?.replace(
   /\/rest\/v1\/?$/,
   "",
 );
-const publicKey =
-  environment.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
-  environment.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const publicKey = environment.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
 if (!publicUrl || !publicKey) {
   throw new Error("Missing public Supabase configuration in .env.local.");

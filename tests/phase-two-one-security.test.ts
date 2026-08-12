@@ -24,6 +24,8 @@ const turnstileMigration = source(
 );
 const contentionCheck = source("scripts/phase2-contention-check.mjs");
 const adminClient = source("lib/supabase/admin.ts");
+const publicConfig = source("lib/supabase/config.ts");
+const anonymousRlsCheck = source("scripts/verify-anonymous-rls.mjs");
 
 const workflowId = "00000000-0000-4000-8000-000000000001";
 const context = {
@@ -191,4 +193,11 @@ test("2.1-14. privileged Supabase access uses only the modern server secret", ()
   assert.doesNotMatch(adminClient, /SUPABASE_SERVICE_ROLE_KEY/);
   assert.match(adminClient, /import "server-only"/);
   assert.match(contentionCheck, /env\.SUPABASE_SECRET_KEY/);
+});
+
+test("2.1-15. browser and anonymous checks require only the modern publishable key", () => {
+  assert.match(publicConfig, /process\.env\.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY/);
+  assert.doesNotMatch(publicConfig, /NEXT_PUBLIC_SUPABASE_ANON_KEY/);
+  assert.match(anonymousRlsCheck, /environment\.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY/);
+  assert.doesNotMatch(anonymousRlsCheck, /NEXT_PUBLIC_SUPABASE_ANON_KEY/);
 });
