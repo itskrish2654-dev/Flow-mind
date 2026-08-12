@@ -423,11 +423,9 @@ export async function POST(request: Request) {
       if (verified.error) throw verified.error;
       return client;
     };
-    const [sessionOne, sessionTwo, accountB] = await Promise.all([
-      createIndependentSession(emailA),
-      createIndependentSession(emailA),
-      createIndependentSession(emailB),
-    ]);
+    const sessionOne = await createIndependentSession(emailA);
+    const sessionTwo = await createIndependentSession(emailA);
+    const accountB = await createIndependentSession(emailB);
     const [loginOne, loginTwo, loginB] = await Promise.all([
       sessionOne.auth.getUser(),
       sessionTwo.auth.getUser(),
