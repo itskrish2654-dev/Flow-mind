@@ -101,6 +101,7 @@ test("3-12/13. completed steps stay successful and failed destination remains re
   assert.match(executionCore, /completedStepIds\.has\(step\.id\)/);
   assert.match(migration, /unique \(execution_id, workflow_step_id\)/);
   assert.match(migration, /retryable boolean/);
+  assert.match(executionCore, /definitivelyRetryable[\s\S]*Webhook returned status/);
 });
 
 test("3-15/16. edits create immutable versions and never update old version rows", () => {

@@ -428,10 +428,16 @@ export async function executeWorkflowSteps({
         );
       } catch (error: unknown) {
         securityLog("Webhook delivery failed", { error, workflowId, stepId: step.id });
+        const message = error instanceof Error ? error.message : "Webhook delivery failed.";
+        const definitivelyRetryable = /^Webhook returned status (429|5\d\d)\.$/.test(message);
         await fail(
-          "Webhook delivery failed because an acknowledgement was not received. Automatic retry is disabled to avoid duplicate delivery.",
+          definitivelyRetryable
+            ? `${message} The provider acknowledged a temporary failure, so this step can be retried safely.`
+            : "Webhook delivery failed because an acknowledgement was not received. Automatic retry is disabled to avoid duplicate delivery.",
           "failed",
-          new Error("Ambiguous external result: webhook acknowledgement was not received."),
+          definitivelyRetryable
+            ? error
+            : new Error("Ambiguous external result: webhook acknowledgement was not received."),
         );
         break;
       }
