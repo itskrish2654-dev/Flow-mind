@@ -25,12 +25,12 @@ implicitly-public form links; owners must explicitly publish those forms again.
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Unauthenticated dashboard requests redirect to `/login`.
+Open [http://localhost:3000](http://localhost:3000). Unauthenticated dashboard and settings requests redirect to `/login`.
 
 ## Security model
 
 - Supabase sessions are stored in cookies through `@supabase/ssr`.
-- Next.js `proxy.ts` refreshes sessions and protects every `/dashboard` route.
+- Next.js `proxy.ts` refreshes sessions and protects every `/dashboard` and `/settings` route.
 - Every Server Action independently verifies the user with `supabase.auth.getUser()`.
 - Every owner query includes the authenticated `user_id`.
 - Cloudflare Turnstile must be enabled in Supabase Auth Bot and Abuse Protection.
@@ -50,8 +50,11 @@ Open [http://localhost:3000](http://localhost:3000). Unauthenticated dashboard r
 - Rate limits, monthly usage counters, and concurrency leases are stored atomically
   in Postgres and fail closed when unavailable.
 - Generated PDFs use a private bucket. Owners receive signed download links that
-  expire after 15 minutes. Workflow deletion removes its recorded files; account-level
-  storage garbage collection remains a later retention task.
+  expire after 15 minutes. Workflow deletion removes its recorded files. Account
+  deletion disables public forms first, removes recorded private objects, deletes
+  owner data transactionally, and finally removes the Supabase Auth identity.
+- Account export is authenticated, owner-scoped, server-generated, bounded, and
+  excludes credential ciphertext, encryption material, tokens, and service secrets.
 - Hosted forms are private by default and require explicit Publish / Unpublish actions.
 - Publishing a public form that uses AI or PDF generation automatically enables
   Cloudflare Turnstile. The form fails closed when production Turnstile keys are

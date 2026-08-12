@@ -6,6 +6,7 @@ import { LoaderCircle, LockKeyhole, Send, Zap } from "lucide-react";
 
 import { submitPublicWorkflow } from "@/app/f/[projectId]/actions";
 import { AuthTurnstile } from "@/components/auth-turnstile";
+import { TrustLinks } from "@/components/trust-links";
 import type { PublicFormDefinition } from "@/lib/schemas/workflow";
 
 function SubmitButton({ label, challengeReady }: { label: string; challengeReady: boolean }) {
@@ -59,7 +60,7 @@ export function PublicWorkflowForm({
           </div>
         </div>
         <span className="hidden items-center gap-1.5 rounded-full border border-[#e3dbcf] bg-[#faf7f1] px-2.5 py-1 text-[9px] font-semibold text-[#6f685d] sm:flex">
-          <LockKeyhole className="size-3 text-[#9a7007]" /> Private &amp; secure
+          <LockKeyhole className="size-3 text-[#9a7007]" /> Protected submission
         </span>
       </div>
 
@@ -163,9 +164,10 @@ export function PublicWorkflowForm({
           label={form.submitButtonLabel}
           challengeReady={challengeMode === "honeypot" || Boolean(challengeToken)}
         />
-        <p className="flex items-center justify-center gap-1.5 text-center text-[10px] text-slate-500">
-          <LockKeyhole className="size-3 text-[#9a7007]" /> Sent securely to this automation
-        </p>
+        <div className="border-t border-[#ece6dc] pt-4 text-center">
+          <p className="text-[10px] leading-5 text-slate-500">Powered by FlowMind. Your submission is handled according to the workflow owner’s configuration. AI processing may occur only if this workflow includes an AI step.</p>
+          <TrustLinks className="mt-2 flex flex-wrap justify-center gap-x-3 gap-y-1 text-[10px] text-slate-500 [&_a:hover]:text-slate-900" />
+        </div>
       </form>
     </section>
   );

@@ -11,11 +11,17 @@ type AuthMode = "login" | "signup" | "recovery";
 export function LoginForm({
   nextPath,
   turnstileSiteKey,
+  initialMessage,
+  notice: initialNotice,
+  initialMode = "login",
 }: {
   nextPath: string;
   turnstileSiteKey: string | null;
+  initialMessage?: string;
+  notice?: string;
+  initialMode?: AuthMode;
 }) {
-  const [mode, setMode] = useState<AuthMode>("login");
+  const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
@@ -23,8 +29,19 @@ export function LoginForm({
   const [challengeError, setChallengeError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [progress, setProgress] = useState<"authenticating" | "opening" | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const callbackError = initialMessage === "recovery_failed"
+    ? "This recovery link is invalid, expired, or already used. Request a new link."
+    : initialMessage === "confirmation_failed"
+      ? "This confirmation link is invalid or has expired."
+      : null;
+  const [error, setError] = useState<string | null>(callbackError);
+  const [notice, setNotice] = useState<string | null>(
+    initialNotice === "password_updated"
+      ? "Password updated. Log in with your new password."
+      : initialNotice === "account_deleted"
+        ? "Your FlowMind account and account-owned data were deleted."
+        : null,
+  );
 
   function chooseMode(nextMode: AuthMode) {
     setMode(nextMode);

@@ -6,9 +6,12 @@ export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get("code");
   const requestedNext = requestUrl.searchParams.get("next");
-  const nextPath = requestedNext?.startsWith("/dashboard")
-    ? requestedNext
-    : "/dashboard";
+  const recovery = requestUrl.searchParams.get("type") === "recovery" || requestedNext === "/reset-password";
+  const nextPath = recovery
+    ? "/reset-password"
+    : requestedNext?.startsWith("/dashboard")
+      ? requestedNext
+      : "/dashboard";
 
   if (code) {
     const supabase = await createClient();
@@ -17,6 +20,6 @@ export async function GET(request: Request) {
   }
 
   const loginUrl = new URL("/login", requestUrl.origin);
-  loginUrl.searchParams.set("error", "confirmation_failed");
+  loginUrl.searchParams.set("error", recovery ? "recovery_failed" : "confirmation_failed");
   return NextResponse.redirect(loginUrl);
 }

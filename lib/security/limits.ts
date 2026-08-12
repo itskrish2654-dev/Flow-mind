@@ -18,6 +18,7 @@ export const SECURITY_LIMITS = {
   signup: { limit: 5, windowSeconds: 3_600 },
   login: { limit: 10, windowSeconds: 15 * 60 },
   recovery: { limit: 5, windowSeconds: 3_600 },
+  accountDeletion: { limit: 3, windowSeconds: 3_600 },
   planning: { limit: 12, windowSeconds: 60 },
   ai: { limit: 10, windowSeconds: 60 },
   customization: { limit: 8, windowSeconds: 60 },
@@ -134,7 +135,21 @@ export async function enforceUsageQuota(
     });
     if (error || !data?.[0]) throw new Error("quota backend failed");
     if (!data[0].allowed) {
-      throw new SecurityGateError("This account has reached its current usage limit.", "QUOTA_EXCEEDED");
+      const labels: Record<UsageMetric, string> = {
+        workflows: "saved workflow",
+        ai_generations: "monthly AI generation",
+        ai_input_chars: "monthly AI input",
+        ai_output_tokens: "monthly AI output",
+        executions: "monthly execution",
+        public_form_submissions: "monthly public submission",
+        generated_documents: "monthly generated document",
+        uploads: "monthly upload",
+        storage_bytes: "storage",
+      };
+      throw new SecurityGateError(
+        `You've reached your ${labels[metric]} limit (${data[0].used.toLocaleString()} / ${PLAN_ENTITLEMENTS[plan][metric].toLocaleString()} used).`,
+        "QUOTA_EXCEEDED",
+      );
     }
   } catch (error) {
     if (error instanceof SecurityGateError) throw error;

@@ -9,6 +9,7 @@ import {
   LoaderCircle,
   LogOut,
   Plus,
+  Settings,
   Trash2,
   Workflow,
   X,
@@ -274,11 +275,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
             {account && <p className="mt-2 text-[8px] text-slate-400">{account.memberSince}</p>}
             {accountError && <p role="alert" className="mt-2 text-[9px] leading-4 text-rose-600">{accountError}</p>}
+            <Link href="/settings" className="mt-3 flex h-8 w-full items-center justify-center gap-2 rounded-lg border border-[#ded6ca] bg-[#fffdfa] text-[10px] font-semibold text-slate-600 transition hover:border-[#c9b98f] hover:bg-[#fff8e3] hover:text-slate-900"><Settings className="size-3.5" />Settings</Link>
             <button
               type="button"
               onClick={() => void logOut()}
               disabled={isSigningOut}
-              className="mt-3 flex h-8 w-full items-center justify-center gap-2 rounded-lg border border-[#ded6ca] bg-[#fffdfa] text-[10px] font-semibold text-slate-600 transition hover:border-[#c9b98f] hover:bg-[#fff8e3] hover:text-slate-900 disabled:cursor-wait disabled:opacity-60"
+              className="mt-2 flex h-8 w-full items-center justify-center gap-2 rounded-lg border border-[#ded6ca] bg-[#fffdfa] text-[10px] font-semibold text-slate-600 transition hover:border-[#c9b98f] hover:bg-[#fff8e3] hover:text-slate-900 disabled:cursor-wait disabled:opacity-60"
             >
               {isSigningOut ? <LoaderCircle className="size-3.5 animate-spin" /> : <LogOut className="size-3.5" />}
               {isSigningOut ? "Logging out…" : "Log out"}

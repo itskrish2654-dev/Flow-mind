@@ -185,6 +185,39 @@ export type Database = {
         Update: never;
         Relationships: [];
       };
+      account_deletion_jobs: {
+        Row: {
+          id: string;
+          user_id: string;
+          state: "requested" | "processing" | "completed" | "failed";
+          requested_at: string;
+          started_at: string | null;
+          completed_at: string | null;
+          updated_at: string;
+          retry_count: number;
+          failure_code: string | null;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          state?: "requested" | "processing" | "completed" | "failed";
+          requested_at?: string;
+          started_at?: string | null;
+          completed_at?: string | null;
+          updated_at?: string;
+          retry_count?: number;
+          failure_code?: string | null;
+        };
+        Update: {
+          state?: "requested" | "processing" | "completed" | "failed";
+          started_at?: string | null;
+          completed_at?: string | null;
+          updated_at?: string;
+          retry_count?: number;
+          failure_code?: string | null;
+        };
+        Relationships: [];
+      };
       workflow_executions: {
         Row: {
           id: string;
@@ -405,6 +438,14 @@ export type Database = {
       release_security_concurrency: {
         Args: { p_key_hash: string; p_lease_id: string };
         Returns: undefined;
+      };
+      request_account_deletion: {
+        Args: { p_user_id: string };
+        Returns: string;
+      };
+      cleanup_account_data: {
+        Args: { p_job_id: string; p_user_id: string };
+        Returns: boolean;
       };
     };
   };
