@@ -85,7 +85,7 @@ export async function authenticateWithPassword(input: {
   if (parsed.data.mode === "recovery") {
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       captchaToken: parsed.data.captchaToken,
-      ...(siteUrl ? { redirectTo: `${siteUrl}/auth/callback?next=/reset-password&type=recovery` } : {}),
+      ...(siteUrl ? { redirectTo: `${siteUrl}/auth/recovery` } : {}),
     });
     if (error) {
       return {

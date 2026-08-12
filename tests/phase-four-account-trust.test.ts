@@ -8,6 +8,7 @@ function source(path: string) {
 
 const authAction = source("app/actions/auth.ts");
 const callback = source("app/auth/callback/route.ts");
+const recoveryCallback = source("app/auth/recovery/route.ts");
 const resetPage = source("app/reset-password/page.tsx");
 const settingsLayout = source("app/settings/layout.tsx");
 const settingsPage = source("app/settings/page.tsx");
@@ -25,8 +26,9 @@ const legal = ["privacy", "terms", "support", "security", "data-use"]
 
 test("1. password recovery requests a recovery callback", () => {
   assert.match(authAction, /resetPasswordForEmail/);
-  assert.match(authAction, /next=\/reset-password&type=recovery/);
-  assert.match(callback, /exchangeCodeForSession/);
+  assert.match(authAction, /\/auth\/recovery/);
+  assert.match(recoveryCallback, /exchangeCodeForSession/);
+  assert.match(recoveryCallback, /\/reset-password/);
   assert.match(resetPage, /ResetPasswordForm/);
 });
 
@@ -37,6 +39,7 @@ test("2. password recovery requires CAPTCHA", () => {
 
 test("3. expired and reused recovery links fail clearly", () => {
   assert.match(callback, /recovery_failed/);
+  assert.match(recoveryCallback, /recovery_failed/);
   assert.match(resetPage, /login\?error=recovery_failed/);
   assert.match(authAction, /invalid or has expired/);
 });
