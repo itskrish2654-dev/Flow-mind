@@ -74,6 +74,7 @@ type AutomationWorkspaceProps = {
   initialWorkflowName?: string;
   initialPrompt?: string;
   initialPublished?: boolean;
+  initialSetupConfig?: InputValues;
 };
 
 const examples = [
@@ -117,25 +118,6 @@ function defaultInputValues(
         inputId(step.id, input.key),
         input.value ?? "",
       ]),
-    ),
-  );
-}
-
-function browserSafeValues(
-  workflow: CompiledWorkflow,
-  workflowId: string,
-  values: InputValues,
-): InputValues {
-  const secretIds = new Set(
-    workflow.steps.flatMap((step) =>
-      getStepInputs(step, workflowId)
-        .filter((input) => input.type === "secret")
-        .map((input) => inputId(step.id, input.key)),
-    ),
-  );
-  return Object.fromEntries(
-    Object.entries(values).filter(
-      ([key]) => !secretIds.has(key) && !isSensitiveFieldName(key),
     ),
   );
 }
@@ -545,6 +527,7 @@ export function AutomationWorkspace({
   initialWorkflowName = "",
   initialPrompt = "",
   initialPublished = false,
+  initialSetupConfig = {},
 }: AutomationWorkspaceProps) {
   const router = useRouter();
   const initialSteps = initialWorkflow
@@ -558,7 +541,7 @@ export function AutomationWorkspace({
     initialSteps[0]?.id ?? null,
   );
   const [values, setValues] = useState<InputValues>(() =>
-    defaultInputValues(initialWorkflow, initialWorkflowId),
+    ({ ...defaultInputValues(initialWorkflow, initialWorkflowId), ...initialSetupConfig }),
   );
   const [isBuilding, setIsBuilding] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
@@ -615,15 +598,6 @@ export function AutomationWorkspace({
     const restoreTimer = window.setTimeout(() => {
       cleanLegacySensitiveValues();
       const ordered = orderWorkflowSteps(initialWorkflow.steps);
-      let savedValues: InputValues = {};
-      try {
-        savedValues = JSON.parse(
-          window.localStorage.getItem(`flowmind:values:${initialWorkflowId}`) ?? "{}",
-        ) as InputValues;
-      } catch {
-        savedValues = {};
-      }
-
       setValues(
         Object.fromEntries(
           ordered.flatMap((step) =>
@@ -633,7 +607,7 @@ export function AutomationWorkspace({
                 id,
                 input.type === "secret" || isSensitiveFieldName(id)
                   ? ""
-                  : savedValues[id] ?? input.value ?? "",
+                    : initialSetupConfig[id] ?? input.value ?? "",
               ];
             }),
           ),
@@ -647,7 +621,7 @@ export function AutomationWorkspace({
     }, 0);
 
     return () => window.clearTimeout(restoreTimer);
-  }, [initialWorkflow, initialWorkflowId]);
+  }, [initialSetupConfig, initialWorkflow, initialWorkflowId]);
 
   useEffect(() => {
     const reset = () => resetBuilder();
@@ -659,13 +633,7 @@ export function AutomationWorkspace({
 
   useEffect(() => {
     if (!workflowId || !workflow) return;
-    window.localStorage.setItem(
-      `flowmind:values:${workflowId}`,
-      JSON.stringify(browserSafeValues(workflow, workflowId, values)),
-    );
-    const wasWorking = window.localStorage.getItem(`flowmind:status:${workflowId}`) === "working";
-    const status = workflowReady ? (wasWorking ? "Working" : "Ready") : "Draft";
-    if (!workflowReady) window.localStorage.removeItem(`flowmind:status:${workflowId}`);
+    const status = workflowReady ? "Ready" : "Draft";
     window.dispatchEvent(new CustomEvent("flowmind:status-changed", { detail: { id: workflowId, status } }));
   }, [values, workflow, workflowId, workflowReady]);
 
@@ -680,7 +648,12 @@ export function AutomationWorkspace({
     setTestSucceeded(null);
     setPlanning(null);
     try {
-      const result = await compileWorkflow(description, workflowId);
+      let editIntent: "replace" | undefined;
+      if (workflowId) {
+        if (!window.confirm("Replace this automation with a new version? Version history and rollback will remain available.")) return;
+        editIntent = "replace";
+      }
+      const result = await compileWorkflow(description, workflowId, editIntent);
       if (!result.success) {
         setPlanning(result.planning ?? null);
         setError(result.error);
@@ -721,7 +694,7 @@ export function AutomationWorkspace({
     setError(null);
     setLogs([]);
     try {
-      const result = await runTestWorkflow(workflowId, steps, values);
+      const result = await runTestWorkflow(workflowId, steps, values, crypto.randomUUID());
       if (!result.ok) {
         setLogs(result.logs ?? []);
         setTestSucceeded(false);
@@ -734,8 +707,7 @@ export function AutomationWorkspace({
       window.dispatchEvent(
         new CustomEvent("flowmind:executions-changed", { detail: workflowId }),
       );
-      window.localStorage.setItem(`flowmind:status:${workflowId}`, "working");
-      window.dispatchEvent(new CustomEvent("flowmind:status-changed", { detail: { id: workflowId, status: "Working" } }));
+      window.dispatchEvent(new CustomEvent("flowmind:status-changed", { detail: { id: workflowId, status: "Ready" } }));
     } catch {
       setError("The test couldn’t run. Please try again.");
     } finally {
@@ -748,7 +720,15 @@ export function AutomationWorkspace({
   ): Promise<string | null> {
     try {
       if (!workflowId) return "Create the workflow before customizing its form.";
-      const result = await saveWorkflowCustomization(workflowId, { publicForm });
+      let result = await saveWorkflowCustomization(workflowId, { publicForm });
+      if (!result.ok && result.impact) {
+        const confirmed = window.confirm(`${result.error}\n\nContinue? This creates a new version; existing execution records are retained.`);
+        if (!confirmed) return "Field removal cancelled. No changes were saved.";
+        result = await saveWorkflowCustomization(workflowId, {
+          publicForm,
+          confirmDestructiveFieldRemoval: true,
+        });
+      }
       if (!result.ok) return result.error;
       setWorkflow(result.workflow);
       window.dispatchEvent(

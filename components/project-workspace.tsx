@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Database, Workflow } from "lucide-react";
+import { Database, History, Workflow } from "lucide-react";
 
 import type { WorkflowExecutionRecord } from "@/app/actions/executions";
 import { AutomationWorkspace } from "@/components/automation-workspace";
 import { ExecutionsDataTable } from "@/components/executions-data-table";
+import { WorkflowVersionHistory } from "@/components/workflow-version-history";
+import type { WorkflowVersionSummary } from "@/app/actions/versions";
 import type { CompiledWorkflow } from "@/lib/schemas/workflow";
 import { getDataTableDefinition } from "@/lib/workflow-customization";
 
@@ -14,13 +16,19 @@ export function ProjectWorkspace({
   workflow,
   published,
   initialExecutions,
+  initialExecutionCursor,
+  initialSetupConfig,
+  versions,
 }: {
   workflowId: string;
   workflow: CompiledWorkflow;
   published: boolean;
   initialExecutions: WorkflowExecutionRecord[];
+  initialExecutionCursor: string | null;
+  initialSetupConfig: Record<string, string>;
+  versions: WorkflowVersionSummary[];
 }) {
-  const [view, setView] = useState<"builder" | "data">("builder");
+  const [view, setView] = useState<"builder" | "data" | "versions">("builder");
   const [executionCount, setExecutionCount] = useState(initialExecutions.length);
   const [currentWorkflow, setCurrentWorkflow] = useState(workflow);
 
@@ -54,6 +62,9 @@ export function ProjectWorkspace({
           <Workflow className="size-3.5" />
           Workflow
         </button>
+        <button type="button" onClick={() => setView("versions")} className={`flex h-10 items-center gap-2 border-b-2 px-3 text-[11px] font-semibold transition ${view === "versions" ? "border-[#d7aa2f] text-[#272536]" : "border-transparent text-[#6c6458] hover:text-[#272536]"}`}>
+          <History className="size-3.5" /> Versions <span className="rounded-full bg-[#f8f4ec] px-1.5 py-0.5 text-[9px]">{versions.length}</span>
+        </button>
         <button
           type="button"
           onClick={() => setView("data")}
@@ -75,13 +86,17 @@ export function ProjectWorkspace({
             initialWorkflowId={workflowId}
             initialWorkflow={currentWorkflow}
             initialPublished={published}
+            initialSetupConfig={initialSetupConfig}
           />
-        ) : (
+        ) : view === "data" ? (
           <ExecutionsDataTable
             workflowId={workflowId}
             initialExecutions={initialExecutions}
+            initialNextCursor={initialExecutionCursor}
             columns={getDataTableDefinition(currentWorkflow).columns}
           />
+        ) : (
+          <WorkflowVersionHistory workflowId={workflowId} versions={versions} />
         )}
       </div>
     </div>

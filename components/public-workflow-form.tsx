@@ -39,6 +39,7 @@ export function PublicWorkflowForm({
   turnstileSiteKey?: string;
 }) {
   const action = submitPublicWorkflow.bind(null, projectId);
+  const [submissionId] = useState(() => crypto.randomUUID());
   const [challengeToken, setChallengeToken] = useState<string | null>(
     challengeMode === "honeypot" ? "not-required" : null,
   );
@@ -70,6 +71,7 @@ export function PublicWorkflowForm({
       </div>
 
       <form action={action} className="mt-8 space-y-5">
+        <input type="hidden" name="flowmind_submission_id" value={submissionId} />
         <div className="absolute -left-[9999px]" aria-hidden="true">
           <label htmlFor="company_website">Company website</label>
           <input id="company_website" name="company_website" tabIndex={-1} autoComplete="off" />

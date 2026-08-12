@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 
 import { listWorkflowExecutions } from "@/app/actions/executions";
 import { getWorkflow } from "@/app/actions/workflow";
+import { listWorkflowVersions } from "@/app/actions/versions";
 import { AutomationWorkspace } from "@/components/automation-workspace";
 import { ProjectWorkspace } from "@/components/project-workspace";
 
@@ -28,7 +29,10 @@ export default async function ProjectPage({
     );
   }
 
-  const executionsResult = await listWorkflowExecutions(id);
+  const [executionsResult, versionsResult] = await Promise.all([
+    listWorkflowExecutions(id),
+    listWorkflowVersions(id),
+  ]);
 
   return (
     <ProjectWorkspace
@@ -36,6 +40,9 @@ export default async function ProjectPage({
       workflow={result.workflow}
       published={result.published}
       initialExecutions={executionsResult.ok ? executionsResult.executions : []}
+      initialExecutionCursor={executionsResult.ok ? executionsResult.nextCursor : null}
+      initialSetupConfig={result.setupConfig}
+      versions={versionsResult.ok ? versionsResult.versions : []}
     />
   );
 }

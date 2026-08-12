@@ -6,8 +6,14 @@ import { z } from "zod";
 import { executeAiText } from "@/lib/ai-execution";
 import { resolveStepCapabilityId } from "@/lib/capability-registry";
 import { uploadGeneratedDocument } from "@/lib/document-storage";
+import {
+  completeDurableExecution,
+  createDurableExecution,
+  createExecutionStateHooks,
+  createPublicFormIdempotencyKey,
+  markExecutionRunning,
+} from "@/lib/execution-state";
 import { getPublicExecutableWorkflow } from "@/lib/public-workflow";
-import type { Json } from "@/lib/supabase/types";
 import {
   SECURITY_LIMITS,
   SecurityGateError,
@@ -138,6 +144,8 @@ export async function submitPublicWorkflow(
   }
 
   const inputData: Record<string, string> = {};
+  const submissionId = z.string().uuid().safeParse(formData.get("flowmind_submission_id"));
+  if (!submissionId.success) return complete("invalid_submission");
   for (const field of publicWorkflow.form.fields) {
     const rawValue = formData.get(field.key);
     const value = typeof rawValue === "string" ? rawValue : "";
@@ -230,8 +238,27 @@ export async function submitPublicWorkflow(
     );
   }
 
+  let durable;
+  const idempotencyKey = createPublicFormIdempotencyKey(submissionId.data);
+  try {
+    durable = await createDurableExecution(publicWorkflow.admin, {
+      workflowId: publicWorkflow.id,
+      workflowVersionId: publicWorkflow.versionId,
+      userId: publicWorkflow.ownerId,
+      triggerType: "public_form",
+      triggerMetadata: { challengeMode: publicWorkflow.challengeMode },
+      idempotencyKey,
+      inputData,
+    });
+  } catch (error) {
+    securityLog("Public durable execution creation failed", { error, workflowId: publicWorkflow.id });
+    return complete("persistence_failed");
+  }
+  if (!durable.created) return complete("duplicate");
+
   let execution: Awaited<ReturnType<typeof executeWorkflowSteps>>;
   try {
+    await markExecutionRunning(publicWorkflow.admin, durable.id);
     execution = await withConcurrencyLease(
       "user-execution",
       [publicWorkflow.ownerId],
@@ -269,7 +296,7 @@ export async function submitPublicWorkflow(
               );
               return result;
             },
-            uploadGeneratedDocument: async ({ bytes }) => {
+            uploadGeneratedDocument: async ({ bytes, stepId }) => {
               await enforceRateLimit(
                 "pdf-generation",
                 [publicWorkflow.ownerId],
@@ -283,8 +310,11 @@ export async function submitPublicWorkflow(
                 publicWorkflow.ownerId,
                 publicWorkflow.id,
                 bytes,
+                `${durable.id}-${stepId}`,
               );
             },
+            idempotencyKey,
+            stateHooks: createExecutionStateHooks(publicWorkflow.admin, durable.id),
           });
         },
       ),
@@ -294,21 +324,21 @@ export async function submitPublicWorkflow(
       error,
       workflowId: publicWorkflow.id,
     });
+    await publicWorkflow.admin.from("workflow_executions").update({
+      status: "failed",
+      completed_at: new Date().toISOString(),
+      failure_category: "execution_error",
+      sanitized_metadata: { message: error instanceof Error ? error.message : "Execution failed." },
+    }).eq("id", durable.id);
     return complete("execution_failed");
   }
 
-  const { error } = await publicWorkflow.admin
-    .from("workflow_executions")
-    .insert({
-      workflow_id: publicWorkflow.id,
-      input_data: execution.inputData as Json,
-      output_data: execution.outputData as Json,
-    });
-
-  if (error) {
+  try {
+    await completeDurableExecution(publicWorkflow.admin, durable.id, execution);
+  } catch (error) {
     securityLog("Public execution persistence failed", {
-      code: error.code,
-      message: error.message,
+      error,
+      executionId: durable.id,
     });
     return complete("persistence_failed");
   }

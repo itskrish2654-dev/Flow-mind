@@ -101,11 +101,8 @@ test("2.1-7. workflow creation is one locked database transaction", () => {
     migration,
     /grant execute on function public\.create_workflow_with_quota[\s\S]*to service_role/i,
   );
-  assert.match(workflowAction, /admin\.rpc\("create_workflow_with_quota"/);
-  assert.doesNotMatch(
-    workflowAction,
-    /select\("id", \{ count: "exact", head: true \}\)/,
-  );
+  assert.match(workflowAction, /admin\.rpc\("create_versioned_workflow_with_quota"/);
+  assert.doesNotMatch(workflowAction, /WORKFLOW_LIMIT[\s\S]*select\("id", \{ count: "exact", head: true \}\)/);
 });
 
 test("2.1-8. a canonical padded 32-byte master key is accepted", () => {
@@ -160,7 +157,7 @@ test("2.1-11. webhook authentication and ownership precede DNS validation", () =
   const functionStart = workflowAction.indexOf("export async function saveWebhookEndpoint");
   const scoped = workflowAction.slice(functionStart);
   const auth = scoped.indexOf("await getAuthenticatedContext()");
-  const owner = scoped.indexOf('.eq("user_id", auth.user.id)');
+  const owner = scoped.indexOf("loadWorkflowSnapshot(admin, request.data.workflowId, auth.user.id)");
   const capability = scoped.indexOf('resolveStepCapabilityId(step) === "webhook_post"');
   const dns = scoped.indexOf("await resolveTrustedWebhook(request.data.endpoint)");
   assert.ok(auth >= 0 && owner > auth && capability > owner && dns > capability);

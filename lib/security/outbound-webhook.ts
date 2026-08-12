@@ -102,7 +102,8 @@ export async function resolveTrustedWebhook(value: string): Promise<{
 export async function postTrustedWebhook(
   endpoint: string,
   payload: unknown,
-): Promise<{ status: number }> {
+  idempotencyKey?: string,
+): Promise<{ status: number; referenceId?: string }> {
   const body = Buffer.from(JSON.stringify(payload), "utf8");
   if (body.byteLength > MAX_BODY_BYTES) throw new Error("Webhook request body is too large.");
   const { destination, address, family } = await resolveTrustedWebhook(endpoint);
@@ -116,6 +117,7 @@ export async function postTrustedWebhook(
           "Content-Type": "application/json",
           "Content-Length": body.byteLength,
           "User-Agent": "FlowMind-Webhook/1.0",
+          ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
         },
         timeout: REQUEST_TIMEOUT_MS,
         lookup: (_hostname, _options, callback) => callback(null, address, family),
@@ -134,7 +136,10 @@ export async function postTrustedWebhook(
             reject(new Error(`Webhook returned status ${status}.`));
             return;
           }
-          resolve({ status });
+          resolve({
+            status,
+            referenceId: response.headers["x-request-id"]?.toString(),
+          });
         });
         response.on("error", reject);
       },

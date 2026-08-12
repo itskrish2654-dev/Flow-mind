@@ -43,12 +43,29 @@ type InputValues = Record<string, string>;
 
 export type GeneratedDocumentUpload = (input: {
   bytes: Uint8Array;
+  stepId: string;
 }) => Promise<{ id: string; path: string; filename: string }>;
 
 export type TrustedWebhookExecutor = (
   endpoint: string,
   payload: unknown,
-) => Promise<{ status: number }>;
+  idempotencyKey?: string,
+) => Promise<{ status: number; referenceId?: string }>;
+
+export type ExecutionStateHooks = {
+  onStepStart?: (step: WorkflowStep) => Promise<void>;
+  onStepFinish?: (
+    step: WorkflowStep,
+    result: {
+      status: "succeeded" | "failed" | "skipped";
+      message: string;
+      providerReferenceId?: string | null;
+      metadata?: Record<string, string | number | boolean | null>;
+      error?: unknown;
+      retryable?: boolean;
+    },
+  ) => Promise<void>;
+};
 
 export type WorkflowExecutionResult = {
   ok: boolean;
@@ -174,6 +191,10 @@ export async function executeWorkflowSteps({
   uploadGeneratedDocument,
   executeAi,
   executeWebhook = postTrustedWebhook,
+  idempotencyKey,
+  stateHooks,
+  completedStepIds = new Set<string>(),
+  resumeState,
 }: {
   workflowId: string;
   workflowName: string;
@@ -183,11 +204,18 @@ export async function executeWorkflowSteps({
   uploadGeneratedDocument?: GeneratedDocumentUpload;
   executeAi?: AiTextExecutor;
   executeWebhook?: TrustedWebhookExecutor;
+  idempotencyKey?: string;
+  stateHooks?: ExecutionStateHooks;
+  completedStepIds?: Set<string>;
+  resumeState?: {
+    aiResult?: string | null;
+    documents?: Array<{ id: string; filename: string }>;
+  };
 }): Promise<WorkflowExecutionResult> {
   const logs: ExecutionLog[] = [];
   const records: StepExecutionRecord[] = [];
   const inputData = safeInputData(steps, inputValues);
-  const documents: Array<{ id: string; filename: string }> = [];
+  const documents: Array<{ id: string; filename: string }> = [...(resumeState?.documents ?? [])];
   const aiMetadata: Array<AiExecutionMetadata & { stepId: string }> = [];
   const variables = executionVariables(
     steps,
@@ -197,8 +225,13 @@ export async function executeWorkflowSteps({
     workflowName,
   );
   let delivered = false;
-  let aiResult: string | null = null;
+  let aiResult: string | null = resumeState?.aiResult ?? null;
   let failureReason: string | null = null;
+  if (aiResult) {
+    variables.ai_result = aiResult;
+    variables.ai_summary = aiResult;
+    variables.ai = { result: aiResult, summary: aiResult };
+  }
 
   const finish = (): WorkflowExecutionResult => {
     const succeeded = records.filter((record) => record.status === "succeeded").length;
@@ -248,12 +281,18 @@ export async function executeWorkflowSteps({
         status,
         message,
       });
+      await stateHooks?.onStepFinish?.(step, {
+        status: "skipped",
+        message,
+        error: isUnavailable ? new Error(message) : undefined,
+        retryable: false,
+      });
       logs.push({ icon: isUnavailable ? "⛔" : "⏭", message, stepId: step.id, status });
     }
     return finish();
   }
 
-  const skipRemaining = (startIndex: number, reason: string) => {
+  const skipRemaining = async (startIndex: number, reason: string) => {
     for (const step of steps.slice(startIndex)) {
       const message = `Skipped because an earlier step failed: ${reason}`;
       records.push({
@@ -263,25 +302,39 @@ export async function executeWorkflowSteps({
         status: "skipped",
         message,
       });
+      await stateHooks?.onStepFinish?.(step, { status: "skipped", message, retryable: true });
       logs.push({ icon: "⏭", message, stepId: step.id, status: "skipped" });
     }
   };
 
   for (const [index, step] of steps.entries()) {
     const capabilityId = resolveStepCapabilityId(step) ?? "unknown";
-    const succeed = (message: string) => {
+    if (completedStepIds.has(step.id)) {
+      const message = "Already completed in an earlier attempt; this step was not repeated.";
       records.push({ stepId: step.id, capabilityId, title: step.title, status: "succeeded", message });
       logs.push({ icon: "✅", message, stepId: step.id, status: "succeeded" });
+      continue;
+    }
+    await stateHooks?.onStepStart?.(step);
+    const succeed = async (
+      message: string,
+      metadata?: Record<string, string | number | boolean | null>,
+      providerReferenceId?: string | null,
+    ) => {
+      records.push({ stepId: step.id, capabilityId, title: step.title, status: "succeeded", message });
+      logs.push({ icon: "✅", message, stepId: step.id, status: "succeeded" });
+      await stateHooks?.onStepFinish?.(step, { status: "succeeded", message, metadata, providerReferenceId });
     };
-    const fail = (message: string, status: "failed" | "skipped" = "failed") => {
+    const fail = async (message: string, status: "failed" | "skipped" = "failed", error?: unknown) => {
       failureReason = message;
       records.push({ stepId: step.id, capabilityId, title: step.title, status, message });
       logs.push({ icon: status === "skipped" ? "⏭" : "❌", message, stepId: step.id, status });
-      skipRemaining(index + 1, message);
+      await stateHooks?.onStepFinish?.(step, { status, message, error });
+      await skipRemaining(index + 1, message);
     };
 
     if (capabilityId === "public_form_submission") {
-      succeed(
+      await succeed(
         mode === "public-form"
           ? `Received ${Object.keys(inputData).length} submitted field${Object.keys(inputData).length === 1 ? "" : "s"}.`
           : "A safe sample form submission started the test.",
@@ -291,7 +344,7 @@ export async function executeWorkflowSteps({
 
     if (capabilityId === "ai_text_transform") {
       if (!executeAi) {
-        fail("AI execution is not configured for this run.");
+        await fail("AI execution is not configured for this run.");
         break;
       }
       try {
@@ -310,10 +363,13 @@ export async function executeWorkflowSteps({
         variables.ai_transformed_content = aiResult;
         variables.generated_content = aiResult;
         variables[step.id] = aiResult;
-        succeed(`AI completed this step using ${result.metadata.provider}/${result.metadata.model}.`);
+        await succeed(
+          `AI completed this step using ${result.metadata.provider}/${result.metadata.model}.`,
+          { provider: result.metadata.provider, model: result.metadata.model },
+        );
       } catch (error: unknown) {
         securityLog("AI execution failed", { error, workflowId, stepId: step.id });
-        fail(error instanceof Error ? error.message : "The AI provider could not complete this step.");
+        await fail(error instanceof Error ? error.message : "The AI provider could not complete this step.", "failed", error);
         break;
       }
       continue;
@@ -321,7 +377,7 @@ export async function executeWorkflowSteps({
 
     if (capabilityId === "generate_pdf") {
       if (!uploadGeneratedDocument) {
-        fail("Document storage is not configured for this execution.");
+        await fail("Document storage is not configured for this execution.");
         break;
       }
       try {
@@ -331,27 +387,27 @@ export async function executeWorkflowSteps({
           step.config?.documentTemplate ??
           "# Document\n\n{{ai.result}}";
         const bytes = await generatePdfBuffer(populateDocumentTemplate(template, variables));
-        const document = await uploadGeneratedDocument({ bytes });
+        const document = await uploadGeneratedDocument({ bytes, stepId: step.id });
         documents.push({ id: document.id, filename: document.filename });
         variables.document_id = document.id;
-        succeed("PDF generated and stored in FlowMind document storage.");
+        await succeed("PDF generated and stored in FlowMind document storage.", { filename: document.filename }, document.id);
       } catch (error: unknown) {
         securityLog("PDF generation failed", { error });
-        fail("The PDF could not be generated or stored.");
+        await fail("The PDF could not be generated or stored.", "failed", error);
         break;
       }
       continue;
     }
 
     if (capabilityId === "flowmind_data_store") {
-      succeed("Submission stored in FlowMind.");
+      await succeed("Submission stored in FlowMind.");
       continue;
     }
 
     if (capabilityId === "webhook_post") {
       const destinationUrl = step.config?.endpoint?.trim();
       if (!destinationUrl) {
-        fail("Webhook delivery was skipped because no trusted destination is configured.", "skipped");
+        await fail("Webhook delivery was skipped because no trusted destination is configured.", "skipped");
         break;
       }
       try {
@@ -361,18 +417,28 @@ export async function executeWorkflowSteps({
           timestamp: new Date().toISOString(),
           input_data: inputData,
           ai_result: aiResult,
-        });
+          execution_idempotency_key: idempotencyKey,
+          step_id: step.id,
+        }, idempotencyKey ? `${idempotencyKey}:${step.id}` : undefined);
         delivered = true;
-        succeed(`The webhook acknowledged delivery with status ${response.status}.`);
+        await succeed(
+          `The webhook acknowledged delivery with status ${response.status}.`,
+          { httpStatus: response.status },
+          response.referenceId ?? `http:${response.status}`,
+        );
       } catch (error: unknown) {
         securityLog("Webhook delivery failed", { error, workflowId, stepId: step.id });
-        fail("Webhook delivery failed because the destination could not be reached.");
+        await fail(
+          "Webhook delivery failed because an acknowledgement was not received. Automatic retry is disabled to avoid duplicate delivery.",
+          "failed",
+          new Error("Ambiguous external result: webhook acknowledgement was not received."),
+        );
         break;
       }
       continue;
     }
 
-    fail("This workflow step has no execution implementation.");
+    await fail("This workflow step has no execution implementation.");
     break;
   }
 

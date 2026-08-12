@@ -15,8 +15,11 @@ export async function uploadGeneratedDocument(
   ownerId: string,
   workflowId: string,
   bytes: Uint8Array,
+  stableKey?: string,
 ): Promise<{ id: string; path: string; filename: string }> {
-  const filename = `${safeFilePart(workflowId)}_${Date.now()}_${crypto.randomUUID()}.pdf`;
+  const filename = stableKey
+    ? `${safeFilePart(workflowId)}_${safeFilePart(stableKey)}.pdf`
+    : `${safeFilePart(workflowId)}_${Date.now()}_${crypto.randomUUID()}.pdf`;
   const path = `${ownerId}/${workflowId}/${filename}`;
   const { error } = await supabase.storage
     .from(GENERATED_DOCUMENTS_BUCKET)
@@ -26,6 +29,16 @@ export async function uploadGeneratedDocument(
       upsert: false,
     });
 
+  if (error?.message.toLowerCase().includes("already exists") && stableKey) {
+    const { data: existing } = await supabase
+      .from("generated_document_records")
+      .select("id, filename")
+      .eq("user_id", ownerId)
+      .eq("workflow_id", workflowId)
+      .eq("storage_path", path)
+      .maybeSingle();
+    if (existing) return { id: existing.id, path, filename: existing.filename };
+  }
   if (error) throw new Error(`Document upload failed: ${error.message}`);
 
   const { data: record, error: recordError } = await supabase

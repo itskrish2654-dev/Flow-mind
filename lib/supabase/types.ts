@@ -19,6 +19,11 @@ export type Database = {
           public_form_enabled: boolean;
           published_at: string | null;
           public_form_challenge_mode: "honeypot" | "turnstile";
+          created_at: string;
+          updated_at: string;
+          current_version_id: string | null;
+          lifecycle_state: "active" | "disabled" | "archived";
+          archived_at: string | null;
         };
         Insert: {
           id?: string;
@@ -29,6 +34,11 @@ export type Database = {
           public_form_enabled?: boolean;
           published_at?: string | null;
           public_form_challenge_mode?: "honeypot" | "turnstile";
+          created_at?: string;
+          updated_at?: string;
+          current_version_id?: string | null;
+          lifecycle_state?: "active" | "disabled" | "archived";
+          archived_at?: string | null;
         };
         Update: {
           id?: string;
@@ -39,7 +49,42 @@ export type Database = {
           public_form_enabled?: boolean;
           published_at?: string | null;
           public_form_challenge_mode?: "honeypot" | "turnstile";
+          created_at?: string;
+          updated_at?: string;
+          current_version_id?: string | null;
+          lifecycle_state?: "active" | "disabled" | "archived";
+          archived_at?: string | null;
         };
+        Relationships: [];
+      };
+      workflow_versions: {
+        Row: {
+          id: string;
+          workflow_id: string;
+          user_id: string;
+          version_number: number;
+          compiled_workflow: Json;
+          setup_config: Json;
+          change_scope: string;
+          change_summary: string | null;
+          source_version_id: string | null;
+          created_by: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          workflow_id: string;
+          user_id: string;
+          version_number: number;
+          compiled_workflow: Json;
+          setup_config?: Json;
+          change_scope?: string;
+          change_summary?: string | null;
+          source_version_id?: string | null;
+          created_by: string;
+          created_at?: string;
+        };
+        Update: never;
         Relationships: [];
       };
       workflow_credentials: {
@@ -147,6 +192,17 @@ export type Database = {
           input_data: Json;
           output_data: Json;
           created_at: string;
+          workflow_version_id: string | null;
+          user_id: string;
+          trigger_type: string;
+          trigger_metadata: Json;
+          idempotency_key: string;
+          status: "queued" | "running" | "succeeded" | "partially_failed" | "failed" | "cancelled";
+          started_at: string | null;
+          completed_at: string | null;
+          failure_category: string | null;
+          sanitized_metadata: Json;
+          attempt_count: number;
         };
         Insert: {
           id?: string;
@@ -154,6 +210,17 @@ export type Database = {
           input_data?: Json;
           output_data?: Json;
           created_at?: string;
+          workflow_version_id?: string | null;
+          user_id: string;
+          trigger_type: string;
+          trigger_metadata?: Json;
+          idempotency_key: string;
+          status?: "queued" | "running" | "succeeded" | "partially_failed" | "failed" | "cancelled";
+          started_at?: string | null;
+          completed_at?: string | null;
+          failure_category?: string | null;
+          sanitized_metadata?: Json;
+          attempt_count?: number;
         };
         Update: {
           id?: string;
@@ -161,6 +228,70 @@ export type Database = {
           input_data?: Json;
           output_data?: Json;
           created_at?: string;
+          workflow_version_id?: string | null;
+          user_id?: string;
+          trigger_type?: string;
+          trigger_metadata?: Json;
+          idempotency_key?: string;
+          status?: "queued" | "running" | "succeeded" | "partially_failed" | "failed" | "cancelled";
+          started_at?: string | null;
+          completed_at?: string | null;
+          failure_category?: string | null;
+          sanitized_metadata?: Json;
+          attempt_count?: number;
+        };
+        Relationships: [];
+      };
+      workflow_execution_steps: {
+        Row: {
+          id: string;
+          execution_id: string;
+          workflow_version_id: string;
+          workflow_step_id: string;
+          step_index: number;
+          capability_id: string;
+          status: "pending" | "running" | "succeeded" | "failed" | "skipped";
+          attempt_number: number;
+          started_at: string | null;
+          completed_at: string | null;
+          sanitized_input_metadata: Json;
+          sanitized_output_metadata: Json;
+          provider_reference_id: string | null;
+          error_category: string | null;
+          retryable: boolean | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          execution_id: string;
+          workflow_version_id: string;
+          workflow_step_id: string;
+          step_index: number;
+          capability_id: string;
+          status?: "pending" | "running" | "succeeded" | "failed" | "skipped";
+          attempt_number?: number;
+          started_at?: string | null;
+          completed_at?: string | null;
+          sanitized_input_metadata?: Json;
+          sanitized_output_metadata?: Json;
+          provider_reference_id?: string | null;
+          error_category?: string | null;
+          retryable?: boolean | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          status?: "pending" | "running" | "succeeded" | "failed" | "skipped";
+          attempt_number?: number;
+          started_at?: string | null;
+          completed_at?: string | null;
+          sanitized_input_metadata?: Json;
+          sanitized_output_metadata?: Json;
+          provider_reference_id?: string | null;
+          error_category?: string | null;
+          retryable?: boolean | null;
+          updated_at?: string;
         };
         Relationships: [];
       };
@@ -203,6 +334,50 @@ export type Database = {
           p_limit: number;
         };
         Returns: string | null;
+      };
+      create_versioned_workflow_with_quota: {
+        Args: {
+          p_user_id: string;
+          p_name: string;
+          p_prompt: string;
+          p_compiled_workflow: Json;
+          p_setup_config: Json;
+          p_limit: number;
+        };
+        Returns: Array<{ workflow_id: string; version_id: string }>;
+      };
+      create_workflow_version: {
+        Args: {
+          p_workflow_id: string;
+          p_user_id: string;
+          p_expected_version_id: string;
+          p_compiled_workflow: Json;
+          p_setup_config: Json;
+          p_change_scope: string;
+          p_change_summary: string;
+          p_source_version_id?: string | null;
+        };
+        Returns: Array<{ version_id: string; version_number: number }>;
+      };
+      create_execution_once: {
+        Args: {
+          p_workflow_id: string;
+          p_workflow_version_id: string;
+          p_user_id: string;
+          p_trigger_type: string;
+          p_trigger_metadata: Json;
+          p_idempotency_key: string;
+          p_input_data: Json;
+        };
+        Returns: Array<{ execution_id: string; created: boolean; execution_status: string }>;
+      };
+      claim_execution_retry: {
+        Args: { p_execution_id: string; p_user_id: string };
+        Returns: boolean;
+      };
+      fail_stale_executions: {
+        Args: { p_older_than: string };
+        Returns: number;
       };
       consume_usage_quota: {
         Args: {

@@ -16,9 +16,11 @@ import {
 } from "lucide-react";
 
 import {
+  exportAllWorkflowExecutions,
   listWorkflowExecutions,
   type WorkflowExecutionRecord,
 } from "@/app/actions/executions";
+import { retryWorkflowExecution } from "@/app/actions/execute";
 import { createDocumentDownloadUrl } from "@/app/actions/documents";
 import type { Json } from "@/lib/supabase/types";
 import type { DataTableColumn } from "@/lib/schemas/workflow";
@@ -263,35 +265,6 @@ function executionLogs(value: Json): Array<{ icon: string; message: string }> {
   });
 }
 
-function csvCell(value: string): string {
-  const safeValue = /^[=+\-@]/.test(value) ? `'${value}` : value;
-  return `"${safeValue.replaceAll('"', '""')}"`;
-}
-
-function csvColumnName(value: string): string {
-  return value
-    .replace(/^step[_-]?\d+[-_]+/i, "")
-    .replace(/[^a-zA-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .toLowerCase();
-}
-
-function executionCsvRecord(
-  execution: WorkflowExecutionRecord,
-  columns: DataTableColumn[],
-): Record<string, string> {
-  const record: Record<string, string> = {
-    execution_id: execution.id,
-    received_date: execution.createdAt,
-  };
-  for (const column of columns) {
-    record[`${column.source}_${csvColumnName(column.label)}`] = readableValue(
-      configuredColumnValue(execution, column),
-    );
-  }
-  return record;
-}
-
 function ExecutionDetailsDrawer({
   execution,
   onClose,
@@ -463,17 +436,21 @@ function ExecutionDetailsDrawer({
 export function ExecutionsDataTable({
   workflowId,
   initialExecutions,
+  initialNextCursor,
   columns,
 }: {
   workflowId: string;
   initialExecutions: WorkflowExecutionRecord[];
+  initialNextCursor: string | null;
   columns: DataTableColumn[];
 }) {
   const [executions, setExecutions] = useState(initialExecutions);
+  const [nextCursor, setNextCursor] = useState(initialNextCursor);
   const [selectedExecution, setSelectedExecution] =
     useState<WorkflowExecutionRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isRefreshing, startRefresh] = useTransition();
+  const [isExporting, startExport] = useTransition();
 
   const closeDetails = useCallback(() => setSelectedExecution(null), []);
   const refresh = useCallback(() => {
@@ -484,39 +461,55 @@ export function ExecutionsDataTable({
         return;
       }
       setExecutions(result.executions);
+      setNextCursor(result.nextCursor);
       setError(null);
     });
   }, [workflowId]);
 
   useEffect(() => {
-    const timer = window.setTimeout(refresh, 0);
     const handleExecution = (event: Event) => {
       const executionWorkflowId = (event as CustomEvent<string>).detail;
       if (executionWorkflowId === workflowId) refresh();
     };
     window.addEventListener("flowmind:executions-changed", handleExecution);
     return () => {
-      window.clearTimeout(timer);
       window.removeEventListener("flowmind:executions-changed", handleExecution);
     };
   }, [refresh, workflowId]);
 
   function exportCsv() {
-    const records = executions.map((execution) => executionCsvRecord(execution, columns));
-    const headers = Array.from(
-      new Set(records.flatMap((record) => Object.keys(record))),
-    );
-    const rows = [
-      headers,
-      ...records.map((record) => headers.map((header) => record[header] ?? "")),
-    ];
-    const csv = rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `flowmind-executions-${workflowId}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+    startExport(async () => {
+      const result = await exportAllWorkflowExecutions(workflowId);
+      if (!result.ok) return setError(result.error);
+      const url = URL.createObjectURL(new Blob([result.csv], { type: "text/csv;charset=utf-8" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `flowmind-executions-${workflowId}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setError(result.truncated ? "Export reached the documented 10,000-row safety limit." : null);
+    });
+  }
+
+  function loadMore() {
+    if (!nextCursor) return;
+    startRefresh(async () => {
+      const result = await listWorkflowExecutions(workflowId, nextCursor);
+      if (!result.ok) return setError(result.error);
+      setExecutions((current) => {
+        const known = new Set(current.map((item) => item.id));
+        return [...current, ...result.executions.filter((item) => !known.has(item.id))];
+      });
+      setNextCursor(result.nextCursor);
+    });
+  }
+
+  function retryExecution(execution: WorkflowExecutionRecord) {
+    startRefresh(async () => {
+      const result = await retryWorkflowExecution(execution.id);
+      if (!result.ok) setError(result.error);
+      refresh();
+    });
   }
 
   return (
@@ -540,11 +533,11 @@ export function ExecutionsDataTable({
           <button
             type="button"
             onClick={exportCsv}
-            disabled={executions.length === 0}
+            disabled={executions.length === 0 || isExporting}
             className="flex h-9 items-center gap-2 rounded-lg border border-[#dcd4c8] bg-transparent px-3 text-[10px] font-semibold text-[#272536] transition hover:border-[#d7aa2f] hover:bg-[#fff8e3] disabled:opacity-40"
           >
             <Download className="size-3.5" />
-            Export CSV
+            {isExporting ? "Preparing export..." : "Export all (max 10,000)"}
           </button>
         </div>
       </header>
@@ -589,6 +582,11 @@ export function ExecutionsDataTable({
                       View Details
                       <ChevronRight className="size-3.5" />
                     </button>
+                    {(["failed", "partially_failed"] as const).includes(execution.status as "failed" | "partially_failed") && (
+                      <button type="button" onClick={() => retryExecution(execution)} disabled={isRefreshing} className="flex h-9 shrink-0 items-center rounded-lg border border-[#ded6ca] px-3 text-[10px] font-semibold text-slate-600 disabled:opacity-50">
+                        Retry failed step
+                      </button>
+                    )}
                   </div>
                   <div className="mt-4 border-t border-slate-100 pt-3">
                     <p className="mb-2 text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-400">Saved data</p>
@@ -628,6 +626,11 @@ export function ExecutionsDataTable({
                         </td>
                       ))}
                       <td className="px-4 py-4 text-right">
+                        {(["failed", "partially_failed"] as const).includes(execution.status as "failed" | "partially_failed") && (
+                          <button type="button" onClick={() => retryExecution(execution)} disabled={isRefreshing} className="mr-2 inline-flex h-9 items-center rounded-lg border border-[#ded6ca] px-3 text-[10px] font-semibold text-slate-600 disabled:opacity-50">
+                            Retry failed step
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => setSelectedExecution(execution)}
@@ -642,6 +645,11 @@ export function ExecutionsDataTable({
                 </tbody>
               </table>
             </div>
+            {nextCursor && (
+              <button type="button" onClick={loadMore} disabled={isRefreshing} className="mx-auto mt-5 flex h-9 items-center rounded-lg border border-[#ded6ca] bg-white px-4 text-[10px] font-semibold text-slate-600 disabled:opacity-50">
+                {isRefreshing ? "Loading..." : "Load older executions"}
+              </button>
+            )}
           </>
         )}
       </div>

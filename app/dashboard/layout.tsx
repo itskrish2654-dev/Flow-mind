@@ -17,10 +17,8 @@ import {
 
 import { deleteWorkflow, listWorkflows, type SavedWorkflow } from "@/app/actions/workflow";
 import { createClient } from "@/lib/supabase/client";
-import { isSensitiveFieldName } from "@/lib/security/redaction";
-import { getStepInputs, orderWorkflowSteps } from "@/lib/workflow-setup";
 
-type AutomationStatus = "Draft" | "Ready" | "Working";
+type AutomationStatus = "Draft" | "Ready" | "Working" | "Running" | "Failed";
 type AccountDetails = {
   displayName: string;
   email: string;
@@ -47,29 +45,15 @@ function accountInitials(name: string): string {
   return initials || "FM";
 }
 
-function readSavedValues(workflowId: string): Record<string, string> {
-  try {
-    const values = JSON.parse(window.localStorage.getItem(`flowmind:values:${workflowId}`) ?? "{}") as Record<string, string>;
-    return Object.fromEntries(
-      Object.entries(values).filter(([key]) => !isSensitiveFieldName(key)),
-    );
-  } catch {
-    return {};
-  }
-}
-
 function cleanSensitiveLegacyStorage() {
   for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
     const key = window.localStorage.key(index);
     if (!key?.startsWith("flowmind:values:")) continue;
     try {
-      const values = JSON.parse(window.localStorage.getItem(key) ?? "{}") as Record<string, string>;
       window.localStorage.setItem(
         key,
         JSON.stringify(
-          Object.fromEntries(
-            Object.entries(values).filter(([field]) => !isSensitiveFieldName(field)),
-          ),
+          {},
         ),
       );
     } catch {
@@ -79,25 +63,7 @@ function cleanSensitiveLegacyStorage() {
 }
 
 function workflowStatus(item: SavedWorkflow): AutomationStatus {
-  if (window.localStorage.getItem(`flowmind:status:${item.id}`) === "working") return "Working";
-  if (!item.workflow) return "Draft";
-  if (
-    item.workflow.steps.some(
-      (step) =>
-        step.capabilityStatus === "unsupported" ||
-        step.capabilityStatus === "test_only",
-    )
-  ) {
-    return "Draft";
-  }
-  const values = readSavedValues(item.id);
-  const steps = orderWorkflowSteps(item.workflow.steps);
-  const ready = steps.every((step) =>
-    getStepInputs(step, item.id).every((input) =>
-      (values[`${step.id}-${input.key}`] ?? input.value ?? "").trim(),
-    ),
-  );
-  return ready ? "Ready" : "Draft";
+  return item.readiness;
 }
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -106,6 +72,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const supabase = useMemo(() => createClient(), []);
   const [automations, setAutomations] = useState<Array<SavedWorkflow & { status: AutomationStatus }>>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SavedWorkflow | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -122,8 +89,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       return;
     }
     setAutomations(result.workflows.map((item) => ({ ...item, status: workflowStatus(item) })));
+    setNextCursor(result.nextCursor);
     setIsLoading(false);
   }, []);
+
+  const loadMoreAutomations = useCallback(async () => {
+    if (!nextCursor) return;
+    const result = await listWorkflows(nextCursor);
+    if (!result.ok) return;
+    setAutomations((current) => {
+      const known = new Set(current.map((item) => item.id));
+      return [...current, ...result.workflows.filter((item) => !known.has(item.id)).map((item) => ({ ...item, status: workflowStatus(item) }))];
+    });
+    setNextCursor(result.nextCursor);
+  }, [nextCursor]);
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => void loadAutomations(), 0);
@@ -272,6 +251,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   </div>
                 );
               })}
+              {nextCursor && (
+                <button type="button" onClick={() => void loadMoreAutomations()} className="mt-2 h-9 w-full rounded-lg border border-[#ded6ca] bg-transparent text-[10px] font-semibold text-slate-500 hover:bg-[#f8f4ec]">
+                  Load older automations
+                </button>
+              )}
             </div>
           )}
         </div>

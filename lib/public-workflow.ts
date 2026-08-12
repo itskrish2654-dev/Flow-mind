@@ -60,13 +60,21 @@ export async function getPublicExecutableWorkflow(workflowId: string) {
     const admin = createAdminClient();
     const { data, error } = await admin
       .from("workflows")
-      .select("user_id, compiled_steps")
+      .select("user_id, current_version_id, lifecycle_state")
       .eq("id", publicWorkflow.id)
       .eq("public_form_enabled", true)
       .maybeSingle();
 
-    const parsed = CompiledWorkflowSchema.safeParse(data?.compiled_steps);
-    if (error || !data?.user_id || !parsed.success) return null;
+    if (error || !data?.user_id || !data.current_version_id || data.lifecycle_state !== "active") return null;
+    const { data: version, error: versionError } = await admin
+      .from("workflow_versions")
+      .select("id, compiled_workflow")
+      .eq("id", data.current_version_id)
+      .eq("workflow_id", publicWorkflow.id)
+      .eq("user_id", data.user_id)
+      .maybeSingle();
+    const parsed = CompiledWorkflowSchema.safeParse(version?.compiled_workflow);
+    if (versionError || !version || !parsed.success) return null;
     const unavailable = assessWorkflowCapabilities(
       parsed.data.steps,
       "production",
@@ -75,6 +83,7 @@ export async function getPublicExecutableWorkflow(workflowId: string) {
     return {
       ...publicWorkflow,
       ownerId: data.user_id,
+      versionId: version.id,
       workflow: parsed.data,
       capabilityError: unavailable?.assessment.message ?? null,
       admin,

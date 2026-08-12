@@ -10,7 +10,6 @@ import {
   requiresPublicFormTurnstile,
   resolveStepCapabilityId,
 } from "@/lib/capability-registry";
-import { GENERATED_DOCUMENTS_BUCKET } from "@/lib/document-storage";
 import type { Json } from "@/lib/supabase/types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
@@ -22,6 +21,11 @@ import {
 import { resolveTrustedWebhook } from "@/lib/security/outbound-webhook";
 import { securityLog } from "@/lib/security/redaction";
 import {
+  createImmutableWorkflowVersion,
+  loadWorkflowSnapshot,
+  type WorkflowChangeScope,
+} from "@/lib/workflow-versioning";
+import {
   CompiledWorkflowSchema,
   DataTableDefinitionSchema,
   PublicFormDefinitionSchema,
@@ -29,6 +33,7 @@ import {
   type DataTableDefinition,
   type PublicFormDefinition,
 } from "@/lib/schemas/workflow";
+import { validateRequiredSetupInputs } from "@/lib/workflow-execution";
 import { compileReadyPlan } from "@/lib/workflow-compiler";
 import {
   planWorkflow,
@@ -61,6 +66,10 @@ export type GetWorkflowResult =
       name: string;
       prompt: string;
       published: boolean;
+      versionId: string | null;
+      versionNumber: number | null;
+      setupConfig: Record<string, string>;
+      lifecycleState: "active" | "disabled" | "archived";
     }
   | { ok: false; error: string };
 
@@ -69,10 +78,13 @@ export type SavedWorkflow = {
   name: string;
   prompt: string;
   workflow: CompiledWorkflow | null;
+  createdAt: string;
+  lifecycleState: "active" | "disabled" | "archived";
+  readiness: "Draft" | "Ready" | "Running" | "Failed";
 };
 
 export type ListWorkflowsResult =
-  | { ok: true; workflows: SavedWorkflow[] }
+  | { ok: true; workflows: SavedWorkflow[]; nextCursor: string | null }
   | { ok: false; error: string };
 
 export type DeleteWorkflowResult =
@@ -85,17 +97,44 @@ export type SaveDocumentTemplateResult =
 
 export type SaveWorkflowCustomizationResult =
   | { ok: true; workflow: CompiledWorkflow }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      error: string;
+      impact?: { removedFields: string[]; affectedExecutionCount: number };
+    };
 
 export type WorkflowPublicationResult =
   | { ok: true; published: boolean }
   | { ok: false; error: string };
+
+async function saveVersionedWorkflowChange(input: {
+  workflowId: string;
+  userId: string;
+  workflow: CompiledWorkflow;
+  scope: WorkflowChangeScope;
+  summary: string;
+  setupConfig?: Record<string, string>;
+}) {
+  const admin = createAdminClient();
+  const snapshot = await loadWorkflowSnapshot(admin, input.workflowId, input.userId);
+  if (!snapshot) throw new Error("We couldn't find this workflow.");
+  await createImmutableWorkflowVersion(admin, {
+    workflowId: input.workflowId,
+    userId: input.userId,
+    expectedVersionId: snapshot.versionId,
+    workflow: input.workflow,
+    setupConfig: input.setupConfig ?? snapshot.setupConfig,
+    scope: input.scope,
+    summary: input.summary,
+  });
+}
 
 export async function saveWorkflowCustomization(
   workflowId: string,
   customization: {
     publicForm?: PublicFormDefinition;
     dataTable?: DataTableDefinition;
+    confirmDestructiveFieldRemoval?: boolean;
   },
 ): Promise<SaveWorkflowCustomizationResult> {
   const request = z
@@ -105,6 +144,7 @@ export async function saveWorkflowCustomization(
         .object({
           publicForm: PublicFormDefinitionSchema.optional(),
           dataTable: DataTableDefinitionSchema.optional(),
+          confirmDestructiveFieldRemoval: z.boolean().optional(),
         })
         .refine((value) => value.publicForm || value.dataTable, {
           message: "Choose something to customize before saving.",
@@ -122,15 +162,9 @@ export async function saveWorkflowCustomization(
   const auth = await getAuthenticatedContext();
   if (!auth) return { ok: false, error: "Unauthorized" };
   const admin = createAdminClient();
-
-  const { data, error } = await auth.supabase
-    .from("workflows")
-    .select("compiled_steps")
-    .eq("id", request.data.workflowId)
-    .eq("user_id", auth.user.id)
-    .maybeSingle();
-  const parsed = CompiledWorkflowSchema.safeParse(data?.compiled_steps);
-  if (error || !parsed.success) {
+  const snapshot = await loadWorkflowSnapshot(admin, request.data.workflowId, auth.user.id);
+  const parsed = CompiledWorkflowSchema.safeParse(snapshot?.workflow);
+  if (!snapshot || !parsed.success) {
     return { ok: false, error: "We couldn't find this workflow." };
   }
 
@@ -145,16 +179,45 @@ export async function saveWorkflowCustomization(
         : {}),
     }),
   );
-  const { error: updateError } = await admin
-    .from("workflows")
-    .update({ compiled_steps: workflow })
-    .eq("id", request.data.workflowId)
-    .eq("user_id", auth.user.id);
-
-  if (updateError) {
+  if (request.data.customization.publicForm && parsed.data.publicForm) {
+    const nextKeys = new Set(request.data.customization.publicForm.fields.map((field) => field.key));
+    const removedFields = parsed.data.publicForm.fields
+      .map((field) => field.key)
+      .filter((key) => !nextKeys.has(key));
+    if (removedFields.length > 0 && !request.data.customization.confirmDestructiveFieldRemoval) {
+      let affectedExecutionCount = 0;
+      for (const key of removedFields) {
+        const { count, error: countError } = await admin
+          .from("workflow_executions")
+          .select("id", { count: "exact", head: true })
+          .eq("workflow_id", request.data.workflowId)
+          .eq("user_id", auth.user.id)
+          .not(`input_data->>${key}`, "is", null);
+        if (countError) return { ok: false, error: "Field-removal impact could not be checked safely." };
+        affectedExecutionCount += count ?? 0;
+      }
+      if (affectedExecutionCount > 0) {
+        return {
+          ok: false,
+          error: `Removing ${removedFields.join(", ")} affects ${affectedExecutionCount} stored value${affectedExecutionCount === 1 ? "" : "s"}. Existing execution data will remain recoverable in history.`,
+          impact: { removedFields, affectedExecutionCount },
+        };
+      }
+    }
+  }
+  try {
+    await saveVersionedWorkflowChange({
+      workflowId: request.data.workflowId,
+      userId: auth.user.id,
+      workflow,
+      scope: request.data.customization.publicForm ? "form_schema" : "presentation",
+      summary: request.data.customization.publicForm
+        ? "Updated hosted form configuration."
+        : "Updated execution data table presentation.",
+    });
+  } catch (updateError) {
     securityLog("Workflow customization persistence failed", {
-      code: updateError.code,
-      message: updateError.message,
+      error: updateError,
     });
     return { ok: false, error: "We couldn't save these changes." };
   }
@@ -183,14 +246,9 @@ export async function saveDocumentTemplate(
   const auth = await getAuthenticatedContext();
   if (!auth) return { ok: false, error: "Unauthorized" };
   const admin = createAdminClient();
-  const { data, error } = await auth.supabase
-    .from("workflows")
-    .select("compiled_steps")
-    .eq("id", request.data.workflowId)
-    .eq("user_id", auth.user.id)
-    .maybeSingle();
-  const parsed = CompiledWorkflowSchema.safeParse(data?.compiled_steps);
-  if (error || !parsed.success) {
+  const snapshot = await loadWorkflowSnapshot(admin, request.data.workflowId, auth.user.id);
+  const parsed = CompiledWorkflowSchema.safeParse(snapshot?.workflow);
+  if (!snapshot || !parsed.success) {
     return { ok: false, error: "We couldn't find this document workflow." };
   }
 
@@ -212,15 +270,17 @@ export async function saveDocumentTemplate(
     return { ok: false, error: "We couldn't find the PDF step to update." };
   }
 
-  const { error: updateError } = await admin
-    .from("workflows")
-    .update({ compiled_steps: workflow })
-    .eq("id", request.data.workflowId)
-    .eq("user_id", auth.user.id);
-  if (updateError) {
+  try {
+    await saveVersionedWorkflowChange({
+      workflowId: request.data.workflowId,
+      userId: auth.user.id,
+      workflow,
+      scope: "ai_instructions",
+      summary: "Updated PDF document template.",
+    });
+  } catch (updateError) {
     securityLog("Document template persistence failed", {
-      code: updateError.code,
-      message: updateError.message,
+      error: updateError,
     });
     return { ok: false, error: "We couldn't save the document template." };
   }
@@ -237,30 +297,15 @@ export async function deleteWorkflow(
   const auth = await getAuthenticatedContext();
   if (!auth) return { ok: false, error: "Unauthorized" };
   const admin = createAdminClient();
-  try {
-    const { data: documents, error: documentsError } = await admin
-      .from("generated_document_records")
-      .select("storage_path")
-      .eq("workflow_id", parsedWorkflowId.data)
-      .eq("user_id", auth.user.id);
-    if (documentsError) throw new Error("Document cleanup lookup failed.");
-    const paths = (documents ?? []).map((document) => document.storage_path);
-    if (paths.length > 0) {
-      const { error: removalError } = await admin.storage
-        .from(GENERATED_DOCUMENTS_BUCKET)
-        .remove(paths);
-      if (removalError) throw new Error("Document cleanup failed.");
-    }
-  } catch (error) {
-    securityLog("Workflow document cleanup failed", {
-      error,
-      workflowId: parsedWorkflowId.data,
-    });
-    return { ok: false, error: "We couldn't safely remove that automation's documents." };
-  }
   const { error } = await admin
     .from("workflows")
-    .delete()
+    .update({
+      lifecycle_state: "archived",
+      archived_at: new Date().toISOString(),
+      public_form_enabled: false,
+      published_at: null,
+      updated_at: new Date().toISOString(),
+    })
     .eq("id", parsedWorkflowId.data)
     .eq("user_id", auth.user.id);
   if (error) {
@@ -268,20 +313,32 @@ export async function deleteWorkflow(
       code: error.code,
       message: error.message,
     });
-    return { ok: false, error: "We couldn't delete that automation. Please try again." };
+    return { ok: false, error: "We couldn't archive that automation. Please try again." };
   }
   revalidatePath("/dashboard");
   return { ok: true };
 }
 
-export async function listWorkflows(): Promise<ListWorkflowsResult> {
+export async function listWorkflows(cursor?: string | null): Promise<ListWorkflowsResult> {
   const auth = await getAuthenticatedContext();
   if (!auth) return { ok: false, error: "Unauthorized" };
-  const { data, error } = await auth.supabase
+  const parsedCursor = cursor
+    ? z.string().regex(/^\d{4}-\d{2}-\d{2}T.+\|[0-9a-f-]{36}$/).safeParse(cursor)
+    : null;
+  if (parsedCursor && !parsedCursor.success) return { ok: false, error: "Invalid workflow cursor." };
+  let query = auth.supabase
     .from("workflows")
-    .select("id, name, prompt, compiled_steps")
+    .select("id, name, prompt, compiled_steps, created_at, lifecycle_state, current_version_id")
     .eq("user_id", auth.user.id)
-    .limit(30);
+    .neq("lifecycle_state", "archived")
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(31);
+  if (parsedCursor?.success) {
+    const [createdAt, id] = parsedCursor.data.split("|");
+    query = query.or(`created_at.lt.${createdAt},and(created_at.eq.${createdAt},id.lt.${id})`);
+  }
+  const { data, error } = await query;
   if (error) {
     securityLog("Workflow list failed", {
       code: error.code,
@@ -290,7 +347,27 @@ export async function listWorkflows(): Promise<ListWorkflowsResult> {
     return { ok: false, error: "We couldn't load your automations." };
   }
 
-  const workflows: SavedWorkflow[] = (data ?? []).map((row) => {
+  const page = (data ?? []).slice(0, 30);
+  const versionIds = page.flatMap((row) => row.current_version_id ? [row.current_version_id] : []);
+  const workflowIds = page.map((row) => row.id);
+  const [{ data: versions }, { data: executions }] = await Promise.all([
+    versionIds.length > 0
+      ? auth.supabase.from("workflow_versions").select("id, setup_config").in("id", versionIds)
+      : Promise.resolve({ data: [] }),
+    workflowIds.length > 0
+      ? auth.supabase.from("workflow_executions")
+          .select("workflow_id, status, created_at, id")
+          .in("workflow_id", workflowIds)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+      : Promise.resolve({ data: [] }),
+  ]);
+  const setupByVersion = new Map((versions ?? []).map((version) => [version.id, version.setup_config]));
+  const latestExecution = new Map<string, { status: string }>();
+  for (const execution of executions ?? []) {
+    if (!latestExecution.has(execution.workflow_id)) latestExecution.set(execution.workflow_id, execution);
+  }
+  const workflows: SavedWorkflow[] = page.map((row) => {
     const parsed = CompiledWorkflowSchema.safeParse(row.compiled_steps);
     if (row.compiled_steps !== null && !parsed.success) {
       securityLog("Saved workflow list item could not be read", {
@@ -298,19 +375,42 @@ export async function listWorkflows(): Promise<ListWorkflowsResult> {
         issues: parsed.error.issues,
       });
     }
+    const setupValue = row.current_version_id ? setupByVersion.get(row.current_version_id) : null;
+    const setup = setupValue && typeof setupValue === "object" && !Array.isArray(setupValue)
+      ? Object.fromEntries(Object.entries(setupValue).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
+      : {};
+    const latest = latestExecution.get(row.id)?.status;
+    const unavailable = !parsed.success || assessWorkflowCapabilities(parsed.data.steps, "test").some(({ assessment }) => !assessment.available);
+    const incomplete = parsed.success ? Boolean(validateRequiredSetupInputs(parsed.data.steps, setup)) : true;
+    const readiness: SavedWorkflow["readiness"] = latest === "queued" || latest === "running"
+      ? "Running"
+      : latest === "failed" || latest === "partially_failed"
+        ? "Failed"
+        : unavailable || incomplete || row.lifecycle_state !== "active"
+          ? "Draft"
+          : "Ready";
     return {
       id: row.id,
       name: row.name,
       prompt: row.prompt,
       workflow: parsed.success ? annotateWorkflowCapabilities(parsed.data) : null,
+      createdAt: row.created_at,
+      lifecycleState: row.lifecycle_state,
+      readiness,
     };
   });
-  return { ok: true, workflows };
+  const last = page.at(-1);
+  return {
+    ok: true,
+    workflows,
+    nextCursor: (data?.length ?? 0) > 30 && last ? `${last.created_at}|${last.id}` : null,
+  };
 }
 
 export async function compileWorkflow(
   prompt: string,
   existingWorkflowId: string | null = null,
+  editIntent?: "modify" | "replace",
 ): Promise<CompileWorkflowResult> {
   const normalizedPrompt = prompt.trim();
   const parsedExistingWorkflowId = existingWorkflowId
@@ -337,6 +437,13 @@ export async function compileWorkflow(
       success: false,
       status: "ERROR",
       error: "We could not identify that draft automation.",
+    };
+  }
+  if (parsedExistingWorkflowId?.success && !editIntent) {
+    return {
+      success: false,
+      status: "NEEDS_CLARIFICATION",
+      error: "Choose Modify current automation or Replace current automation before applying this prompt.",
     };
   }
 
@@ -400,24 +507,34 @@ export async function compileWorkflow(
   let data: { id: string } | null = null;
   let error: { code?: string; message: string; details?: string; hint?: string } | null = null;
   if (parsedExistingWorkflowId?.success) {
-    const result = await admin
-      .from("workflows")
-      .update(workflowValues)
-      .eq("id", parsedExistingWorkflowId.data)
-      .eq("user_id", auth.user.id)
-      .select("id")
-      .single();
-    data = result.data;
-    error = result.error;
+    const snapshot = await loadWorkflowSnapshot(admin, parsedExistingWorkflowId.data, auth.user.id);
+    if (!snapshot) return { success: false, status: "ERROR", error: "We couldn't find this automation." };
+    try {
+      await createImmutableWorkflowVersion(admin, {
+        workflowId: snapshot.workflowId,
+        userId: auth.user.id,
+        expectedVersionId: snapshot.versionId,
+        workflow: compiledWorkflow,
+        setupConfig: editIntent === "replace" ? {} : snapshot.setupConfig,
+        scope: editIntent === "replace" ? "full_replacement" : "workflow_structure",
+        summary: editIntent === "replace" ? "Explicit full workflow replacement." : "Modified workflow structure from a prompt.",
+      });
+      const update = await admin.from("workflows").update({ prompt: normalizedPrompt }).eq("id", snapshot.workflowId).eq("user_id", auth.user.id);
+      data = { id: snapshot.workflowId };
+      error = update.error;
+    } catch (versionError) {
+      error = { message: versionError instanceof Error ? versionError.message : "Version creation failed." };
+    }
   } else {
-    const result = await admin.rpc("create_workflow_with_quota", {
+    const result = await admin.rpc("create_versioned_workflow_with_quota", {
       p_user_id: auth.user.id,
       p_name: workflowValues.name,
       p_prompt: workflowValues.prompt,
-      p_compiled_steps: compiledWorkflow as unknown as Json,
+      p_compiled_workflow: compiledWorkflow as unknown as Json,
+      p_setup_config: {},
       p_limit: PLAN_ENTITLEMENTS.free.workflows,
     });
-    data = result.data ? { id: result.data } : null;
+    data = result.data?.[0] ? { id: result.data[0].workflow_id } : null;
     error = result.error;
     if (!error && !data) {
       return {
@@ -465,25 +582,11 @@ export async function getWorkflow(workflowId: string): Promise<GetWorkflowResult
   }
   const auth = await getAuthenticatedContext();
   if (!auth) return { ok: false, error: "Unauthorized" };
-  const { data, error } = await auth.supabase
-    .from("workflows")
-    .select("name, prompt, compiled_steps, public_form_enabled")
-    .eq("id", parsedWorkflowId.data)
-    .eq("user_id", auth.user.id)
-    .maybeSingle();
-  if (error || !data) {
+  const snapshot = await loadWorkflowSnapshot(createAdminClient(), parsedWorkflowId.data, auth.user.id);
+  if (!snapshot) {
     return { ok: false, error: "We could not find this automation." };
   }
-  if (data.compiled_steps === null) {
-    return {
-      ok: true,
-      workflow: null,
-      name: data.name,
-      prompt: data.prompt,
-      published: data.public_form_enabled,
-    };
-  }
-  const parsedWorkflow = CompiledWorkflowSchema.safeParse(data.compiled_steps);
+  const parsedWorkflow = CompiledWorkflowSchema.safeParse(snapshot.workflow);
   if (!parsedWorkflow.success) {
     securityLog("Saved workflow could not be read", {
       workflowId: parsedWorkflowId.data,
@@ -494,9 +597,13 @@ export async function getWorkflow(workflowId: string): Promise<GetWorkflowResult
   return {
     ok: true,
     workflow: annotateWorkflowCapabilities(parsedWorkflow.data),
-    name: data.name,
-    prompt: data.prompt,
-    published: data.public_form_enabled,
+    name: snapshot.name,
+    prompt: snapshot.prompt,
+    published: snapshot.published,
+    versionId: snapshot.versionId,
+    versionNumber: snapshot.versionNumber,
+    setupConfig: snapshot.setupConfig,
+    lifecycleState: snapshot.lifecycleState,
   };
 }
 
@@ -566,13 +673,8 @@ export async function saveWebhookEndpoint(
   const auth = await getAuthenticatedContext();
   if (!auth) return { ok: false, error: "Unauthorized" };
   const admin = createAdminClient();
-  const { data } = await auth.supabase
-    .from("workflows")
-    .select("compiled_steps")
-    .eq("id", request.data.workflowId)
-    .eq("user_id", auth.user.id)
-    .maybeSingle();
-  const parsed = CompiledWorkflowSchema.safeParse(data?.compiled_steps);
+  const snapshot = await loadWorkflowSnapshot(admin, request.data.workflowId, auth.user.id);
+  const parsed = CompiledWorkflowSchema.safeParse(snapshot?.workflow);
   if (!parsed.success) return { ok: false, error: "Workflow not found." };
   const registeredStep = parsed.data.steps.find(
     (step) =>
@@ -594,11 +696,16 @@ export async function saveWebhookEndpoint(
       return { ...step, config: { ...step.config, endpoint: request.data.endpoint, method: "POST" as const } };
     }),
   });
-  const { error } = await admin
-    .from("workflows")
-    .update({ compiled_steps: workflow })
-    .eq("id", request.data.workflowId)
-    .eq("user_id", auth.user.id);
-  if (error) return { ok: false, error: "Webhook configuration could not be saved." };
+  try {
+    await saveVersionedWorkflowChange({
+      workflowId: request.data.workflowId,
+      userId: auth.user.id,
+      workflow,
+      scope: "destination",
+      summary: "Updated trusted webhook destination.",
+    });
+  } catch {
+    return { ok: false, error: "Webhook configuration could not be saved." };
+  }
   return { ok: true, workflow };
 }
