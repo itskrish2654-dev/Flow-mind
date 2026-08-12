@@ -408,13 +408,30 @@ export async function POST(request: Request) {
       evidence: { versions: history.data?.length ?? 0, currentVersion: v4.versionNumber, rollbackSourceVersion1: history.data?.[3]?.source_version_id === main.version_id },
     });
 
-    const sessionOne = createClient<Database>(url, key, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
-    const sessionTwo = createClient<Database>(url, key, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
-    const accountB = createClient<Database>(url, key, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
+    const createIndependentSession = async (email: string) => {
+      const generated = await admin.auth.admin.generateLink({ type: "magiclink", email });
+      if (generated.error || !generated.data.properties.hashed_token) {
+        throw generated.error ?? new Error("Independent session link could not be generated.");
+      }
+      const client = createClient<Database>(url, key, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      });
+      const verified = await client.auth.verifyOtp({
+        type: "magiclink",
+        token_hash: generated.data.properties.hashed_token,
+      });
+      if (verified.error) throw verified.error;
+      return client;
+    };
+    const [sessionOne, sessionTwo, accountB] = await Promise.all([
+      createIndependentSession(emailA),
+      createIndependentSession(emailA),
+      createIndependentSession(emailB),
+    ]);
     const [loginOne, loginTwo, loginB] = await Promise.all([
-      sessionOne.auth.signInWithPassword({ email: emailA, password: passwordA }),
-      sessionTwo.auth.signInWithPassword({ email: emailA, password: passwordA }),
-      accountB.auth.signInWithPassword({ email: emailB, password: passwordB }),
+      sessionOne.auth.getUser(),
+      sessionTwo.auth.getUser(),
+      accountB.auth.getUser(),
     ]);
     if (loginOne.error || loginTwo.error || loginB.error) throw loginOne.error ?? loginTwo.error ?? loginB.error;
     const [sessionOneWorkflow, sessionTwoWorkflow, sessionTwoVersions, sessionTwoExecutions] = await Promise.all([
