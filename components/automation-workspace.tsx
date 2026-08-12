@@ -648,10 +648,20 @@ export function AutomationWorkspace({
     setTestSucceeded(null);
     setPlanning(null);
     try {
-      let editIntent: "replace" | undefined;
+      let editIntent: "modify" | "replace" | undefined;
       if (workflowId) {
-        if (!window.confirm("Replace this automation with a new version? Version history and rollback will remain available.")) return;
-        editIntent = "replace";
+        const modify = window.confirm(
+          "Modify the current automation? Choose OK to preserve its saved setup and create a new version. Choose Cancel to keep it unchanged or replace it instead.",
+        );
+        if (modify) {
+          editIntent = "modify";
+        } else {
+          const replace = window.confirm(
+            "Replace the current automation completely? This clears its saved setup, but version history and rollback remain available. Choose Cancel to make no change.",
+          );
+          if (!replace) return;
+          editIntent = "replace";
+        }
       }
       const result = await compileWorkflow(description, workflowId, editIntent);
       if (!result.success) {
