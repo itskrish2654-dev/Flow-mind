@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 
 import { reconcileFailedAccountDeletions } from "@/lib/account-deletion-maintenance";
+import { dispatchQueuedConnectorReceipts } from "@/lib/connectors/webhook-dispatch";
 import { captureOperationalError, captureOperationalEvent } from "@/lib/observability";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -36,6 +37,7 @@ export async function GET(request: Request) {
     if (connectorError) throw new Error("connector_maintenance_rpc_failed");
     const result = data && typeof data === "object" && !Array.isArray(data) ? data : {};
     const deletionJobs = await reconcileFailedAccountDeletions();
+    const connectorDispatch = await dispatchQueuedConnectorReceipts(20);
     await captureOperationalEvent({
       level: "info",
       event: "operational_maintenance_completed",
@@ -50,6 +52,8 @@ export async function GET(request: Request) {
         deletionJobsRetried: deletionJobs.retried,
         deletionJobsSucceeded: deletionJobs.succeeded,
         connectorMetrics,
+        connectorReceiptsInspected: connectorDispatch.inspected,
+        connectorReceiptsFailed: connectorDispatch.failed,
       },
     });
     return Response.json({ ok: true, status: result.status ?? "succeeded" });

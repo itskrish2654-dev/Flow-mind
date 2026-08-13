@@ -15,7 +15,7 @@ function stringInputs(payload: unknown): Record<string, string> {
 
 export async function dispatchConnectorReceipt(receiptId: string) {
   const admin = createAdminClient();
-  const { data: receipt } = await admin.from("connector_event_receipts").select("*").eq("id", receiptId).eq("status", "queued").maybeSingle();
+  const { data: receipt } = await admin.from("connector_event_receipts").update({ status: "processing" }).eq("id", receiptId).eq("status", "queued").select("*").maybeSingle();
   if (!receipt) return;
   const { data: subscription } = await admin.from("connector_subscriptions").select("user_id, workflow_id, workflow_version_id, status").eq("id", receipt.subscription_id).eq("status", "active").maybeSingle();
   if (!subscription) { await admin.from("connector_event_receipts").update({ status: "failed", processed_at: new Date().toISOString() }).eq("id", receiptId); return; }
@@ -26,7 +26,7 @@ export async function dispatchConnectorReceipt(receiptId: string) {
   const inputValues = stringInputs(receipt.payload);
   const durable = await createDurableExecution(admin, { workflowId: subscription.workflow_id, workflowVersionId: subscription.workflow_version_id, userId: subscription.user_id, triggerType: "connector_webhook", triggerMetadata: { subscriptionId: receipt.subscription_id }, idempotencyKey: `connector:${receipt.subscription_id}:${receipt.provider_event_key}`, inputData: inputValues });
   if (!durable.created) { await admin.from("connector_event_receipts").update({ status: "duplicate", execution_id: durable.id, processed_at: new Date().toISOString() }).eq("id", receiptId); return; }
-  await admin.from("connector_event_receipts").update({ status: "processing", execution_id: durable.id }).eq("id", receiptId).eq("status", "queued");
+  await admin.from("connector_event_receipts").update({ execution_id: durable.id }).eq("id", receiptId).eq("status", "processing");
   try {
     await markExecutionRunning(admin, durable.id);
     const execution = await withConcurrencyLease("user-execution", [subscription.user_id], 2, () => withConcurrencyLease("workflow-execution", [subscription.workflow_id], 1, async () => {
@@ -39,4 +39,12 @@ export async function dispatchConnectorReceipt(receiptId: string) {
     await admin.from("workflow_executions").update({ status: "failed", completed_at: new Date().toISOString(), failure_category: "connector_dispatch_failed" }).eq("id", durable.id).eq("user_id", subscription.user_id);
     await admin.from("connector_event_receipts").update({ status: "failed", processed_at: new Date().toISOString() }).eq("id", receiptId);
   }
+}
+
+export async function dispatchQueuedConnectorReceipts(limit = 20) {
+  const admin = createAdminClient();
+  const { data, error } = await admin.from("connector_event_receipts").select("id").eq("status", "queued").order("received_at", { ascending: true }).limit(Math.max(1, Math.min(limit, 50)));
+  if (error) throw new Error("Queued connector receipts could not be loaded.");
+  const settled = await Promise.allSettled((data ?? []).map((receipt) => dispatchConnectorReceipt(receipt.id)));
+  return { inspected: settled.length, failed: settled.filter((result) => result.status === "rejected").length };
 }

@@ -88,6 +88,9 @@ test("42-48 generic HTTP SSRF boundary blocks loopback/private/link-local/metada
 test("49-53 gateway source enforces rate/quota/body/dedupe/owner-derived subscription", async () => {
   const source = await import("node:fs/promises").then((fs) => fs.readFile("app/api/connectors/events/[provider]/route.ts", "utf8"));
   assert.match(source, /enforceRateLimit/); assert.match(source, /enforceUsageQuota/); assert.match(source, /MAX_EVENT_BYTES/); assert.match(source, /23505/); assert.match(source, /subscription\.user_id/);
+  const dispatch = await import("node:fs/promises").then((fs) => fs.readFile("lib/connectors/webhook-dispatch.ts", "utf8"));
+  assert.match(dispatch, /\.update\(\{ status: "processing" \}\).*\.eq\("status", "queued"\)/);
+  assert.match(dispatch, /dispatchQueuedConnectorReceipts/);
 });
 
 test("49b. a webhook-only workflow cannot bypass endpoint authentication through the public-form route", async () => {
