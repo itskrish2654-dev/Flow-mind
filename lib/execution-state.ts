@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { resolveStepCapabilityId } from "@/lib/capability-registry";
 import { classifyExecutionError } from "@/lib/execution-reliability";
+import { captureOperationalEvent, trackProductEvent } from "@/lib/observability";
 import type { CompiledWorkflow } from "@/lib/schemas/workflow";
 import type { Database, Json } from "@/lib/supabase/types";
 
@@ -55,9 +56,16 @@ export async function createDurableExecution(
 export function createExecutionStateHooks(
   admin: SupabaseClient<Database>,
   executionId: string,
+  context?: {
+    userId?: string;
+    workflowId?: string;
+    workflowVersionId?: string;
+  },
 ) {
+  const stepStartedAt = new Map<string, number>();
   return {
     onStepStart: async (step: CompiledWorkflow["steps"][number]) => {
+      stepStartedAt.set(step.id, Date.now());
       const { error } = await admin
         .from("workflow_execution_steps")
         .update({
@@ -72,6 +80,17 @@ export function createExecutionStateHooks(
         .eq("workflow_step_id", step.id)
         .neq("status", "succeeded");
       if (error) throw new Error(`Step state could not be persisted: ${error.message}`);
+      await captureOperationalEvent({
+        level: "info",
+        event: "execution_step_started",
+        userId: context?.userId,
+        workflowId: context?.workflowId,
+        workflowVersionId: context?.workflowVersionId,
+        executionId,
+        stepId: step.id,
+        capability: resolveStepCapabilityId(step) ?? "unknown",
+        status: "running",
+      });
     },
     onStepFinish: async (
       step: CompiledWorkflow["steps"][number],
@@ -103,6 +122,33 @@ export function createExecutionStateHooks(
         .eq("execution_id", executionId)
         .eq("workflow_step_id", step.id);
       if (error) throw new Error(`Step result could not be persisted: ${error.message}`);
+      const capability = resolveStepCapabilityId(step) ?? "unknown";
+      const failed = result.status === "failed";
+      await Promise.all([
+        captureOperationalEvent({
+          level: failed ? "error" : "info",
+          event: "execution_step_completed",
+          userId: context?.userId,
+          workflowId: context?.workflowId,
+          workflowVersionId: context?.workflowVersionId,
+          executionId,
+          stepId: step.id,
+          capability,
+          durationMs: Math.max(0, Date.now() - (stepStartedAt.get(step.id) ?? Date.now())),
+          status: result.status,
+          errorCategory: classification?.category ?? null,
+          metadata: { retryable: result.retryable ?? classification?.retryable ?? false },
+        }),
+        ...(failed && (capability === "ai_transform" || capability === "generate_pdf")
+          ? [trackProductEvent({
+              event: capability === "ai_transform" ? "ai_failed" : "pdf_failed",
+              userId: context?.userId,
+              workflowId: context?.workflowId,
+              properties: { capability, failure_category: classification?.category ?? "step_failure" },
+            })]
+          : []),
+      ]);
+      stepStartedAt.delete(step.id);
     },
   };
 }

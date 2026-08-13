@@ -4,7 +4,7 @@ FlowMind is a Next.js 16 automation builder backed by Supabase Auth, Postgres Ro
 
 ## Local setup
 
-1. Copy `.env.example` to `.env.local`. The Supabase service role, Groq key,
+1. Copy `.env.example` to `.env.local`. The Supabase backend secret, Groq key,
    credential master key, rate-limit secret, and Turnstile secret are server-only.
    Generate the credential and rate-limit keys with a cryptographically secure
    random generator; never commit or print them.
@@ -64,9 +64,31 @@ Open [http://localhost:3000](http://localhost:3000). Unauthenticated dashboard a
 ## Verification
 
 ```bash
+npm ci
+npm run check
+npx playwright install chromium
+npm run test:e2e
+npx supabase db lint --linked
 npm run lint
 npm run build
 npm run verify:rls
 ```
 
 `verify:rls` must report zero anonymous rows or a 401/403 response before deployment.
+
+CI runs migration and environment validation, the complete Phase 1–6 regression
+suite, TypeScript, ESLint, a production build, public/protected-route Playwright
+smoke tests, and repository secret scanning. Authenticated E2E requires a
+CAPTCHA-created disposable session via `E2E_STORAGE_STATE`; production CAPTCHA is
+never bypassed.
+
+Production operations, environment ownership, privacy-safe analytics, retention,
+incident response, and launch status are documented in:
+
+- [`docs/OPERATIONS_RUNBOOK.md`](docs/OPERATIONS_RUNBOOK.md)
+- [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md)
+- [`docs/ANALYTICS.md`](docs/ANALYTICS.md)
+- [`docs/RETENTION_AND_RECOVERY.md`](docs/RETENTION_AND_RECOVERY.md)
+- [`docs/INCIDENT_RESPONSE.md`](docs/INCIDENT_RESPONSE.md)
+- [`docs/LAUNCH_MATRIX.md`](docs/LAUNCH_MATRIX.md)
+- [`docs/PERFORMANCE_BASELINE.md`](docs/PERFORMANCE_BASELINE.md)

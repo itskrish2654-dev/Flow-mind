@@ -30,6 +30,7 @@ import {
 import { postTrustedWebhook } from "@/lib/security/outbound-webhook";
 import { securityLog } from "@/lib/security/redaction";
 import { isSensitiveFieldName } from "@/lib/security/redaction";
+import { captureOperationalError, captureOperationalEvent, trackProductEvent } from "@/lib/observability";
 import {
   createImmutableWorkflowVersion,
   loadWorkflowSnapshot,
@@ -85,6 +86,7 @@ export async function runTestWorkflow(
 
   const auth = await getAuthenticatedContext();
   if (!auth) return { ok: false, error: "Unauthorized" };
+  const executionStartedAt = Date.now();
 
   const admin = createAdminClient();
   let snapshot = await loadWorkflowSnapshot(admin, request.data.workflowId, auth.user.id);
@@ -157,6 +159,24 @@ export async function runTestWorkflow(
       : { ok: false, error: existing?.status === "running" || existing?.status === "queued" ? "This execution is already in progress." : "This request already has an execution record.", executionId: durable.id, logs: output?.logs };
   }
 
+  await Promise.all([
+    trackProductEvent({
+      event: "execution_started",
+      userId: auth.user.id,
+      workflowId: request.data.workflowId,
+      properties: { trigger_type: "manual_test", retry: false },
+    }),
+    captureOperationalEvent({
+      level: "info",
+      event: "execution_started",
+      userId: auth.user.id,
+      workflowId: request.data.workflowId,
+      workflowVersionId: snapshot.versionId,
+      executionId: durable.id,
+      status: "running",
+    }),
+  ]);
+
   let execution: Awaited<ReturnType<typeof executeWorkflowSteps>>;
   try {
     await enforceRateLimit(
@@ -215,7 +235,11 @@ export async function runTestWorkflow(
               return postTrustedWebhook(endpoint, payload, stepIdempotencyKey);
             },
             idempotencyKey: createManualIdempotencyKey(request.data.idempotencyKey),
-            stateHooks: createExecutionStateHooks(admin, durable.id),
+            stateHooks: createExecutionStateHooks(admin, durable.id, {
+              userId: auth.user.id,
+              workflowId: request.data.workflowId,
+              workflowVersionId: snapshot.versionId,
+            }),
           });
         },
       ),
@@ -232,6 +256,30 @@ export async function runTestWorkflow(
       failure_category: error instanceof SecurityGateError ? error.code.toLowerCase() : "execution_error",
       sanitized_metadata: { message: error instanceof Error ? error.message : "Execution failed." },
     }).eq("id", durable.id);
+    await Promise.all([
+      trackProductEvent({
+        event: error instanceof SecurityGateError && error.code === "QUOTA_EXCEEDED"
+          ? "quota_reached"
+          : "execution_failed",
+        userId: auth.user.id,
+        workflowId: request.data.workflowId,
+        properties: {
+          trigger_type: "manual_test",
+          failure_category: error instanceof SecurityGateError ? error.code : "execution_error",
+        },
+      }),
+      captureOperationalError({
+        event: "execution_failed",
+        error,
+        userId: auth.user.id,
+        workflowId: request.data.workflowId,
+        workflowVersionId: snapshot.versionId,
+        executionId: durable.id,
+        durationMs: Date.now() - executionStartedAt,
+        status: "failed",
+        errorCategory: error instanceof SecurityGateError ? error.code.toLowerCase() : "execution_error",
+      }),
+    ]);
     return {
       ok: false,
       error:
@@ -257,6 +305,28 @@ export async function runTestWorkflow(
   }
 
   if (!execution.ok) {
+    await Promise.all([
+      trackProductEvent({
+        event: execution.outputData.status === "partial" ? "execution_partially_failed" : "execution_failed",
+        userId: auth.user.id,
+        workflowId: request.data.workflowId,
+        properties: {
+          trigger_type: "manual_test",
+          failure_category: "step_failure",
+        },
+      }),
+      captureOperationalEvent({
+        level: "error",
+        event: "execution_completed",
+        userId: auth.user.id,
+        workflowId: request.data.workflowId,
+        workflowVersionId: snapshot.versionId,
+        executionId: durable.id,
+        durationMs: Date.now() - executionStartedAt,
+        status: execution.outputData.status === "partial" ? "partially_failed" : "failed",
+        errorCategory: "step_failure",
+      }),
+    ]);
     return {
       ok: false,
       error: execution.failureReason ?? "The workflow could not complete this test.",
@@ -264,6 +334,25 @@ export async function runTestWorkflow(
       executionId: durable.id,
     };
   }
+
+  await Promise.all([
+    trackProductEvent({
+      event: "execution_succeeded",
+      userId: auth.user.id,
+      workflowId: request.data.workflowId,
+      properties: { trigger_type: "manual_test", duration_ms: Date.now() - executionStartedAt },
+    }),
+    captureOperationalEvent({
+      level: "info",
+      event: "execution_completed",
+      userId: auth.user.id,
+      workflowId: request.data.workflowId,
+      workflowVersionId: snapshot.versionId,
+      executionId: durable.id,
+      durationMs: Date.now() - executionStartedAt,
+      status: "succeeded",
+    }),
+  ]);
 
   return {
     ok: true,
@@ -279,6 +368,11 @@ export async function retryWorkflowExecution(executionId: string): Promise<TestW
   const auth = await getAuthenticatedContext();
   if (!auth) return { ok: false, error: "Unauthorized" };
   const admin = createAdminClient();
+  await trackProductEvent({
+    event: "execution_retry_attempted",
+    userId: auth.user.id,
+    properties: { retry: true },
+  });
 
   const { data: existing, error: existingError } = await admin
     .from("workflow_executions")
@@ -347,7 +441,11 @@ export async function retryWorkflowExecution(executionId: string): Promise<TestW
           completedStepIds,
           resumeState: { aiResult: priorAiResult, documents: priorDocuments },
           idempotencyKey: existing.idempotency_key,
-          stateHooks: createExecutionStateHooks(admin, existing.id),
+          stateHooks: createExecutionStateHooks(admin, existing.id, {
+            userId: auth.user.id,
+            workflowId: existing.workflow_id,
+            workflowVersionId: existing.workflow_version_id ?? undefined,
+          }),
           executeAi: async (input) => {
             await enforceRateLimit("ai-execution", [auth.user.id], SECURITY_LIMITS.ai);
             await enforceUsageQuota(auth.user.id, "ai_generations");
@@ -365,6 +463,14 @@ export async function retryWorkflowExecution(executionId: string): Promise<TestW
       }),
     );
     await completeDurableExecution(admin, existing.id, execution);
+    if (execution.ok) {
+      await trackProductEvent({
+        event: "execution_retry_succeeded",
+        userId: auth.user.id,
+        workflowId: existing.workflow_id,
+        properties: { retry: true, success: true },
+      });
+    }
     return execution.ok
       ? { ok: true, logs: execution.logs, delivered: execution.delivered, executionId: existing.id }
       : { ok: false, error: execution.failureReason ?? "Retry failed.", logs: execution.logs, executionId: existing.id };

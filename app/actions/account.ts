@@ -8,6 +8,7 @@ import { GENERATED_DOCUMENTS_BUCKET } from "@/lib/document-storage";
 import { SECURITY_LIMITS, SecurityGateError, enforceRateLimit } from "@/lib/security/limits";
 import { getClientIp } from "@/lib/security/request-context";
 import { securityLog } from "@/lib/security/redaction";
+import { captureOperationalError, captureOperationalEvent } from "@/lib/observability";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSupabaseConfig } from "@/lib/supabase/config";
 
@@ -143,14 +144,29 @@ export async function deleteOwnAccount(input: {
       .eq("user_id", auth.user.id);
     if (completionError) throw new Error("completion_record_failed");
 
+    await captureOperationalEvent({
+      level: "info",
+      event: "account_deletion_completed",
+      userId: auth.user.id,
+      status: "succeeded",
+      metadata: { jobId },
+    });
     return { ok: true };
   } catch (error) {
     const code = error instanceof Error ? error.message : "account_cleanup_failed";
     await failJob(jobId, code);
     securityLog("Account deletion failed safely", { error, userId: auth.user.id, jobId });
+    const reference = await captureOperationalError({
+      event: "account_deletion_failed",
+      error,
+      userId: auth.user.id,
+      status: "failed",
+      errorCategory: code,
+      metadata: { jobId },
+    });
     return {
       ok: false,
-      error: "Deletion could not be completed. Your public forms remain disabled. Please retry or contact support.",
+      error: `Deletion could not be completed. Your public forms remain disabled. Please retry or contact support. Reference: ${reference}`,
     };
   }
 }

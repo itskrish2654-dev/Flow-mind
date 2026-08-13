@@ -40,7 +40,14 @@ export function securityLog(
   event: string,
   details?: Record<string, unknown>,
 ): void {
-  console.error(`[FlowMind] ${event}`, details ? redactForLog(details) : undefined);
+  console.error(JSON.stringify({
+    timestamp: new Date().toISOString(),
+    level: "error",
+    event: event.slice(0, 120),
+    environment: process.env.VERCEL_ENV || process.env.NODE_ENV || "unknown",
+    release: (process.env.VERCEL_GIT_COMMIT_SHA || process.env.FLOWMIND_RELEASE || "local").slice(0, 100),
+    metadata: details ? redactForLog(details) : undefined,
+  }));
 }
 
 export function isSensitiveFieldName(value: string): boolean {

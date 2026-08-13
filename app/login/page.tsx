@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
 
 import { LoginForm } from "@/components/login-form";
-import { createClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = {
   title: "Log in | FlowMind",
@@ -19,12 +17,8 @@ export default async function LoginPage({
 }: {
   searchParams: Promise<{ next?: string | string[]; error?: string | string[]; notice?: string | string[]; recover?: string | string[] }>;
 }) {
-  const [params, supabase] = await Promise.all([searchParams, createClient()]);
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const params = await searchParams;
   const nextPath = safeNextPath(params.next);
-  if (user) redirect(nextPath);
 
   return (
     <main className="dashboard-theme relative flex min-h-dvh items-center justify-center overflow-y-auto bg-[#f7f4ee] px-5 py-10">

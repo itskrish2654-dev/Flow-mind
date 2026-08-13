@@ -20,6 +20,7 @@ import {
 } from "@/lib/security/limits";
 import { resolveTrustedWebhook } from "@/lib/security/outbound-webhook";
 import { securityLog } from "@/lib/security/redaction";
+import { captureOperationalError, trackProductEvent, type ProductEventName } from "@/lib/observability";
 import {
   createImmutableWorkflowVersion,
   loadWorkflowSnapshot,
@@ -449,6 +450,12 @@ export async function compileWorkflow(
 
   const auth = await getAuthenticatedContext();
   if (!auth) return { success: false, status: "ERROR", error: "Unauthorized" };
+  await trackProductEvent({
+    event: "prompt_submitted",
+    userId: auth.user.id,
+    workflowId: parsedExistingWorkflowId?.success ? parsedExistingWorkflowId.data : null,
+    properties: { source: parsedExistingWorkflowId?.success ? "workflow_edit" : "dashboard" },
+  });
 
   try {
     await enforceRateLimit(
@@ -468,6 +475,23 @@ export async function compileWorkflow(
   }
 
   const planning = planWorkflow(normalizedPrompt);
+  const plannerEvent: Record<PlanningStatus, ProductEventName> = {
+    READY_TO_COMPILE: "planner_ready_to_compile",
+    NEEDS_CLARIFICATION: "planner_needs_clarification",
+    UNSUPPORTED: "planner_unsupported",
+    CONFLICTING_REQUIREMENTS: "planner_conflicting_requirements",
+  };
+  await trackProductEvent({
+    event: plannerEvent[planning.status],
+    userId: auth.user.id,
+    workflowId: parsedExistingWorkflowId?.success ? parsedExistingWorkflowId.data : null,
+    properties: {
+      planner_status: planning.status,
+      step_count: planning.status === "READY_TO_COMPILE"
+        ? Number(Boolean(planning.trigger)) + planning.transformations.length + Number(Boolean(planning.destination))
+        : 0,
+    },
+  });
   if (planning.status !== "READY_TO_COMPILE") {
     return {
       success: false,
@@ -488,6 +512,13 @@ export async function compileWorkflow(
     compiledWorkflow = compileReadyPlan(normalizedPrompt, planning);
   } catch (error: unknown) {
     securityLog("Deterministic compiler failed", { error });
+    await captureOperationalError({
+      event: "workflow_compilation_failed",
+      error,
+      userId: auth.user.id,
+      errorCategory: "compiler",
+      status: "failed",
+    });
     return {
       success: false,
       status: "ERROR",
@@ -566,6 +597,29 @@ export async function compileWorkflow(
   }
 
   revalidatePath("/dashboard");
+  let workflowCount = 1;
+  if (!parsedExistingWorkflowId?.success) {
+    const { count } = await admin
+      .from("workflows")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", auth.user.id)
+      .neq("lifecycle_state", "archived");
+    workflowCount = count ?? 1;
+  }
+  await trackProductEvent({
+    event: parsedExistingWorkflowId?.success ? "workflow_configured" : "workflow_created",
+    userId: auth.user.id,
+    workflowId: data.id,
+    properties: { step_count: compiledWorkflow.steps.length, workflow_count: workflowCount },
+  });
+  if (!parsedExistingWorkflowId?.success && workflowCount === 2) {
+    await trackProductEvent({
+      event: "second_workflow_created",
+      userId: auth.user.id,
+      workflowId: data.id,
+      properties: { workflow_count: workflowCount },
+    });
+  }
   return {
     success: true,
     status: "READY_TO_COMPILE",
@@ -654,6 +708,12 @@ export async function setWorkflowPublication(
   if (updateError) return { ok: false, error: "Publication status could not be changed." };
   revalidatePath(`/f/${parsedId.data}`);
   revalidatePath(`/dashboard/projects/${parsedId.data}`);
+  await trackProductEvent({
+    event: publish ? "workflow_published" : "workflow_unpublished",
+    userId: auth.user.id,
+    workflowId: parsedId.data,
+    properties: { published: publish },
+  });
   return { ok: true, published: publish };
 }
 

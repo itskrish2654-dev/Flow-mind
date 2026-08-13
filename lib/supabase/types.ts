@@ -218,6 +218,99 @@ export type Database = {
         };
         Relationships: [];
       };
+      operational_events: {
+        Row: {
+          id: string;
+          occurred_at: string;
+          level: "info" | "warn" | "error";
+          event: string;
+          request_id: string | null;
+          user_id_hash: string | null;
+          workflow_id: string | null;
+          workflow_version_id: string | null;
+          execution_id: string | null;
+          step_id: string | null;
+          capability: string | null;
+          duration_ms: number | null;
+          status: string | null;
+          error_category: string | null;
+          environment: string;
+          release: string | null;
+          metadata: Json;
+        };
+        Insert: {
+          id?: string;
+          occurred_at?: string;
+          level: "info" | "warn" | "error";
+          event: string;
+          request_id?: string | null;
+          user_id_hash?: string | null;
+          workflow_id?: string | null;
+          workflow_version_id?: string | null;
+          execution_id?: string | null;
+          step_id?: string | null;
+          capability?: string | null;
+          duration_ms?: number | null;
+          status?: string | null;
+          error_category?: string | null;
+          environment?: string;
+          release?: string | null;
+          metadata?: Json;
+        };
+        Update: never;
+        Relationships: [];
+      };
+      product_analytics_events: {
+        Row: {
+          id: string;
+          occurred_at: string;
+          event_name: string;
+          user_id_hash: string | null;
+          anonymous_id_hash: string | null;
+          workflow_id: string | null;
+          environment: string;
+          properties: Json;
+        };
+        Insert: {
+          id?: string;
+          occurred_at?: string;
+          event_name: string;
+          user_id_hash?: string | null;
+          anonymous_id_hash?: string | null;
+          workflow_id?: string | null;
+          environment?: string;
+          properties?: Json;
+        };
+        Update: never;
+        Relationships: [];
+      };
+      operational_maintenance_runs: {
+        Row: {
+          id: string;
+          job_name: string;
+          started_at: string;
+          completed_at: string | null;
+          status: "running" | "succeeded" | "failed" | "skipped";
+          metrics: Json;
+          error_category: string | null;
+        };
+        Insert: {
+          id?: string;
+          job_name?: string;
+          started_at?: string;
+          completed_at?: string | null;
+          status: "running" | "succeeded" | "failed" | "skipped";
+          metrics?: Json;
+          error_category?: string | null;
+        };
+        Update: {
+          completed_at?: string | null;
+          status?: "running" | "succeeded" | "failed" | "skipped";
+          metrics?: Json;
+          error_category?: string | null;
+        };
+        Relationships: [];
+      };
       workflow_executions: {
         Row: {
           id: string;
@@ -446,6 +539,14 @@ export type Database = {
       cleanup_account_data: {
         Args: { p_job_id: string; p_user_id: string };
         Returns: boolean;
+      };
+      run_operational_maintenance: {
+        Args: {
+          p_stale_before: string;
+          p_rate_limit_retention_before: string;
+          p_deletion_job_stale_before: string;
+        };
+        Returns: Json;
       };
     };
   };

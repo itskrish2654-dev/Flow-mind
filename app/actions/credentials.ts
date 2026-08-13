@@ -3,6 +3,7 @@
 import { z } from "zod";
 
 import { getAuthenticatedContext } from "@/lib/auth";
+import { captureOperationalError } from "@/lib/observability";
 import {
   deleteCredential as deleteVaultCredential,
   listCredentialMetadata,
@@ -60,6 +61,14 @@ export async function saveWorkflowCredential(input: {
     return { ok: true, credential };
   } catch (error) {
     securityLog("Credential save failed", { error, workflowId: parsed.data.workflowId });
+    await captureOperationalError({
+      event: "credential_vault_failed",
+      error,
+      userId: auth.user.id,
+      workflowId: parsed.data.workflowId,
+      errorCategory: "credential_storage",
+      status: "failed",
+    });
     return { ok: false, error: "Credential could not be stored securely." };
   }
 }
@@ -79,7 +88,15 @@ export async function getWorkflowCredentialMetadata(
       ok: true,
       credentials: await listCredentialMetadata(auth.user.id, parsed.data),
     };
-  } catch {
+  } catch (error) {
+    await captureOperationalError({
+      event: "credential_vault_failed",
+      error,
+      userId: auth.user.id,
+      workflowId: parsed.data,
+      errorCategory: "credential_metadata",
+      status: "failed",
+    });
     return { ok: false, error: "Credential status could not be loaded." };
   }
 }
@@ -104,7 +121,15 @@ export async function revokeWorkflowCredential(input: {
       credentialKey: parsed.data.credentialKey,
     });
     return { ok: true };
-  } catch {
+  } catch (error) {
+    await captureOperationalError({
+      event: "credential_vault_failed",
+      error,
+      userId: auth.user.id,
+      workflowId: parsed.data.workflowId,
+      errorCategory: "credential_deletion",
+      status: "failed",
+    });
     return { ok: false, error: "Credential could not be removed." };
   }
 }

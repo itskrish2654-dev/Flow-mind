@@ -5,6 +5,7 @@ import { z } from "zod";
 import { SECURITY_LIMITS, SecurityGateError, enforceRateLimit } from "@/lib/security/limits";
 import { getClientIp } from "@/lib/security/request-context";
 import { createClient } from "@/lib/supabase/server";
+import { trackProductEvent } from "@/lib/observability";
 
 const EmailSchema = z.string().trim().email().max(320);
 const CaptchaTokenSchema = z.string().min(1).max(4_096);
@@ -78,10 +79,15 @@ export async function authenticateWithPassword(input: {
           : "Email or password is incorrect.",
       };
     }
+    const { data: { user } } = await supabase.auth.getUser();
+    await trackProductEvent({ event: "login_completed", userId: user?.id });
     return { ok: true, sessionCreated: true };
   }
 
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "");
+  const siteUrl = (
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "")
+  ).replace(/\/$/, "");
   if (parsed.data.mode === "recovery") {
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       captchaToken: parsed.data.captchaToken,
@@ -95,6 +101,7 @@ export async function authenticateWithPassword(input: {
           : "A recovery email could not be requested right now.",
       };
     }
+    await trackProductEvent({ event: "recovery_requested" });
     return {
       ok: true,
       sessionCreated: false,
@@ -118,6 +125,7 @@ export async function authenticateWithPassword(input: {
         : "Account creation could not be completed.",
     };
   }
+  await trackProductEvent({ event: "signup_completed", userId: data.user?.id });
   return data.session
     ? { ok: true, sessionCreated: true }
     : {

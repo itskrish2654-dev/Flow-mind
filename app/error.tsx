@@ -32,6 +32,11 @@ export default function ErrorPage({
           Your work is still safe. Try loading this screen again or return to
           your automations.
         </p>
+        {error.digest && (
+          <p className="mt-3 text-xs font-medium text-slate-400">
+            Reference: {error.digest.slice(0, 12)}
+          </p>
+        )}
         <div className="mt-7 grid gap-3 sm:grid-cols-2">
           <button
             type="button"

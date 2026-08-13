@@ -23,6 +23,7 @@ import {
 } from "@/lib/security/limits";
 import { getClientIp } from "@/lib/security/request-context";
 import { securityLog } from "@/lib/security/redaction";
+import { captureOperationalError, captureOperationalEvent, trackProductEvent } from "@/lib/observability";
 import { executeWorkflowSteps } from "@/lib/workflow-execution";
 
 const WorkflowIdSchema = z.string().uuid();
@@ -255,6 +256,24 @@ export async function submitPublicWorkflow(
     return complete("persistence_failed");
   }
   if (!durable.created) return complete("duplicate");
+  const executionStartedAt = Date.now();
+  await Promise.all([
+    trackProductEvent({
+      event: "execution_started",
+      userId: publicWorkflow.ownerId,
+      workflowId: publicWorkflow.id,
+      properties: { trigger_type: "public_form", retry: false },
+    }),
+    captureOperationalEvent({
+      level: "info",
+      event: "public_form_execution_started",
+      userId: publicWorkflow.ownerId,
+      workflowId: publicWorkflow.id,
+      workflowVersionId: publicWorkflow.versionId,
+      executionId: durable.id,
+      status: "running",
+    }),
+  ]);
 
   let execution: Awaited<ReturnType<typeof executeWorkflowSteps>>;
   try {
@@ -314,7 +333,11 @@ export async function submitPublicWorkflow(
               );
             },
             idempotencyKey,
-            stateHooks: createExecutionStateHooks(publicWorkflow.admin, durable.id),
+            stateHooks: createExecutionStateHooks(publicWorkflow.admin, durable.id, {
+              userId: publicWorkflow.ownerId,
+              workflowId: publicWorkflow.id,
+              workflowVersionId: publicWorkflow.versionId,
+            }),
           });
         },
       ),
@@ -330,6 +353,25 @@ export async function submitPublicWorkflow(
       failure_category: "execution_error",
       sanitized_metadata: { message: error instanceof Error ? error.message : "Execution failed." },
     }).eq("id", durable.id);
+    await Promise.all([
+      trackProductEvent({
+        event: "public_form_failed",
+        userId: publicWorkflow.ownerId,
+        workflowId: publicWorkflow.id,
+        properties: { trigger_type: "public_form", failure_category: "execution_error" },
+      }),
+      captureOperationalError({
+        event: "public_form_execution_failed",
+        error,
+        userId: publicWorkflow.ownerId,
+        workflowId: publicWorkflow.id,
+        workflowVersionId: publicWorkflow.versionId,
+        executionId: durable.id,
+        durationMs: Date.now() - executionStartedAt,
+        status: "failed",
+        errorCategory: "execution_error",
+      }),
+    ]);
     return complete("execution_failed");
   }
 
@@ -342,12 +384,52 @@ export async function submitPublicWorkflow(
     });
     return complete("persistence_failed");
   }
-  if (!execution.ok) return complete("workflow_failed");
+  if (!execution.ok) {
+    await Promise.all([
+      trackProductEvent({
+        event: "public_form_failed",
+        userId: publicWorkflow.ownerId,
+        workflowId: publicWorkflow.id,
+        properties: { trigger_type: "public_form", failure_category: "step_failure" },
+      }),
+      captureOperationalEvent({
+        level: "error",
+        event: "public_form_execution_completed",
+        userId: publicWorkflow.ownerId,
+        workflowId: publicWorkflow.id,
+        workflowVersionId: publicWorkflow.versionId,
+        executionId: durable.id,
+        durationMs: Date.now() - executionStartedAt,
+        status: execution.outputData.status === "partial" ? "partially_failed" : "failed",
+        errorCategory: "step_failure",
+      }),
+    ]);
+    return complete("workflow_failed");
+  }
 
   const storesInternally = publicWorkflow.workflow.steps.some(
     (step) => resolveStepCapabilityId(step) === "flowmind_data_store",
   );
   const generatedDocument = execution.outputData.documents.length > 0;
+  await Promise.all([
+    trackProductEvent({
+      event: "execution_succeeded",
+      userId: publicWorkflow.ownerId,
+      workflowId: publicWorkflow.id,
+      properties: { trigger_type: "public_form", duration_ms: Date.now() - executionStartedAt },
+    }),
+    captureOperationalEvent({
+      level: "info",
+      event: "public_form_execution_completed",
+      userId: publicWorkflow.ownerId,
+      workflowId: publicWorkflow.id,
+      workflowVersionId: publicWorkflow.versionId,
+      executionId: durable.id,
+      durationMs: Date.now() - executionStartedAt,
+      status: "succeeded",
+      metadata: { generatedDocument, storesInternally },
+    }),
+  ]);
   return complete(
     generatedDocument
       ? "pdf_generated"
