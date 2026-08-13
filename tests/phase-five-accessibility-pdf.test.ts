@@ -41,6 +41,10 @@ test("5-5. execution history has an intentional mobile card layout", async () =>
   const table = await source("components/executions-data-table.tsx");
   assert.match(table, /space-y-3 md:hidden/);
   assert.match(table, /hidden overflow-x-auto[\s\S]*md:block/);
+  assert.match(table, /basis-full sm:flex-1 sm:basis-auto/);
+  assert.match(table, /max-w-\[62%\]/);
+  assert.match(table, /window\.open\("about:blank", "_blank"\)[\s\S]*startTransition/);
+  assert.match(table, /window\.location\.assign\(result\.url\)/);
 });
 
 test("5-6. public form uses bounded width and wrapping-safe controls", async () => {

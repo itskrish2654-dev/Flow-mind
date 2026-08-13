@@ -232,13 +232,20 @@ function SecureDocumentButton({
         disabled={pending}
         onClick={() => {
           setError(null);
+          const downloadWindow = window.open("about:blank", "_blank");
+          if (downloadWindow) downloadWindow.opener = null;
           startTransition(async () => {
             const result = await createDocumentDownloadUrl(document.id);
             if (!result.ok) {
+              downloadWindow?.close();
               setError(result.error);
               return;
             }
-            window.open(result.url, "_blank", "noopener,noreferrer");
+            if (downloadWindow) {
+              downloadWindow.location.replace(result.url);
+            } else {
+              window.location.assign(result.url);
+            }
           });
         }}
         className="flex min-h-11 w-full items-center gap-3 rounded-xl border border-[#e7c75f] bg-[#fff7dc] px-3.5 py-2.5 text-[10px] font-semibold text-[#7f5d00] transition hover:bg-[#fff0b9] disabled:opacity-60"
@@ -493,11 +500,11 @@ export function ExecutionsDataTable({
   return (
     <section className="flex h-full min-h-0 flex-col bg-[#f8f5ef]">
       <header className="flex min-h-[65px] shrink-0 flex-wrap items-center gap-3 border-b border-[#e4ddd2] bg-[#fffdfa] px-4 py-3 sm:px-6">
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 basis-full sm:flex-1 sm:basis-auto">
           <h2 className="text-[13px] font-semibold text-slate-950">Execution history</h2>
           <p className="mt-0.5 text-[10px] text-slate-400">Public form submissions and test runs</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex w-full items-center gap-2 sm:w-auto">
           <button
             type="button"
             onClick={refresh}
@@ -570,9 +577,11 @@ export function ExecutionsDataTable({
                     <p className="mb-2 text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-400">Saved data</p>
                     <div className="grid gap-2">
                       {columns.slice(0, 4).map((column) => (
-                        <div key={`${column.source}-${column.key}`} className="flex items-center justify-between gap-3 rounded-lg bg-[#f8f4ec] px-2.5 py-2">
-                          <span className="text-[9px] font-semibold text-slate-500">{column.label}</span>
-                          <ConfiguredValue execution={execution} column={column} />
+                        <div key={`${column.source}-${column.key}`} className="flex min-w-0 items-center justify-between gap-3 rounded-lg bg-[#f8f4ec] px-2.5 py-2">
+                          <span className="shrink-0 text-[9px] font-semibold text-slate-500">{column.label}</span>
+                          <div className="min-w-0 max-w-[62%] text-right [&>*]:max-w-full">
+                            <ConfiguredValue execution={execution} column={column} />
+                          </div>
                         </div>
                       ))}
                     </div>
