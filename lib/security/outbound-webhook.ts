@@ -76,6 +76,13 @@ export function parseTrustedWebhookUrl(value: string): URL {
   return destination;
 }
 
+export function selectPinnedWebhookAddress(
+  addresses: Array<{ address: string; family: number }>,
+): { address: string; family: 4 | 6 } {
+  const selected = addresses.find(({ family }) => family === 4) ?? addresses[0];
+  return { address: selected.address, family: selected.family as 4 | 6 };
+}
+
 export async function resolveTrustedWebhook(value: string): Promise<{
   destination: URL;
   address: string;
@@ -95,7 +102,9 @@ export async function resolveTrustedWebhook(value: string): Promise<{
   if (!addresses.length || addresses.some(({ address }) => isBlockedOutboundAddress(address))) {
     throw new Error("Webhook destination resolves to a blocked network.");
   }
-  const pinned = addresses[0];
+  // Vercel functions do not consistently have outbound IPv6 connectivity.
+  // Keep DNS pinning, but prefer a validated public IPv4 answer when available.
+  const pinned = selectPinnedWebhookAddress(addresses);
   return { destination, address: pinned.address, family: pinned.family as 4 | 6 };
 }
 

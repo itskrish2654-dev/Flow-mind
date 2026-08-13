@@ -8,7 +8,7 @@ import { assessConnectorPlan } from "../lib/connectors/planning";
 import { applyPollResult, renewalKey, shouldRenewSubscription } from "../lib/connectors/polling";
 import { getConnector, getConnectorOperation, getConnectorTrigger, listCustomerConnectors, validateConnectorRegistry } from "../lib/connectors/registry";
 import { CompiledWorkflowSchema } from "../lib/schemas/workflow";
-import { isBlockedOutboundAddress, parseTrustedWebhookUrl } from "../lib/security/outbound-webhook";
+import { isBlockedOutboundAddress, parseTrustedWebhookUrl, selectPinnedWebhookAddress } from "../lib/security/outbound-webhook";
 import { compileReadyPlan } from "../lib/workflow-compiler";
 import { planWorkflow } from "../lib/workflow-planner";
 
@@ -83,6 +83,16 @@ test("42-48 generic HTTP SSRF boundary blocks loopback/private/link-local/metada
   assert.equal(parseTrustedWebhookUrl("https://example.com/hook").hostname, "example.com");
   for (const address of ["127.0.0.1", "10.0.0.1", "192.168.1.1", "169.254.1.1", "169.254.169.254", "::1"]) assert.equal(isBlockedOutboundAddress(address), true);
   assert.throws(() => parseTrustedWebhookUrl("http://example.com")); assert.throws(() => parseTrustedWebhookUrl("https://localhost/hook"));
+});
+
+test("48b generic HTTP prefers public IPv4 when DNS publishes IPv6 first", () => {
+  assert.deepEqual(
+    selectPinnedWebhookAddress([
+      { address: "2001:4860:4860::8888", family: 6 },
+      { address: "1.1.1.1", family: 4 },
+    ]),
+    { address: "1.1.1.1", family: 4 },
+  );
 });
 
 test("49-53 gateway source enforces rate/quota/body/dedupe/owner-derived subscription", async () => {
