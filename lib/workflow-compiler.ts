@@ -115,7 +115,9 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
     ),
     plan.destination.capabilityId === "generate_pdf"
       ? "generates a downloadable PDF"
-      : "stores the result inside FlowMind",
+      : plan.destination.capabilityId === "generic_http_action"
+        ? "posts the result as JSON to the configured HTTP destination"
+        : "stores the result inside FlowMind",
   ];
   const summary = `${summaryParts.join(", then ")}.`.slice(0, 300);
   const publicForm = plan.trigger.capabilityId === "public_form_submission" ? {
@@ -123,7 +125,9 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
     successMessage:
       plan.destination.capabilityId === "flowmind_data_store"
         ? "Your submission has been stored in FlowMind."
-        : "Your PDF has been generated and stored in FlowMind.",
+        : plan.destination.capabilityId === "generate_pdf"
+          ? "Your PDF has been generated and stored in FlowMind."
+          : "Your submission was sent to the configured HTTP destination.",
   } : undefined;
 
   return annotateWorkflowCapabilities(
