@@ -159,6 +159,7 @@ export async function generatePdfBuffer(markdown: string): Promise<Uint8Array> {
 
   const document = new PDFDocument({
     size: "A4",
+    font: FONT_PATHS.latin,
     margins: { top: 60, right: 54, bottom: 62, left: 54 },
     bufferPages: true,
     info: { Producer: "FlowMind", Creator: "FlowMind Native Document Engine" },

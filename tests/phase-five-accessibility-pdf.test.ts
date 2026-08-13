@@ -140,9 +140,9 @@ test("5-26/27. long Unicode lines wrap and multi-page content generates", async 
   assert.ok(pdf.byteLength > 20_000);
 });
 
-test("5-27b. production trace includes PDFKit standard-font metrics", async () => {
-  const config = await source("next.config.ts");
-  assert.match(config, /pdfkit\/js\/data\/\*\.afm/);
+test("5-27b. production PDF initialization does not depend on untraced Helvetica metrics", async () => {
+  const pdfSource = await source("lib/pdf-document.ts");
+  assert.match(pdfSource, /font: FONT_PATHS\.latin/);
 });
 
 test("5-28. no ASCII stripping implementation remains", async () => {
