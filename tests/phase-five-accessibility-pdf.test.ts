@@ -140,8 +140,8 @@ test("5-26/27. long Unicode lines wrap and multi-page content generates", async 
   assert.ok(pdf.byteLength > 20_000);
 });
 
-test("5-27b. production trace includes PDFKit standard-font metrics", () => {
-  const config = source("next.config.ts");
+test("5-27b. production trace includes PDFKit standard-font metrics", async () => {
+  const config = await source("next.config.ts");
   assert.match(config, /pdfkit\/js\/data\/\*\.afm/);
 });
 
