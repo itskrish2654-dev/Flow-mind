@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getAuthenticatedContext } from "@/lib/auth";
+import { activateWorkflowConnectorSubscriptions, connectorWebhookUrl, deactivateWorkflowConnectorSubscriptions } from "@/lib/connectors/subscriptions";
 import {
   annotateWorkflowCapabilities,
   assessWorkflowCapabilities,
@@ -105,7 +106,7 @@ export type SaveWorkflowCustomizationResult =
     };
 
 export type WorkflowPublicationResult =
-  | { ok: true; published: boolean }
+  | { ok: true; published: boolean; connectorEndpoints: string[] }
   | { ok: false; error: string };
 
 async function saveVersionedWorkflowChange(input: {
@@ -315,6 +316,11 @@ export async function deleteWorkflow(
       message: error.message,
     });
     return { ok: false, error: "We couldn't archive that automation. Please try again." };
+  }
+  try {
+    await deactivateWorkflowConnectorSubscriptions(auth.user.id, parsedWorkflowId.data);
+  } catch (subscriptionError) {
+    securityLog("Archived workflow subscription cleanup failed", { error: subscriptionError, workflowId: parsedWorkflowId.data });
   }
   revalidatePath("/dashboard");
   return { ok: true };
@@ -672,7 +678,7 @@ export async function setWorkflowPublication(
   const admin = createAdminClient();
   const { data, error } = await auth.supabase
     .from("workflows")
-    .select("compiled_steps")
+    .select("compiled_steps, current_version_id")
     .eq("id", parsedId.data)
     .eq("user_id", auth.user.id)
     .maybeSingle();
@@ -682,7 +688,8 @@ export async function setWorkflowPublication(
     if (!workflow.success) {
       return { ok: false, error: "This automation needs to be created again." };
     }
-    if (!workflow.data.publicForm) {
+    const hasConnectorTrigger = workflow.data.steps.some((step) => step.config?.connector?.operationKind === "trigger");
+    if (!workflow.data.publicForm && !hasConnectorTrigger) {
       return { ok: false, error: "Add a hosted form before publishing." };
     }
     const unavailable = assessWorkflowCapabilities(workflow.data.steps, "production")
@@ -706,6 +713,19 @@ export async function setWorkflowPublication(
     .eq("id", parsedId.data)
     .eq("user_id", auth.user.id);
   if (updateError) return { ok: false, error: "Publication status could not be changed." };
+  let connectorEndpoints: string[] = [];
+  try {
+    if (publish && workflow.success && data.current_version_id) {
+      const subscriptions = await activateWorkflowConnectorSubscriptions({ userId: auth.user.id, workflowId: parsedId.data, workflowVersionId: data.current_version_id, steps: workflow.data.steps });
+      connectorEndpoints = subscriptions.map((subscription) => subscription.url);
+    } else {
+      await deactivateWorkflowConnectorSubscriptions(auth.user.id, parsedId.data);
+    }
+  } catch (subscriptionError) {
+    await admin.from("workflows").update({ public_form_enabled: false, published_at: null }).eq("id", parsedId.data).eq("user_id", auth.user.id);
+    securityLog("Workflow connector publication failed", { error: subscriptionError, workflowId: parsedId.data });
+    return { ok: false, error: "Connector subscriptions could not be activated safely." };
+  }
   revalidatePath(`/f/${parsedId.data}`);
   revalidatePath(`/dashboard/projects/${parsedId.data}`);
   await trackProductEvent({
@@ -714,7 +734,18 @@ export async function setWorkflowPublication(
     workflowId: parsedId.data,
     properties: { published: publish },
   });
-  return { ok: true, published: publish };
+  return { ok: true, published: publish, connectorEndpoints };
+}
+
+export async function getWorkflowConnectorEndpoints(workflowId: string) {
+  const parsed = z.string().uuid().safeParse(workflowId);
+  if (!parsed.success) return { ok: false as const, error: "Workflow not found." };
+  const auth = await getAuthenticatedContext();
+  if (!auth) return { ok: false as const, error: "Unauthorized" };
+  const { data, error } = await createAdminClient().from("connector_subscriptions").select("id").eq("workflow_id", parsed.data).eq("user_id", auth.user.id).eq("connector_id", "flowmind_webhook").eq("status", "active");
+  if (error) return { ok: false as const, error: "Connector endpoints could not be loaded." };
+  try { return { ok: true as const, endpoints: (data ?? []).map((item) => connectorWebhookUrl(item.id)) }; }
+  catch { return { ok: false as const, error: "Connector endpoints are not configured." }; }
 }
 
 export async function saveWebhookEndpoint(

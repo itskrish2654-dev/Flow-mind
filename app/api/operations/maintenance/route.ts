@@ -25,12 +25,15 @@ export async function GET(request: Request) {
   const started = Date.now();
   try {
     const now = Date.now();
-    const { data, error } = await createAdminClient().rpc("run_operational_maintenance", {
+    const admin = createAdminClient();
+    const { data, error } = await admin.rpc("run_operational_maintenance", {
       p_stale_before: new Date(now - 15 * 60_000).toISOString(),
       p_rate_limit_retention_before: new Date(now - 24 * 60 * 60_000).toISOString(),
       p_deletion_job_stale_before: new Date(now - 15 * 60_000).toISOString(),
     });
     if (error) throw new Error("maintenance_rpc_failed");
+    const { data: connectorMetrics, error: connectorError } = await admin.rpc("run_connector_maintenance", {});
+    if (connectorError) throw new Error("connector_maintenance_rpc_failed");
     const result = data && typeof data === "object" && !Array.isArray(data) ? data : {};
     const deletionJobs = await reconcileFailedAccountDeletions();
     await captureOperationalEvent({
@@ -46,6 +49,7 @@ export async function GET(request: Request) {
         deletionJobsInspected: deletionJobs.inspected,
         deletionJobsRetried: deletionJobs.retried,
         deletionJobsSucceeded: deletionJobs.succeeded,
+        connectorMetrics,
       },
     });
     return Response.json({ ok: true, status: result.status ?? "succeeded" });

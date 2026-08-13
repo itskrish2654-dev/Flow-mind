@@ -12,6 +12,7 @@ const EXPORT_LIMITS = {
   executionSteps: 25_000,
   documents: 5_000,
   credentials: 2_000,
+  connections: 500,
 } as const;
 
 function attachmentName() {
@@ -31,7 +32,7 @@ export async function GET() {
       .limit(EXPORT_LIMITS.workflows + 1);
     if (workflowError || (workflowCount ?? 0) > EXPORT_LIMITS.workflows) throw new Error("export_too_large_workflows");
 
-    const [versionResult, executionResult, documentResult, credentialResult, usageResult] = await Promise.all([
+    const [versionResult, executionResult, documentResult, credentialResult, connectionResult, usageResult] = await Promise.all([
       admin.from("workflow_versions")
         .select("id, workflow_id, version_number, compiled_workflow, setup_config, change_scope, change_summary, source_version_id, created_at", { count: "exact" })
         .eq("user_id", auth.user.id).order("created_at", { ascending: true }).limit(EXPORT_LIMITS.versions + 1),
@@ -44,16 +45,20 @@ export async function GET() {
       admin.from("workflow_credentials")
         .select("workflow_id, connector_id, credential_key, credential_type, created_at, updated_at", { count: "exact" })
         .eq("user_id", auth.user.id).order("created_at", { ascending: true }).limit(EXPORT_LIMITS.credentials + 1),
+      admin.from("connector_connections")
+        .select("id, connector_id, provider_family, external_account_label, auth_type, status, granted_scopes, token_expires_at, last_refreshed_at, last_error_category, created_at, updated_at", { count: "exact" })
+        .eq("user_id", auth.user.id).order("created_at", { ascending: true }).limit(EXPORT_LIMITS.connections + 1),
       admin.from("usage_counters")
         .select("metric, period_started_at, used, updated_at")
         .eq("user_id", auth.user.id).order("period_started_at", { ascending: true }),
     ]);
-    const results = [versionResult, executionResult, documentResult, credentialResult, usageResult];
+    const results = [versionResult, executionResult, documentResult, credentialResult, connectionResult, usageResult];
     if (results.some((result) => result.error)) throw new Error("export_query_failed");
     if ((versionResult.count ?? 0) > EXPORT_LIMITS.versions) throw new Error("export_too_large_versions");
     if ((executionResult.count ?? 0) > EXPORT_LIMITS.executions) throw new Error("export_too_large_executions");
     if ((documentResult.count ?? 0) > EXPORT_LIMITS.documents) throw new Error("export_too_large_documents");
     if ((credentialResult.count ?? 0) > EXPORT_LIMITS.credentials) throw new Error("export_too_large_credentials");
+    if ((connectionResult.count ?? 0) > EXPORT_LIMITS.connections) throw new Error("export_too_large_connections");
 
     const executionIds = (executionResult.data ?? []).map((execution) => execution.id);
     const executionSteps: Array<Record<string, unknown>> = [];
@@ -80,6 +85,7 @@ export async function GET() {
         executionSteps,
         generatedDocuments: documentResult.data ?? [],
         credentials: (credentialResult.data ?? []).map((credential) => ({ ...credential, configured: true })),
+        connections: connectionResult.data ?? [],
         usage: usageResult.data ?? [],
       },
       excluded: ["credential plaintext", "encryption material", "authentication tokens", "service secrets", "document storage paths"],

@@ -123,6 +123,14 @@ function detectsPublicFormTrigger(prompt: string): boolean {
   );
 }
 
+function detectsWebhookTrigger(prompt: string): boolean {
+  return /\b(incoming webhook|webhook trigger|when (?:a |the )?webhook|webhook (?:arrives|is received))\b/i.test(prompt);
+}
+
+function detectsHttpDestination(prompt: string): boolean {
+  return /\b(post (?:json|it|the result)|send (?:it|the result) to (?:an? )?webhook|http request)\b/i.test(prompt);
+}
+
 function detectsInternalDestination(prompt: string): boolean {
   return /\b(flowmind|internal(?:ly)?|data table|store|save|record|keep)\b/i.test(prompt);
 }
@@ -170,15 +178,11 @@ export function planWorkflow(prompt: string): WorkflowPlan {
     if (scheduling) unsupported.push(scheduling);
   }
   const asksForWebhook = /\bwebhook(?:\.site)?\b/i.test(normalizedPrompt);
-  if (asksForWebhook) {
-    const webhook = getCapability("webhook_post");
-    if (webhook && !webhook.availableInProduction) unsupported.push(webhook);
-  }
   const asksForUnknownExternalConnection =
     /\b(connect(?:\s+to)?|sync\s+(?:to|with)|post\s+(?:it\s+)?to)\b/i.test(
       normalizedPrompt,
     ) &&
-    !/\b(flowmind|pdf|document)\b/i.test(normalizedPrompt) &&
+    !/\b(flowmind|pdf|document|webhook|http request)\b/i.test(normalizedPrompt) &&
     unsupported.length === 0;
   if (asksForUnknownExternalConnection) {
     const externalIntegration = getCapability("external_integration");
@@ -212,11 +216,15 @@ export function planWorkflow(prompt: string): WorkflowPlan {
     };
   }
 
-  const trigger = detectsPublicFormTrigger(normalizedPrompt)
-    ? plannedCapability("public_form_submission")
-    : null;
+  const trigger = detectsWebhookTrigger(normalizedPrompt)
+    ? plannedCapability("generic_webhook_trigger")
+    : detectsPublicFormTrigger(normalizedPrompt)
+      ? plannedCapability("public_form_submission")
+      : null;
   const transformations = detectTransformations(normalizedPrompt);
-  const destination = detectsPdfDestination(normalizedPrompt)
+  const destination = detectsHttpDestination(normalizedPrompt) || (asksForWebhook && !detectsWebhookTrigger(normalizedPrompt))
+    ? plannedCapability("generic_http_action")
+    : detectsPdfDestination(normalizedPrompt)
     ? plannedCapability("generate_pdf")
     : detectsInternalDestination(normalizedPrompt) || trigger
       ? plannedCapability("flowmind_data_store")

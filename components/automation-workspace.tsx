@@ -46,6 +46,7 @@ import {
   saveWebhookEndpoint,
   saveWorkflowCustomization,
   setWorkflowPublication,
+  getWorkflowConnectorEndpoints,
 } from "@/app/actions/workflow";
 import { DataTableBuilder } from "@/components/data-table-builder";
 import { AccessibleDialog } from "@/components/accessible-dialog";
@@ -193,6 +194,7 @@ function Inspector({
   onAiCustomizeDocument,
   onRestoreDocument,
   published,
+  connectorEndpoint,
   onPublicationChange,
   onSaveWebhook,
   className = "hidden w-[292px] shrink-0 flex-col border-l border-[#e4ddd2] bg-[#fffdfa] xl:flex",
@@ -221,6 +223,7 @@ function Inspector({
   }>;
   onRestoreDocument: (stepId: string, template: string) => Promise<string | null>;
   published: boolean;
+  connectorEndpoint: string | null;
   onPublicationChange: (publish: boolean) => Promise<string | null>;
   onSaveWebhook: (stepId: string, endpoint: string) => Promise<string | null>;
   className?: string;
@@ -289,7 +292,7 @@ function Inspector({
           </div>
         )}
         <div className="my-4 h-px bg-[#eee8de]" />
-        {(step.type === "public_form_trigger" || step.type === "webhook_trigger") && publicFormPath && (
+        {step.type === "public_form_trigger" && publicFormPath && (
           <div className="mb-4 rounded-xl border border-[#e7c75f] bg-[#fff7dc] p-3.5">
             <p className="flex items-center gap-2 text-[10px] font-semibold text-slate-900">
               {published ? <Globe2 className="size-3.5 text-emerald-600" /> : <GlobeLock className="size-3.5 text-[#9a7007]" />}
@@ -333,6 +336,16 @@ function Inspector({
                   onAiCustomize={onAiCustomizeForm}
                 />
               )}
+            </div>
+          </div>
+        )}
+        {step.capabilityId === "generic_webhook_trigger" && (
+          <div className="mb-4 rounded-xl border border-[#e7c75f] bg-[#fff7dc] p-3.5">
+            <p className="flex items-center gap-2 text-[10px] font-semibold text-slate-900">{published ? <Globe2 className="size-3.5 text-emerald-600" /> : <GlobeLock className="size-3.5 text-[#9a7007]" />}{published ? "Webhook endpoint is active" : "Webhook endpoint is inactive"}</p>
+            <p className="mt-1 text-[9px] leading-4 text-slate-500">The secret URL starts this pinned workflow version. Unpublishing revokes it immediately.</p>
+            <div className="mt-3 grid gap-2">
+              {published && connectorEndpoint && <button type="button" onClick={() => void copyValue("connector-webhook", connectorEndpoint)} className="flex h-9 items-center justify-center gap-2 rounded-lg border border-[#d7aa2f] bg-[#fffdfa] text-[10px] font-semibold text-[#6f5100] hover:bg-[#fff0b9]">{copied === "connector-webhook" ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}{copied === "connector-webhook" ? "Endpoint copied" : "Copy webhook endpoint"}</button>}
+              <button type="button" onClick={() => void onPublicationChange(!published)} className="flex h-9 items-center justify-center gap-2 rounded-lg border border-[#d7aa2f] bg-white text-[10px] font-semibold text-[#6f5100] hover:bg-[#fff0b9]">{published ? <GlobeLock className="size-3.5" /> : <Globe2 className="size-3.5" />}{published ? "Unpublish & Revoke" : "Publish Webhook"}</button>
             </div>
           </div>
         )}
@@ -541,6 +554,7 @@ export function AutomationWorkspace({
   const [workflow, setWorkflow] = useState<CompiledWorkflow | null>(initialWorkflow);
   const [workflowId, setWorkflowId] = useState<string | null>(initialWorkflowId);
   const [published, setPublished] = useState(initialPublished);
+  const [connectorEndpoint, setConnectorEndpoint] = useState<string | null>(null);
   const [selectedStepId, setSelectedStepId] = useState<string | null>(
     initialSteps[0]?.id ?? null,
   );
@@ -556,6 +570,13 @@ export function AutomationWorkspace({
   const [planning, setPlanning] = useState<WorkflowPlan | null>(null);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const buildRequestInFlight = useRef(false);
+
+  useEffect(() => {
+    if (!workflowId || !published || !workflow?.steps.some((step) => step.capabilityId === "generic_webhook_trigger")) return;
+    let active = true;
+    void getWorkflowConnectorEndpoints(workflowId).then((result) => { if (active && result.ok) setConnectorEndpoint(result.endpoints[0] ?? null); });
+    return () => { active = false; };
+  }, [workflowId, published, workflow]);
 
   const steps = useMemo(() => workflow ? orderWorkflowSteps(workflow.steps) : [], [workflow]);
   const selectedStep = steps.find((step) => step.id === selectedStepId) ?? steps[0] ?? null;
@@ -795,6 +816,7 @@ export function AutomationWorkspace({
       return result.error;
     }
     setPublished(result.published);
+    setConnectorEndpoint(result.connectorEndpoints[0] ?? null);
     setError(null);
     return null;
   }
@@ -935,6 +957,7 @@ export function AutomationWorkspace({
         onAiCustomizeDocument={aiCustomizeDocument}
         onRestoreDocument={restoreDocumentTemplate}
         published={published}
+        connectorEndpoint={connectorEndpoint}
         onPublicationChange={changePublication}
         onSaveWebhook={persistWebhookEndpoint}
         onChange={(id, value) => {
@@ -957,6 +980,7 @@ export function AutomationWorkspace({
           onAiCustomizeDocument={aiCustomizeDocument}
           onRestoreDocument={restoreDocumentTemplate}
           published={published}
+          connectorEndpoint={connectorEndpoint}
           onPublicationChange={changePublication}
           onSaveWebhook={persistWebhookEndpoint}
           className="flex min-h-0 w-full flex-1 flex-col bg-[#fffdfa] pt-12"

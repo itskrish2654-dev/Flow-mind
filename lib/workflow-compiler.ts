@@ -42,10 +42,11 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
   const steps: CompiledWorkflow["steps"] = [
     {
       id: "step_1",
-      type: "public_form_trigger",
-      capabilityId: "public_form_submission",
-      title: "Public form submission",
-      description: "Starts when someone submits the hosted FlowMind form.",
+      type: plan.trigger.capabilityId === "generic_webhook_trigger" ? "webhook_trigger" : "public_form_trigger",
+      capabilityId: plan.trigger.capabilityId,
+      title: plan.trigger.capabilityId === "generic_webhook_trigger" ? "Incoming webhook" : "Public form submission",
+      description: plan.trigger.capabilityId === "generic_webhook_trigger" ? "Starts from an authenticated FlowMind webhook endpoint." : "Starts when someone submits the hosted FlowMind form.",
+      ...(plan.trigger.capabilityId === "generic_webhook_trigger" ? { config: { connector: { connectorId: "flowmind_webhook", operationKind: "trigger" as const, operationKey: "event_received", operationVersion: 1, mappings: [] } } } : {}),
     },
     ...plan.transformations.map((transformation, index) => ({
       id: `step_${index + 2}`,
@@ -61,7 +62,27 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
   ];
 
   const destinationIndex = steps.length + 1;
-  if (plan.destination.capabilityId === "generate_pdf") {
+  if (plan.destination.capabilityId === "generic_http_action") {
+    const endpoint = prompt.match(/https:\/\/[^\s)\]]+/i)?.[0];
+    steps.push({
+      id: `step_${destinationIndex}`,
+      type: "http_request",
+      capabilityId: "generic_http_action",
+      title: "Send HTTP request",
+      description: "Posts the workflow result as JSON and waits for acknowledgement.",
+      config: {
+        ...(endpoint ? { endpoint } : {}),
+        method: "POST",
+        connector: {
+          connectorId: "flowmind_http", operationKind: "action", operationKey: "post_json", operationVersion: 1,
+          mappings: [
+            { target: "url", source: { kind: "literal", value: endpoint ?? "" } },
+            { target: "body", source: { kind: "trigger", path: "" } },
+          ],
+        },
+      },
+    });
+  } else if (plan.destination.capabilityId === "generate_pdf") {
     steps.push({
       id: `step_${destinationIndex}`,
       type: "generate_pdf",
@@ -95,13 +116,13 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
       : "stores the result inside FlowMind",
   ];
   const summary = `${summaryParts.join(", then ")}.`.slice(0, 300);
-  const publicForm = {
+  const publicForm = plan.trigger.capabilityId === "public_form_submission" ? {
     ...createPublicFormDefinition(prompt, workflowName, summary),
     successMessage:
       plan.destination.capabilityId === "flowmind_data_store"
         ? "Your submission has been stored in FlowMind."
         : "Your PDF has been generated and stored in FlowMind.",
-  };
+  } : undefined;
 
   return annotateWorkflowCapabilities(
     CompiledWorkflowSchema.parse({
@@ -109,7 +130,7 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
       summary,
       steps,
       publicForm,
-      dataTable: createDefaultDataTableDefinition(publicForm),
+      dataTable: publicForm ? createDefaultDataTableDefinition(publicForm) : undefined,
     }),
   );
 }

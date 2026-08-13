@@ -15,6 +15,7 @@ const required = [
   "NEXT_PUBLIC_SITE_URL",
   "FLOWMIND_CREDENTIAL_MASTER_KEY",
   "FLOWMIND_RATE_LIMIT_SECRET",
+  "FLOWMIND_CONNECTOR_ENDPOINT_SECRET",
   "NEXT_PUBLIC_TURNSTILE_SITE_KEY",
   "TURNSTILE_SECRET_KEY",
   "CRON_SECRET",
@@ -24,4 +25,3 @@ for (const obsolete of ["NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_
   if (names.has(obsolete)) throw new Error(`Obsolete environment variable remains: ${obsolete}`);
 }
 console.log(`Validated ${names.size} documented environment variable names; no legacy key names remain.`);
-

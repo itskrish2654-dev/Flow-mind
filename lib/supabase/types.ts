@@ -126,6 +126,36 @@ export type Database = {
         };
         Relationships: [];
       };
+      connector_connections: {
+        Row: { id: string; user_id: string; connector_id: string; provider_family: string; external_account_id: string; external_account_label: string | null; auth_type: "none" | "api_key" | "oauth2"; status: "connected" | "expired" | "revoked" | "error"; granted_scopes: string[]; token_expires_at: string | null; last_refreshed_at: string | null; last_error_category: string | null; safe_metadata: Json; created_at: string; updated_at: string };
+        Insert: { id?: string; user_id: string; connector_id: string; provider_family: string; external_account_id: string; external_account_label?: string | null; auth_type: "none" | "api_key" | "oauth2"; status?: "connected" | "expired" | "revoked" | "error"; granted_scopes?: string[]; token_expires_at?: string | null; last_refreshed_at?: string | null; last_error_category?: string | null; safe_metadata?: Json; created_at?: string; updated_at?: string };
+        Update: { external_account_label?: string | null; status?: "connected" | "expired" | "revoked" | "error"; granted_scopes?: string[]; token_expires_at?: string | null; last_refreshed_at?: string | null; last_error_category?: string | null; safe_metadata?: Json; updated_at?: string };
+        Relationships: [];
+      };
+      connector_connection_credentials: {
+        Row: { id: string; connection_id: string; user_id: string; credential_key: string; credential_type: string; ciphertext: string; nonce: string; auth_tag: string; encryption_version: number; algorithm: string; created_at: string; updated_at: string };
+        Insert: { id?: string; connection_id: string; user_id: string; credential_key: string; credential_type: string; ciphertext: string; nonce: string; auth_tag: string; encryption_version?: number; algorithm?: string; created_at?: string; updated_at?: string };
+        Update: { ciphertext?: string; nonce?: string; auth_tag?: string; updated_at?: string };
+        Relationships: [];
+      };
+      connector_oauth_states: {
+        Row: { state_hash: string; user_id: string; connector_id: string; provider_family: string; requested_scopes: string[]; return_path: string; pkce_ciphertext: string; pkce_nonce: string; pkce_auth_tag: string; expires_at: string; consumed_at: string | null; created_at: string };
+        Insert: { state_hash: string; user_id: string; connector_id: string; provider_family: string; requested_scopes?: string[]; return_path: string; pkce_ciphertext: string; pkce_nonce: string; pkce_auth_tag: string; expires_at: string; consumed_at?: string | null; created_at?: string };
+        Update: { consumed_at?: string | null };
+        Relationships: [];
+      };
+      connector_subscriptions: {
+        Row: { id: string; user_id: string; workflow_id: string; workflow_version_id: string; connection_id: string | null; connector_id: string; operation_key: string; operation_version: number; provider_subscription_id: string | null; endpoint_token_hash: string | null; status: "active" | "paused" | "expired" | "revoked" | "error"; cursor_value: string | null; renew_after: string | null; expires_at: string | null; last_event_at: string | null; last_error_category: string | null; safe_metadata: Json; created_at: string; updated_at: string };
+        Insert: { id?: string; user_id: string; workflow_id: string; workflow_version_id: string; connection_id?: string | null; connector_id: string; operation_key: string; operation_version: number; provider_subscription_id?: string | null; endpoint_token_hash?: string | null; status?: "active" | "paused" | "expired" | "revoked" | "error"; cursor_value?: string | null; renew_after?: string | null; expires_at?: string | null; last_event_at?: string | null; last_error_category?: string | null; safe_metadata?: Json; created_at?: string; updated_at?: string };
+        Update: { status?: "active" | "paused" | "expired" | "revoked" | "error"; provider_subscription_id?: string | null; endpoint_token_hash?: string | null; cursor_value?: string | null; renew_after?: string | null; expires_at?: string | null; last_event_at?: string | null; last_error_category?: string | null; safe_metadata?: Json; updated_at?: string };
+        Relationships: [];
+      };
+      connector_event_receipts: {
+        Row: { id: string; subscription_id: string; workflow_id: string; workflow_version_id: string; provider_event_key: string; status: "queued" | "processing" | "succeeded" | "failed" | "duplicate"; payload: Json; safe_metadata: Json; execution_id: string | null; received_at: string; processed_at: string | null; expires_at: string };
+        Insert: { id?: string; subscription_id: string; workflow_id: string; workflow_version_id: string; provider_event_key: string; status?: "queued" | "processing" | "succeeded" | "failed" | "duplicate"; payload: Json; safe_metadata?: Json; execution_id?: string | null; received_at?: string; processed_at?: string | null; expires_at?: string };
+        Update: { status?: "queued" | "processing" | "succeeded" | "failed" | "duplicate"; safe_metadata?: Json; execution_id?: string | null; processed_at?: string | null };
+        Relationships: [];
+      };
       generated_document_records: {
         Row: {
           id: string;
@@ -540,12 +570,28 @@ export type Database = {
         Args: { p_job_id: string; p_user_id: string };
         Returns: boolean;
       };
+      cleanup_connector_account_data: {
+        Args: { p_user_id: string };
+        Returns: boolean;
+      };
+      claim_connector_token_refresh: {
+        Args: { p_connection_id: string; p_user_id: string; p_lease_seconds?: number };
+        Returns: boolean;
+      };
+      release_connector_token_refresh: {
+        Args: { p_connection_id: string; p_user_id: string };
+        Returns: boolean;
+      };
       run_operational_maintenance: {
         Args: {
           p_stale_before: string;
           p_rate_limit_retention_before: string;
           p_deletion_job_stale_before: string;
         };
+        Returns: Json;
+      };
+      run_connector_maintenance: {
+        Args: Record<PropertyKey, never>;
         Returns: Json;
       };
     };

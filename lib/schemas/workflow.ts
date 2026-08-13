@@ -145,6 +145,29 @@ export const WorkflowStepSchema = z.object({
       method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional(),
       transformPrompt: z.string().optional(),
       documentTemplate: z.string().max(50_000).optional(),
+      connector: z
+        .object({
+          connectorId: z.string().regex(/^[a-z][a-z0-9_]{2,79}$/),
+          operationKind: z.enum(["trigger", "action"]),
+          operationKey: z.string().regex(/^[a-z][a-z0-9_]{1,79}$/),
+          operationVersion: z.number().int().positive(),
+          connectionId: z.string().uuid().optional(),
+          mappings: z
+            .array(
+              z.object({
+                target: z.string().min(1).max(80),
+                source: z.object({
+                  kind: z.enum(["trigger", "step", "literal", "ai"]),
+                  path: z.string().max(200).optional(),
+                  stepId: z.string().max(100).optional(),
+                  value: z.unknown().optional(),
+                }),
+              }),
+            )
+            .max(50)
+            .default([]),
+        })
+        .optional(),
     })
     .optional(),
 });

@@ -45,6 +45,32 @@ export const CAPABILITY_REGISTRY = {
     ],
     aliases: ["form", "form submission", "survey", "intake", "feedback"],
   }),
+  generic_webhook_trigger: defineCapability({
+    id: "generic_webhook_trigger",
+    displayName: "Incoming webhook",
+    category: "trigger",
+    supported: true,
+    executionImplementation: "connector:flowmind_webhook/event_received@1",
+    requiredSetupFields: [],
+    credentialsRequired: false,
+    availableInTest: true,
+    availableInProduction: true,
+    limitations: ["Accepts authenticated, bounded JSON events on a published workflow endpoint."],
+    aliases: ["incoming webhook", "webhook trigger", "when a webhook arrives"],
+  }),
+  generic_http_action: defineCapability({
+    id: "generic_http_action",
+    displayName: "HTTP request",
+    category: "destination",
+    supported: true,
+    executionImplementation: "connector:flowmind_http/post_json@1",
+    requiredSetupFields: [{ key: "destination_url", label: "Destination URL", type: "url" }],
+    credentialsRequired: false,
+    availableInTest: true,
+    availableInProduction: true,
+    limitations: ["HTTPS JSON POST only; private networks and redirects are blocked."],
+    aliases: ["http request", "post json", "send to webhook"],
+  }),
   ai_text_transform: defineCapability({
     id: "ai_text_transform",
     displayName: "AI text transformation",
@@ -341,10 +367,12 @@ export function resolveStepCapabilityId(
   if (step.capabilityId) {
     const compatibleTypes: Partial<Record<CapabilityId, WorkflowStepType[]>> = {
       public_form_submission: ["public_form_trigger", "webhook_trigger"],
+      generic_webhook_trigger: ["webhook_trigger"],
       ai_text_transform: ["ai_transform"],
       flowmind_data_store: ["store_data"],
       generate_pdf: ["generate_pdf"],
       webhook_post: ["webhook_post", "http_request"],
+      generic_http_action: ["webhook_post", "http_request"],
     };
     const compatible = compatibleTypes[step.capabilityId as CapabilityId];
     return compatible?.includes(step.type) ? step.capabilityId : null;
@@ -360,7 +388,9 @@ export function resolveStepCapabilityId(
       const context = `${step.title} ${step.description}`;
       return /\b(form|submission|survey|intake|feedback)\b/i.test(context)
         ? "public_form_submission"
-        : null;
+        : step.config?.connector?.connectorId === "flowmind_webhook"
+          ? "generic_webhook_trigger"
+          : null;
     }
     case "ai_transform":
       return "ai_text_transform";
@@ -370,7 +400,9 @@ export function resolveStepCapabilityId(
       return "generate_pdf";
     case "webhook_post":
     case "http_request":
-      return "webhook_post";
+      return step.config?.connector?.connectorId === "flowmind_http"
+        ? "generic_http_action"
+        : "webhook_post";
     case "filter_condition":
       return null;
   }

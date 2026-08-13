@@ -123,6 +123,8 @@ export async function deleteOwnAccount(input: {
       if (error) throw new Error("storage_cleanup_failed");
     }
 
+    const { data: connectorCleaned, error: connectorCleanupError } = await admin.rpc("cleanup_connector_account_data", { p_user_id: auth.user.id });
+    if (connectorCleanupError || !connectorCleaned) throw new Error("connector_cleanup_failed");
     const { data: cleaned, error: cleanupError } = await admin.rpc("cleanup_account_data", {
       p_job_id: jobId,
       p_user_id: auth.user.id,

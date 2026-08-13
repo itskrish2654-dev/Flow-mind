@@ -6,6 +6,7 @@ import {
   assessWorkflowCapabilities,
   resolveStepCapabilityId,
 } from "@/lib/capability-registry";
+import { getConnectorOperation } from "@/lib/connectors/registry";
 import {
   generatePdfBuffer,
   PdfRenderError,
@@ -334,11 +335,70 @@ export async function executeWorkflowSteps({
       await skipRemaining(index + 1, message);
     };
 
-    if (capabilityId === "public_form_submission") {
+    if (capabilityId === "public_form_submission" || capabilityId === "generic_webhook_trigger") {
       await succeed(
-        mode === "public-form"
+        capabilityId === "generic_webhook_trigger"
+          ? "Received an authenticated webhook event."
+          : mode === "public-form"
           ? `Received ${Object.keys(inputData).length} submitted field${Object.keys(inputData).length === 1 ? "" : "s"}.`
           : "A safe sample form submission started the test.",
+      );
+      continue;
+    }
+
+    if (capabilityId === "generic_http_action") {
+      const connectorConfig = step.config?.connector;
+      if (!connectorConfig || connectorConfig.operationKind !== "action") {
+        await fail("This connector action is missing its versioned operation configuration.");
+        break;
+      }
+      const registered = getConnectorOperation(
+        connectorConfig.connectorId,
+        "action",
+        connectorConfig.operationKey,
+        connectorConfig.operationVersion,
+      );
+      if (!registered || typeof registered.handler !== "function") {
+        await fail("This connector action is not supported by the current server runtime.");
+        break;
+      }
+      if (mode === "public-form" && !registered.operation.production) {
+        await fail("This connector action is not available in production.");
+        break;
+      }
+      const destinationUrl = step.config?.endpoint?.trim();
+      if (!destinationUrl) {
+        await fail("HTTP delivery was skipped because no trusted destination is configured.", "skipped");
+        break;
+      }
+      const connectorInput = {
+        url: destinationUrl,
+        body: {
+          event: "workflow_execution",
+          workflow_id: workflowId,
+          input_data: inputData,
+          ai_result: aiResult,
+        },
+      };
+      const result = await registered.handler(connectorInput, {
+        userId: "runtime-owner",
+        workflowId,
+        executionId: idempotencyKey ?? workflowId,
+        stepId: step.id,
+        ...(connectorConfig.connectionId ? { connectionId: connectorConfig.connectionId } : {}),
+        idempotencyKey: `${idempotencyKey ?? workflowId}:${step.id}`,
+      });
+      if (result.status !== "succeeded" || !result.acknowledged) {
+        await fail(result.error?.message ?? "The connector did not acknowledge this action.", "failed", result.error);
+        break;
+      }
+      delivered = result.externallyDelivered;
+      await succeed(
+        result.externallyDelivered
+          ? "The HTTP destination acknowledged delivery."
+          : "The connector action completed without external delivery.",
+        result.metadata,
+        result.providerReferenceId,
       );
       continue;
     }
