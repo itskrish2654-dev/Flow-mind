@@ -99,7 +99,7 @@ export function AuthTurnstile({
         onReady={() => setScriptReady(true)}
         onError={() => onError("The security challenge could not load. Please retry.")}
       />
-      <div ref={containerRef} className="min-h-[65px] max-w-full" aria-label="Security challenge" />
+      <div ref={containerRef} role="group" className="min-h-[65px] max-w-full" aria-label="Security challenge" />
       <p className="mt-1 text-center text-[10px] text-slate-500">{helperText}</p>
     </div>
   );
