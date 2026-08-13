@@ -232,20 +232,13 @@ function SecureDocumentButton({
         disabled={pending}
         onClick={() => {
           setError(null);
-          const downloadWindow = window.open("about:blank", "_blank");
-          if (downloadWindow) downloadWindow.opener = null;
           startTransition(async () => {
             const result = await createDocumentDownloadUrl(document.id);
             if (!result.ok) {
-              downloadWindow?.close();
               setError(result.error);
               return;
             }
-            if (downloadWindow) {
-              downloadWindow.location.replace(result.url);
-            } else {
-              window.location.assign(result.url);
-            }
+            window.location.assign(result.url);
           });
         }}
         className="flex min-h-11 w-full items-center gap-3 rounded-xl border border-[#e7c75f] bg-[#fff7dc] px-3.5 py-2.5 text-[10px] font-semibold text-[#7f5d00] transition hover:bg-[#fff0b9] disabled:opacity-60"
