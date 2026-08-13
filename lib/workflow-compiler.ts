@@ -107,7 +107,9 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
   }
 
   const summaryParts = [
-    "Receives a FlowMind hosted form submission",
+    plan.trigger.capabilityId === "generic_webhook_trigger"
+      ? "Receives an authenticated FlowMind webhook event"
+      : "Receives a FlowMind hosted form submission",
     ...plan.transformations.map((transformation) =>
       (transformation.instruction ?? "Transforms the submission").replace(/\.$/, ""),
     ),

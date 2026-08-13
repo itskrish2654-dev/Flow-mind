@@ -344,7 +344,7 @@ function Inspector({
             <p className="flex items-center gap-2 text-[10px] font-semibold text-slate-900">{published ? <Globe2 className="size-3.5 text-emerald-600" /> : <GlobeLock className="size-3.5 text-[#9a7007]" />}{published ? "Webhook endpoint is active" : "Webhook endpoint is inactive"}</p>
             <p className="mt-1 text-[9px] leading-4 text-slate-500">The secret URL starts this pinned workflow version. Unpublishing revokes it immediately.</p>
             <div className="mt-3 grid gap-2">
-              {published && connectorEndpoint && <button type="button" onClick={() => void copyValue("connector-webhook", connectorEndpoint)} className="flex h-9 items-center justify-center gap-2 rounded-lg border border-[#d7aa2f] bg-[#fffdfa] text-[10px] font-semibold text-[#6f5100] hover:bg-[#fff0b9]">{copied === "connector-webhook" ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}{copied === "connector-webhook" ? "Endpoint copied" : "Copy webhook endpoint"}</button>}
+              {published && connectorEndpoint && <><label htmlFor={`connector-endpoint-${step.id}`} className="sr-only">Webhook endpoint</label><input id={`connector-endpoint-${step.id}`} aria-label="Webhook endpoint" value={connectorEndpoint} readOnly className="h-9 min-w-0 rounded-lg border border-[#e2d8c8] bg-white px-3 text-[9px] text-slate-600 outline-none focus:border-[#d7aa2f]" /><button type="button" onClick={() => void copyValue("connector-webhook", connectorEndpoint)} className="flex h-9 items-center justify-center gap-2 rounded-lg border border-[#d7aa2f] bg-[#fffdfa] text-[10px] font-semibold text-[#6f5100] hover:bg-[#fff0b9]">{copied === "connector-webhook" ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}{copied === "connector-webhook" ? "Endpoint copied" : "Copy webhook endpoint"}</button></>}
               <button type="button" onClick={() => void onPublicationChange(!published)} className="flex h-9 items-center justify-center gap-2 rounded-lg border border-[#d7aa2f] bg-white text-[10px] font-semibold text-[#6f5100] hover:bg-[#fff0b9]">{published ? <GlobeLock className="size-3.5" /> : <Globe2 className="size-3.5" />}{published ? "Unpublish & Revoke" : "Publish Webhook"}</button>
             </div>
           </div>
@@ -393,7 +393,7 @@ function Inspector({
           </div>
         )}
         {inputs.length === 0 ? (
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-center"><CheckCircle2 className="mx-auto size-5 text-emerald-500" /><p className="mt-2 text-[11px] font-medium text-slate-900">{step.type === "public_form_trigger" || step.type === "webhook_trigger" ? "Native form connected" : step.type === "store_data" ? "Native data table connected" : "No setup needed"}</p></div>
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-center"><CheckCircle2 className="mx-auto size-5 text-emerald-500" /><p className="mt-2 text-[11px] font-medium text-slate-900">{step.type === "public_form_trigger" ? "Native form connected" : step.capabilityId === "generic_webhook_trigger" ? "Authenticated webhook connected" : step.type === "store_data" ? "Native data table connected" : "No setup needed"}</p></div>
         ) : (
           <div className="space-y-4">
             <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">Required details</p>
