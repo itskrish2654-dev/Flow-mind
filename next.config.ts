@@ -40,6 +40,7 @@ const nextConfig: NextConfig = {
       "./node_modules/@fontsource/noto-sans-devanagari/files/*.woff",
       "./node_modules/@fontsource/noto-sans-jp/files/*.woff",
       "./node_modules/@fontsource/noto-sans-jp/unicode.json",
+      "./node_modules/pdfkit/js/data/*.afm",
     ],
   },
   async headers() {
