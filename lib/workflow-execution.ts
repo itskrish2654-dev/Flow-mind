@@ -8,6 +8,7 @@ import {
 } from "@/lib/capability-registry";
 import {
   generatePdfBuffer,
+  PdfRenderError,
   populateDocumentTemplate,
   type DocumentVariables,
 } from "@/lib/pdf-document";
@@ -393,7 +394,7 @@ export async function executeWorkflowSteps({
         await succeed("PDF generated and stored in FlowMind document storage.", { filename: document.filename }, document.id);
       } catch (error: unknown) {
         securityLog("PDF generation failed", { error });
-        await fail("The PDF could not be generated or stored.", "failed", error);
+        await fail(error instanceof PdfRenderError ? error.message : "The PDF could not be generated or stored.", "failed", error);
         break;
       }
       continue;

@@ -1,18 +1,37 @@
-import { PDFDocument, PDFFont, StandardFonts, rgb } from "pdf-lib";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import PDFDocument from "pdfkit";
 
 export type DocumentVariables = Record<string, unknown>;
 
-const PAGE_WIDTH = 595.28;
-const PAGE_HEIGHT = 841.89;
-const MARGIN_X = 58;
-const TOP = 72;
-const BOTTOM = 58;
+const MAX_PDF_SOURCE_CHARACTERS = 50_000;
+const EMOJI_FALLBACK = "[emoji]";
+const FONT_ROOT = path.join(process.cwd(), "node_modules", "@fontsource");
+const FONT_PATHS = {
+  latin: path.join(FONT_ROOT, "noto-sans", "files", "noto-sans-latin-400-normal.woff"),
+  latinBold: path.join(FONT_ROOT, "noto-sans", "files", "noto-sans-latin-700-normal.woff"),
+  devanagari: path.join(FONT_ROOT, "noto-sans-devanagari", "files", "noto-sans-devanagari-devanagari-400-normal.woff"),
+  devanagariBold: path.join(FONT_ROOT, "noto-sans-devanagari", "files", "noto-sans-devanagari-devanagari-700-normal.woff"),
+  japaneseRoot: path.join(FONT_ROOT, "noto-sans-jp"),
+} as const;
 
-function readVariable(variables: DocumentVariables, path: string): unknown {
-  const direct = variables[path];
+type FontRun = { font: string; text: string };
+type UnicodeRange = { start: number; end: number };
+type JapaneseSubset = { name: string; ranges: UnicodeRange[]; path: string };
+
+export class PdfRenderError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PdfRenderError";
+  }
+}
+
+let japaneseSubsetsPromise: Promise<JapaneseSubset[]> | null = null;
+
+function readVariable(variables: DocumentVariables, pathValue: string): unknown {
+  const direct = variables[pathValue];
   if (direct !== undefined && direct !== null) return direct;
-
-  return path.split(".").reduce<unknown>((value, segment) => {
+  return pathValue.split(".").reduce<unknown>((value, segment) => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
     return (value as Record<string, unknown>)[segment];
   }, variables);
@@ -25,166 +44,173 @@ function variableText(value: unknown): string {
   return JSON.stringify(value);
 }
 
-export function populateDocumentTemplate(
-  template: string,
-  variables: DocumentVariables,
-): string {
+export function populateDocumentTemplate(template: string, variables: DocumentVariables): string {
   return template.replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (_match, key: string) =>
     variableText(readVariable(variables, key)),
   );
 }
 
-function printableText(value: string): string {
-  return value
-    .replaceAll("\u2018", "'")
-    .replaceAll("\u2019", "'")
-    .replaceAll("\u201c", '"')
-    .replaceAll("\u201d", '"')
-    .replaceAll("\u2013", "-")
-    .replaceAll("\u2014", "-")
-    .replaceAll("\u2022", "-")
-    .replaceAll("\u2026", "...")
-    .normalize("NFKD")
-    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, "");
-}
-
 function stripInlineMarkdown(value: string): string {
-  return printableText(value)
+  return value
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)")
     .replace(/[*_~`]/g, "")
     .trim();
 }
 
-function wrapText(text: string, font: PDFFont, size: number, width: number): string[] {
-  if (!text) return [""];
-  const words = text.split(/\s+/);
-  const lines: string[] = [];
-  let line = "";
+export function applyPdfEmojiPolicy(value: string): string {
+  return value
+    .replace(/\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?)*/gu, EMOJI_FALLBACK)
+    .replace(/[\uFE0E\uFE0F]/g, "");
+}
 
-  for (const word of words) {
-    const candidate = line ? `${line} ${word}` : word;
-    if (font.widthOfTextAtSize(candidate, size) <= width) {
-      line = candidate;
+export function assertPdfScriptSupport(value: string): void {
+  if (/\p{Script=Arabic}/u.test(value)) {
+    throw new PdfRenderError(
+      "Arabic and other right-to-left PDF text are not supported yet because FlowMind cannot guarantee correct glyph shaping. Use Latin, Hindi, Chinese, or Japanese text, or remove the Arabic text before generating this PDF.",
+    );
+  }
+}
+
+function parseUnicodeRange(value: string): UnicodeRange[] {
+  return value.split(",").map((entry) => {
+    const [startValue, endValue] = entry.trim().replace(/^U\+/i, "").split("-");
+    const start = Number.parseInt(startValue, 16);
+    return { start, end: endValue ? Number.parseInt(endValue, 16) : start };
+  });
+}
+
+async function loadJapaneseSubsets(): Promise<JapaneseSubset[]> {
+  if (!japaneseSubsetsPromise) {
+    japaneseSubsetsPromise = readFile(path.join(FONT_PATHS.japaneseRoot, "unicode.json"), "utf8")
+      .then((source) => Object.entries(JSON.parse(source) as Record<string, string>).map(([key, ranges]) => {
+        const index = key.replace(/[\[\]]/g, "");
+        return {
+          name: `FlowMindCJK${index}`,
+          ranges: parseUnicodeRange(ranges),
+          path: path.join(FONT_PATHS.japaneseRoot, "files", `noto-sans-jp-${index}-400-normal.woff`),
+        };
+      }));
+  }
+  return japaneseSubsetsPromise;
+}
+
+function inRange(codePoint: number, ranges: UnicodeRange[]): boolean {
+  return ranges.some((range) => codePoint >= range.start && codePoint <= range.end);
+}
+
+async function fontRuns(value: string, bold: boolean, document: PDFKit.PDFDocument): Promise<FontRun[]> {
+  const normalized = applyPdfEmojiPolicy(value.normalize("NFC"));
+  const cjkSubsets = await loadJapaneseSubsets();
+  const registered = new Set<string>();
+  const runs: FontRun[] = [];
+
+  const append = (font: string, text: string) => {
+    const previous = runs.at(-1);
+    if (previous?.font === font) previous.text += text;
+    else runs.push({ font, text });
+  };
+
+  for (const character of normalized) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (inRange(codePoint, [{ start: 0x0900, end: 0x097f }])) {
+      append(bold ? "FlowMindDevanagariBold" : "FlowMindDevanagari", character);
       continue;
     }
-
-    if (line) lines.push(line);
-    line = word;
-    while (font.widthOfTextAtSize(line, size) > width && line.length > 1) {
-      let splitAt = line.length - 1;
-      while (splitAt > 1 && font.widthOfTextAtSize(line.slice(0, splitAt), size) > width) {
-        splitAt -= 1;
+    if (inRange(codePoint, [{ start: 0x3040, end: 0x30ff }, { start: 0x3400, end: 0x9fff }])) {
+      const subset = cjkSubsets.find((item) => inRange(codePoint, item.ranges));
+      if (!subset) throw new PdfRenderError(`The PDF font does not contain the character U+${codePoint.toString(16).toUpperCase()}.`);
+      if (!registered.has(subset.name)) {
+        document.registerFont(subset.name, subset.path);
+        registered.add(subset.name);
       }
-      lines.push(line.slice(0, splitAt));
-      line = line.slice(splitAt);
+      append(subset.name, character);
+      continue;
     }
+    append(bold ? "FlowMindLatinBold" : "FlowMindLatin", character);
   }
+  return runs;
+}
 
-  if (line) lines.push(line);
-  return lines.length > 0 ? lines : [""];
+async function writeRuns(
+  document: PDFKit.PDFDocument,
+  value: string,
+  options: { bold?: boolean; size: number; color?: string; indent?: number; paragraphGap?: number; align?: "left" | "right" },
+): Promise<void> {
+  const runs = await fontRuns(stripInlineMarkdown(value), Boolean(options.bold), document);
+  runs.forEach((run, index) => {
+    document.font(run.font).fontSize(options.size).fillColor(options.color ?? "#1f2937").text(run.text, {
+      continued: index < runs.length - 1,
+      width: document.page.width - document.page.margins.left - document.page.margins.right - (options.indent ?? 0),
+      indent: options.indent ?? 0,
+      lineGap: Math.max(2, options.size * 0.35),
+      paragraphGap: index === runs.length - 1 ? options.paragraphGap ?? 5 : 0,
+      align: options.align ?? "left",
+    });
+  });
+  if (runs.length === 0) document.moveDown(0.5);
 }
 
 export async function generatePdfBuffer(markdown: string): Promise<Uint8Array> {
-  const document = await PDFDocument.create();
-  const regular = await document.embedFont(StandardFonts.Helvetica);
-  const bold = await document.embedFont(StandardFonts.HelveticaBold);
-  const textColor = rgb(0.12, 0.16, 0.24);
-  const mutedColor = rgb(0.4, 0.45, 0.55);
-  let page = document.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-  let y = PAGE_HEIGHT - TOP;
+  if (markdown.length > MAX_PDF_SOURCE_CHARACTERS) {
+    throw new PdfRenderError(`PDF content is limited to ${MAX_PDF_SOURCE_CHARACTERS.toLocaleString()} characters.`);
+  }
+  assertPdfScriptSupport(markdown);
 
-  const newPage = () => {
-    page = document.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-    y = PAGE_HEIGHT - TOP;
-  };
+  const document = new PDFDocument({
+    size: "A4",
+    margins: { top: 60, right: 54, bottom: 62, left: 54 },
+    bufferPages: true,
+    info: { Producer: "FlowMind", Creator: "FlowMind Native Document Engine" },
+  });
+  document.registerFont("FlowMindLatin", FONT_PATHS.latin);
+  document.registerFont("FlowMindLatinBold", FONT_PATHS.latinBold);
+  document.registerFont("FlowMindDevanagari", FONT_PATHS.devanagari);
+  document.registerFont("FlowMindDevanagariBold", FONT_PATHS.devanagariBold);
 
-  const drawBlock = (
-    text: string,
-    options: { font: PDFFont; size: number; lineHeight: number; indent?: number; gap?: number },
-  ) => {
-    const indent = options.indent ?? 0;
-    const lines = wrapText(
-      stripInlineMarkdown(text),
-      options.font,
-      options.size,
-      PAGE_WIDTH - MARGIN_X * 2 - indent,
-    );
-    for (const line of lines) {
-      if (y - options.lineHeight < BOTTOM) newPage();
-      page.drawText(line, {
-        x: MARGIN_X + indent,
-        y,
-        size: options.size,
-        font: options.font,
-        color: textColor,
-      });
-      y -= options.lineHeight;
-    }
-    y -= options.gap ?? 5;
-  };
+  const chunks: Buffer[] = [];
+  document.on("data", (chunk: Buffer) => chunks.push(chunk));
+  const completed = new Promise<Uint8Array>((resolve, reject) => {
+    document.on("end", () => resolve(new Uint8Array(Buffer.concat(chunks))));
+    document.on("error", reject);
+  });
 
-  for (const rawLine of printableText(markdown).split(/\r?\n/)) {
+  for (const rawLine of markdown.split(/\r?\n/)) {
     const line = rawLine.trimEnd();
     if (!line.trim()) {
-      y -= 7;
+      document.moveDown(0.45);
       continue;
     }
     if (/^---+$/.test(line.trim())) {
-      if (y - 12 < BOTTOM) newPage();
-      page.drawLine({
-        start: { x: MARGIN_X, y },
-        end: { x: PAGE_WIDTH - MARGIN_X, y },
-        thickness: 0.8,
-        color: rgb(0.85, 0.87, 0.91),
-      });
-      y -= 14;
+      document.moveDown(0.25).strokeColor("#d7dce4").lineWidth(0.8)
+        .moveTo(document.page.margins.left, document.y)
+        .lineTo(document.page.width - document.page.margins.right, document.y).stroke().moveDown(0.55);
       continue;
     }
-
     const heading = /^(#{1,3})\s+(.+)$/.exec(line);
     if (heading) {
-      const level = heading[1].length;
-      const size = level === 1 ? 24 : level === 2 ? 17 : 13;
-      y -= level === 1 ? 2 : 5;
-      drawBlock(heading[2], {
-        font: bold,
-        size,
-        lineHeight: size * 1.25,
-        gap: level === 1 ? 12 : 8,
-      });
+      const size = heading[1].length === 1 ? 23 : heading[1].length === 2 ? 17 : 13;
+      await writeRuns(document, heading[2], { bold: true, size, paragraphGap: size * 0.55 });
       continue;
     }
-
     const bullet = /^[-*+]\s+(.+)$/.exec(line);
     if (bullet) {
-      drawBlock(`- ${bullet[1]}`, {
-        font: regular,
-        size: 10.5,
-        lineHeight: 15,
-        indent: 10,
-        gap: 2,
-      });
+      await writeRuns(document, `• ${bullet[1]}`, { size: 10.5, indent: 12, paragraphGap: 2 });
       continue;
     }
-
-    drawBlock(line, { font: regular, size: 10.5, lineHeight: 15, gap: 5 });
+    await writeRuns(document, line, { size: 10.5, paragraphGap: 5 });
   }
 
-  const pages = document.getPages();
-  pages.forEach((documentPage, index) => {
-    const footer = `Generated by FlowMind  |  Page ${index + 1} of ${pages.length}`;
-    documentPage.drawText(footer, {
-      x: MARGIN_X,
-      y: 28,
-      size: 8,
-      font: regular,
-      color: mutedColor,
-    });
-  });
-
-  document.setProducer("FlowMind");
-  document.setCreator("FlowMind Native Document Engine");
-  document.setCreationDate(new Date());
-  return document.save();
+  const range = document.bufferedPageRange();
+  for (let index = range.start; index < range.start + range.count; index += 1) {
+    document.switchToPage(index);
+    document.font("FlowMindLatin").fontSize(8).fillColor("#64748b").text(
+      `Generated by FlowMind  |  Page ${index + 1} of ${range.count}`,
+      document.page.margins.left,
+      document.page.height - 36,
+      { lineBreak: false },
+    );
+  }
+  document.end();
+  return completed;
 }

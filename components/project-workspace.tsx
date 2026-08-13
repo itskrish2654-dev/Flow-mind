@@ -53,22 +53,24 @@ export function ProjectWorkspace({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <nav className="flex h-11 shrink-0 items-end gap-1 border-b border-[#e4ddd2] bg-[#fffdfa] px-3 sm:px-5" aria-label="Project views">
+      <nav className="flex h-14 shrink-0 items-end gap-1 overflow-x-auto border-b border-[#e4ddd2] bg-[#fffdfa] pl-16 pr-2 sm:h-11 sm:px-5" aria-label="Project views">
         <button
           type="button"
           onClick={() => setView("builder")}
-          className={`flex h-10 items-center gap-2 border-b-2 px-3 text-[11px] font-semibold transition ${view === "builder" ? "border-[#d7aa2f] text-[#272536]" : "border-transparent text-[#6c6458] hover:text-[#272536]"}`}
+          aria-current={view === "builder" ? "page" : undefined}
+          className={`flex h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-xs font-semibold transition ${view === "builder" ? "border-[#d7aa2f] text-[#272536]" : "border-transparent text-[#6c6458] hover:text-[#272536]"}`}
         >
           <Workflow className="size-3.5" />
           Workflow
         </button>
-        <button type="button" onClick={() => setView("versions")} className={`flex h-10 items-center gap-2 border-b-2 px-3 text-[11px] font-semibold transition ${view === "versions" ? "border-[#d7aa2f] text-[#272536]" : "border-transparent text-[#6c6458] hover:text-[#272536]"}`}>
+        <button type="button" onClick={() => setView("versions")} aria-current={view === "versions" ? "page" : undefined} className={`flex h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-xs font-semibold transition ${view === "versions" ? "border-[#d7aa2f] text-[#272536]" : "border-transparent text-[#6c6458] hover:text-[#272536]"}`}>
           <History className="size-3.5" /> Versions <span className="rounded-full bg-[#f8f4ec] px-1.5 py-0.5 text-[9px]">{versions.length}</span>
         </button>
         <button
           type="button"
           onClick={() => setView("data")}
-          className={`flex h-10 items-center gap-2 border-b-2 px-3 text-[11px] font-semibold transition ${view === "data" ? "border-[#d7aa2f] text-[#272536]" : "border-transparent text-[#6c6458] hover:text-[#272536]"}`}
+          aria-current={view === "data" ? "page" : undefined}
+          className={`flex h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-xs font-semibold transition ${view === "data" ? "border-[#d7aa2f] text-[#272536]" : "border-transparent text-[#6c6458] hover:text-[#272536]"}`}
         >
           <Database className="size-3.5" />
           Executions &amp; Data

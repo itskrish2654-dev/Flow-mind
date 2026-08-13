@@ -23,6 +23,7 @@ import {
   Play,
   RotateCcw,
   Send,
+  SlidersHorizontal,
   Sparkles,
   Workflow,
   Zap,
@@ -47,6 +48,7 @@ import {
   setWorkflowPublication,
 } from "@/app/actions/workflow";
 import { DataTableBuilder } from "@/components/data-table-builder";
+import { AccessibleDialog } from "@/components/accessible-dialog";
 import { FormBuilder } from "@/components/form-builder";
 import { AiCustomizationBar } from "@/components/ai-customization-bar";
 import { getPublicFormPath, getPublicFormUrl } from "@/lib/public-form";
@@ -193,6 +195,7 @@ function Inspector({
   published,
   onPublicationChange,
   onSaveWebhook,
+  className = "hidden w-[292px] shrink-0 flex-col border-l border-[#e4ddd2] bg-[#fffdfa] xl:flex",
 }: {
   workflow: CompiledWorkflow | null;
   step: Step | null;
@@ -220,6 +223,7 @@ function Inspector({
   published: boolean;
   onPublicationChange: (publish: boolean) => Promise<string | null>;
   onSaveWebhook: (stepId: string, endpoint: string) => Promise<string | null>;
+  className?: string;
 }) {
   const [copied, setCopied] = useState<string | null>(null);
   const [documentUndo, setDocumentUndo] = useState<{
@@ -258,7 +262,7 @@ function Inspector({
 
   if (!step) {
     return (
-      <aside className="hidden w-[292px] shrink-0 flex-col border-l border-[#e4ddd2] bg-[#fffdfa] xl:flex">
+      <aside className={className} aria-label="Workflow step setup">
         <div className="flex h-[65px] items-center border-b border-[#e4ddd2] px-5"><span className="text-[12px] font-semibold text-[#272536]">Step setup</span></div>
         <div className="flex flex-1 items-center justify-center p-6 text-center"><div><Info className="mx-auto size-5 text-slate-300" /><p className="mt-3 text-[11px] text-slate-400">Build a workflow, then select a step to configure it.</p></div></div>
       </aside>
@@ -271,7 +275,7 @@ function Inspector({
   const publicForm = workflow?.publicForm;
   const documentVariables = workflowVariables(publicForm);
   return (
-    <aside className="hidden w-[292px] shrink-0 flex-col border-l border-[#e4ddd2] bg-[#fffdfa] xl:flex">
+    <aside className={className} aria-label={`${toPlainEnglish(step.title)} setup`}>
       <div className="flex min-h-[65px] items-center gap-2.5 border-b border-[#e4ddd2] px-4">
         <span className={`flex size-8 shrink-0 items-center justify-center rounded-[10px] border ${toneClasses[visual.tone]}`}><Icon className="size-3.5" /></span>
         <span className="min-w-0"><span className="block text-[9px] uppercase tracking-[0.1em] text-slate-400">{visual.label}</span><span className="block truncate text-[12px] font-semibold text-slate-900">{toPlainEnglish(step.title)}</span></span>
@@ -550,6 +554,7 @@ export function AutomationWorkspace({
   const [delivered, setDelivered] = useState<boolean | null>(null);
   const [testSucceeded, setTestSucceeded] = useState<boolean | null>(null);
   const [planning, setPlanning] = useState<WorkflowPlan | null>(null);
+  const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const buildRequestInFlight = useRef(false);
 
   const steps = useMemo(() => workflow ? orderWorkflowSteps(workflow.steps) : [], [workflow]);
@@ -861,7 +866,7 @@ export function AutomationWorkspace({
   return (
     <div className="flex h-full min-w-0 overflow-hidden">
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex min-h-[65px] shrink-0 items-center gap-3 border-b border-[#e4ddd2] bg-[#fffdfa] px-4 sm:px-5">
+        <header className="flex min-h-[65px] shrink-0 items-center gap-3 border-b border-[#e4ddd2] bg-[#fffdfa] pl-16 pr-3 sm:px-5">
           <div className="flex items-center gap-2 lg:hidden"><span className="flex size-8 items-center justify-center rounded-[10px] border border-[#e4c35d] bg-[#fff2bd] text-[#8a6200]"><Zap className="size-4 fill-current" /></span><span className="font-bold text-[#272536]">FlowMind</span></div>
           <div className="hidden min-w-0 items-center gap-2 lg:flex"><Workflow className="size-4 shrink-0 text-[#b18410]" /><span className="truncate text-[13px] font-semibold text-[#272536]">{workflow ? toPlainEnglish(workflow.workflowName) : initialWorkflowName ? toPlainEnglish(initialWorkflowName) : "New Automation"}</span></div>
           {workflow && <span className={`hidden rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.08em] sm:block ${workflowReady ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"}`}>{workflowReady ? "Ready" : `${steps.length - readySteps} steps need setup`}</span>}
@@ -877,13 +882,13 @@ export function AutomationWorkspace({
                 {steps.map((step, index) => (
                   <div key={step.id} className="flex items-center">
                     {index > 0 && <div className="relative w-12 shrink-0"><div className="h-0.5 bg-[#d7aa2f]" /><span className="absolute right-0 top-1/2 size-1.5 -translate-y-1/2 rotate-45 border-r-2 border-t-2 border-[#d7aa2f]" /></div>}
-                    <WorkflowNode step={step} index={index} selected={selectedStep?.id === step.id} ready={stepIsReady(step)} onSelect={() => setSelectedStepId(step.id)} />
+                    <WorkflowNode step={step} index={index} selected={selectedStep?.id === step.id} ready={stepIsReady(step)} onSelect={() => { setSelectedStepId(step.id); if (window.innerWidth < 1280) setMobileInspectorOpen(true); }} />
                   </div>
                 ))}
               </div>
             </div>
           )}
-          {workflow && <div className="absolute bottom-3 left-4 flex items-center gap-3 text-[9px] text-slate-400"><span className="flex items-center gap-1"><Network className="size-3" />{steps.length} nodes</span><span>{readySteps}/{steps.length} ready</span></div>}
+          {workflow && <div className="absolute inset-x-3 bottom-3 flex items-center justify-between gap-3 text-xs text-slate-600"><span className="flex items-center gap-2"><span className="flex items-center gap-1"><Network className="size-3" />{steps.length} steps</span><span>{readySteps}/{steps.length} ready</span></span><button type="button" onClick={() => setMobileInspectorOpen(true)} className="flex min-h-11 items-center gap-2 rounded-xl border border-[#d7aa2f] bg-[#fffdfa] px-3 font-semibold text-[#6f5100] shadow-sm xl:hidden"><SlidersHorizontal className="size-4" />Configure step</button></div>}
         </section>
 
         <section className="flex min-h-0 flex-1 flex-col bg-[#f8f5ef]">
@@ -938,6 +943,26 @@ export function AutomationWorkspace({
           setLogs([]);
         }}
       />
+      <AccessibleDialog open={mobileInspectorOpen} onOpenChange={setMobileInspectorOpen} title="Workflow step setup" description="Configure the selected workflow step." side="right" contentClassName="xl:hidden">
+        <Inspector
+          workflow={workflow}
+          workflowId={workflowId}
+          step={selectedStep}
+          inputs={selectedInputs}
+          values={values}
+          onSavePublicForm={persistPublicForm}
+          onSaveDataTable={persistDataTable}
+          onAiCustomizeForm={aiCustomizeForm}
+          onAiCustomizeDataTable={aiCustomizeDataTable}
+          onAiCustomizeDocument={aiCustomizeDocument}
+          onRestoreDocument={restoreDocumentTemplate}
+          published={published}
+          onPublicationChange={changePublication}
+          onSaveWebhook={persistWebhookEndpoint}
+          className="flex min-h-0 w-full flex-1 flex-col bg-[#fffdfa] pt-12"
+          onChange={(id, value) => { setValues((current) => ({ ...current, [id]: value })); setError(null); setLogs([]); }}
+        />
+      </AccessibleDialog>
     </div>
   );
 }

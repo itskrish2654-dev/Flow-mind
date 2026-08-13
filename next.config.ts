@@ -34,6 +34,14 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: process.cwd(),
   },
+  outputFileTracingIncludes: {
+    "/*": [
+      "./node_modules/@fontsource/noto-sans/files/*.woff",
+      "./node_modules/@fontsource/noto-sans-devanagari/files/*.woff",
+      "./node_modules/@fontsource/noto-sans-jp/files/*.woff",
+      "./node_modules/@fontsource/noto-sans-jp/unicode.json",
+    ],
+  },
   async headers() {
     return [
       {

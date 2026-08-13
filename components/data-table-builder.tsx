@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import { AiCustomizationBar } from "@/components/ai-customization-bar";
+import { AccessibleDialog } from "@/components/accessible-dialog";
 import type {
   DataTableColumn,
   DataTableDefinition,
@@ -158,10 +159,8 @@ export function DataTableBuilder({
         <Columns3 className="size-3.5" /> Customize Data with AI
       </button>
 
-      {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <button type="button" aria-label="Close data table builder" onClick={() => setOpen(false)} className="absolute inset-0 bg-slate-950/25 backdrop-blur-[2px]" />
-          <section role="dialog" aria-modal="true" aria-labelledby="data-table-builder-title" className="relative flex max-h-[90dvh] w-full max-w-2xl flex-col overflow-hidden rounded-[22px] border border-[#ddd5c9] bg-[#fffdfa] shadow-2xl">
+      <AccessibleDialog open={open} onOpenChange={setOpen} title="Customize data columns" description="Choose and rename execution data columns." showClose={false} contentClassName="max-w-2xl">
+          <section className="relative flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-[22px] bg-[#fffdfa]">
             <header className="flex items-center gap-3 border-b border-[#e4ddd2] px-5 py-4">
               <span className="flex size-9 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd] text-[#8a6200]"><Columns3 className="size-4" /></span>
               <div className="min-w-0 flex-1">
@@ -243,8 +242,7 @@ export function DataTableBuilder({
               )}
             </footer>
           </section>
-        </div>
-      )}
+      </AccessibleDialog>
     </>
   );
 }

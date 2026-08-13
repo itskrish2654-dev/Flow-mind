@@ -22,6 +22,7 @@ import {
 } from "@/app/actions/executions";
 import { retryWorkflowExecution } from "@/app/actions/execute";
 import { createDocumentDownloadUrl } from "@/app/actions/documents";
+import { AccessibleDialog } from "@/components/accessible-dialog";
 import type { Json } from "@/lib/supabase/types";
 import type { DataTableColumn } from "@/lib/schemas/workflow";
 
@@ -272,20 +273,6 @@ function ExecutionDetailsDrawer({
   execution: WorkflowExecutionRecord | null;
   onClose: () => void;
 }) {
-  useEffect(() => {
-    if (!execution) return;
-    const previousOverflow = document.body.style.overflow;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.body.style.overflow = "hidden";
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [execution, onClose]);
-
   if (!execution) return null;
 
   const output = asJsonObject(execution.outputData);
@@ -299,17 +286,8 @@ function ExecutionDetailsDrawer({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end" role="presentation">
-      <button
-        type="button"
-        aria-label="Close execution details"
-        onClick={onClose}
-        className="absolute inset-0 bg-slate-950/25 backdrop-blur-[2px]"
-      />
+    <AccessibleDialog open={Boolean(execution)} onOpenChange={(open) => { if (!open) onClose(); }} title="Execution details" description="Submission data, workflow result, documents, and processing log." side="right" showClose={false}>
       <aside
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="execution-details-title"
         className="relative flex h-full w-full max-w-lg flex-col bg-[#fffdfa] shadow-2xl"
       >
         <header className="flex shrink-0 items-start gap-3 border-b border-[#e4ddd2] px-5 py-4 sm:px-6">
@@ -328,7 +306,7 @@ function ExecutionDetailsDrawer({
             type="button"
             autoFocus
             onClick={onClose}
-            className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-[#ded6ca] text-slate-400 transition hover:bg-[#f8f4ec] hover:text-[#272536]"
+            className="flex size-11 shrink-0 items-center justify-center rounded-lg border border-[#ded6ca] text-slate-500 transition hover:bg-[#f8f4ec] hover:text-[#272536]"
             aria-label="Close details"
           >
             <X className="size-4" />
@@ -429,7 +407,7 @@ function ExecutionDetailsDrawer({
           )}
         </div>
       </aside>
-    </div>
+    </AccessibleDialog>
   );
 }
 

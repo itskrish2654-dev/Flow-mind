@@ -8,7 +8,10 @@ import {
   Clock3,
   LoaderCircle,
   LogOut,
+  Menu,
   Plus,
+  Gauge,
+  LifeBuoy,
   Settings,
   Trash2,
   Workflow,
@@ -17,6 +20,7 @@ import {
 } from "lucide-react";
 
 import { deleteWorkflow, listWorkflows, type SavedWorkflow } from "@/app/actions/workflow";
+import { AccessibleDialog } from "@/components/accessible-dialog";
 import { createClient } from "@/lib/supabase/client";
 
 type AutomationStatus = "Draft" | "Ready" | "Working" | "Running" | "Failed";
@@ -81,6 +85,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [account, setAccount] = useState<AccountDetails | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const loadAutomations = useCallback(async () => {
     const result = await listWorkflows();
@@ -157,6 +162,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [supabase]);
 
   function newAutomation() {
+    setMobileNavOpen(false);
     setActiveId(null);
     if (pathname === "/dashboard") {
       window.dispatchEvent(new CustomEvent("flowmind:new-workflow"));
@@ -202,7 +208,31 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   return (
-    <div className="dashboard-theme flex h-dvh min-h-[640px] overflow-hidden bg-[#f7f4ee] text-[#34313d]">
+    <div className="dashboard-theme flex h-dvh overflow-hidden bg-[#f7f4ee] text-[#34313d]">
+      <button type="button" aria-label="Open navigation menu" onClick={() => setMobileNavOpen(true)} className="fixed left-3 top-3 z-40 flex size-11 items-center justify-center rounded-xl border border-[#d8caa8] bg-[#fffdfa] text-[#272536] shadow-sm lg:hidden">
+        <Menu className="size-5" />
+      </button>
+      <AccessibleDialog open={mobileNavOpen} onOpenChange={setMobileNavOpen} title="FlowMind navigation" description="Open workflows, account settings, usage, support, or log out." side="left" contentClassName="rounded-r-3xl">
+        <nav aria-label="Mobile dashboard navigation" className="flex min-h-0 flex-1 flex-col pt-16">
+          <div className="border-b border-[#e4ddd2] px-4 pb-4">
+            <p className="text-lg font-bold text-[#272536]">FlowMind</p>
+            <button type="button" onClick={newAutomation} className="mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#d7aa2f] bg-[#fff7dc] px-4 text-sm font-semibold text-[#272536]"><Plus className="size-4" />Create workflow</button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
+            <p className="px-2 pb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">My automations</p>
+            {isLoading ? <p role="status" className="flex min-h-11 items-center gap-2 px-2 text-sm text-slate-600"><LoaderCircle className="size-4 animate-spin" />Loading automations…</p> : automations.length === 0 ? <p className="rounded-xl bg-[#f8f4ec] px-3 py-4 text-sm text-slate-600">No saved automations yet.</p> : automations.map((automation) => (
+              <Link key={automation.id} href={`/dashboard/projects/${automation.id}`} onClick={() => setMobileNavOpen(false)} className="flex min-h-12 items-center gap-3 rounded-xl px-3 py-2 text-sm text-slate-800 hover:bg-[#fff7dc]"><Workflow className="size-4 shrink-0 text-[#8a6200]" /><span className="min-w-0 flex-1 truncate">{automation.name}</span><span className="text-xs text-slate-500">{automation.status}</span></Link>
+            ))}
+          </div>
+          <div className="border-t border-[#e4ddd2] p-3">
+            {account && <p className="mb-2 truncate px-2 text-sm font-semibold text-slate-800">{account.displayName}<span className="block truncate text-xs font-normal text-slate-600">{account.email}</span></p>}
+            <Link href="/settings" onClick={() => setMobileNavOpen(false)} className="flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold text-slate-700 hover:bg-[#f8f4ec]"><Settings className="size-4" />Settings</Link>
+            <Link href="/settings/usage" onClick={() => setMobileNavOpen(false)} className="flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold text-slate-700 hover:bg-[#f8f4ec]"><Gauge className="size-4" />Usage</Link>
+            <Link href="/support" onClick={() => setMobileNavOpen(false)} className="flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold text-slate-700 hover:bg-[#f8f4ec]"><LifeBuoy className="size-4" />Support &amp; legal</Link>
+            <button type="button" onClick={() => void logOut()} disabled={isSigningOut} className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-semibold text-slate-700 hover:bg-[#f8f4ec] disabled:opacity-60"><LogOut className="size-4" />{isSigningOut ? "Logging out…" : "Log out"}</button>
+          </div>
+        </nav>
+      </AccessibleDialog>
       <aside className="hidden w-[260px] shrink-0 flex-col border-r border-[#e4ddd2] bg-[#fffdfa] lg:flex">
         <Link href="/dashboard" className="flex h-[65px] items-center gap-3 border-b border-[#e4ddd2] px-5">
           <span className="flex size-8 items-center justify-center rounded-[10px] border border-[#e4c35d] bg-[#fff2bd] text-[#8a6200]">
@@ -291,25 +321,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       <div className="min-w-0 flex-1">{children}</div>
 
-      {deleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/25 p-4 backdrop-blur-[2px]" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !isDeleting) setDeleteTarget(null); }}>
-          <div role="dialog" aria-modal="true" aria-labelledby="delete-automation-title" className="w-full max-w-sm rounded-2xl border border-[#e4ddd2] bg-[#fffdfa] p-5 shadow-[0_24px_80px_rgba(39,37,54,.2)]">
+      <AccessibleDialog open={Boolean(deleteTarget)} onOpenChange={(open) => { if (!open && !isDeleting) setDeleteTarget(null); }} title="Delete automation" description="Permanently delete the selected automation and its saved draft details." showClose={false} contentClassName="max-w-sm">
+        {deleteTarget && <div className="w-full p-5">
             <div className="flex items-start gap-3">
               <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-rose-600"><Trash2 className="size-[18px]" /></span>
               <div className="min-w-0 flex-1">
                 <h2 id="delete-automation-title" className="text-sm font-semibold text-slate-950">Delete this automation?</h2>
                 <p className="mt-1.5 text-[11px] leading-5 text-slate-500">“{deleteTarget.name}” and its saved draft details will be permanently removed.</p>
               </div>
-              <button type="button" onClick={() => setDeleteTarget(null)} disabled={isDeleting} aria-label="Close confirmation" className="flex size-7 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"><X className="size-4" /></button>
+              <button type="button" onClick={() => setDeleteTarget(null)} disabled={isDeleting} aria-label="Close confirmation" className="flex size-11 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"><X className="size-4" /></button>
             </div>
             {deleteError && <p role="alert" className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-[10px] text-rose-700">{deleteError}</p>}
             <div className="mt-5 flex justify-end gap-2">
-              <button type="button" onClick={() => setDeleteTarget(null)} disabled={isDeleting} className="h-9 rounded-lg border border-[#ded6ca] bg-white px-4 text-[11px] font-medium text-slate-600 transition hover:bg-[#f8f4ec] disabled:opacity-40">Cancel</button>
-              <button type="button" onClick={() => void confirmDelete()} disabled={isDeleting} className="flex h-9 items-center gap-2 rounded-lg bg-rose-600 px-4 text-[11px] font-semibold text-white transition hover:bg-rose-700 disabled:opacity-60">{isDeleting && <LoaderCircle className="size-3.5 animate-spin" />}{isDeleting ? "Deleting…" : "Delete automation"}</button>
+              <button type="button" autoFocus onClick={() => setDeleteTarget(null)} disabled={isDeleting} className="min-h-11 rounded-lg border border-[#ded6ca] bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-[#f8f4ec] disabled:opacity-40">Cancel</button>
+              <button type="button" onClick={() => void confirmDelete()} disabled={isDeleting} className="flex min-h-11 items-center gap-2 rounded-lg bg-rose-600 px-4 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:opacity-60">{isDeleting && <LoaderCircle className="size-3.5 animate-spin" />}{isDeleting ? "Deleting…" : "Delete automation"}</button>
             </div>
-          </div>
-        </div>
-      )}
+          </div>}
+      </AccessibleDialog>
     </div>
   );
 }

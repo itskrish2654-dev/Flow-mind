@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 
 import { AiCustomizationBar } from "@/components/ai-customization-bar";
+import { AccessibleDialog } from "@/components/accessible-dialog";
 import {
   PublicFormDefinitionSchema,
   type PublicFormDefinition,
@@ -304,19 +305,9 @@ export function FormBuilder({
         Customize with AI
       </button>
 
-      {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
-          <button
-            type="button"
-            aria-label="Close form builder"
-            onClick={() => setOpen(false)}
-            className="absolute inset-0 bg-slate-950/25 backdrop-blur-[2px]"
-          />
+      <AccessibleDialog open={open} onOpenChange={setOpen} title="Customize hosted form" description="Describe form changes, preview the result, or fine tune fields manually." showClose={false} contentClassName="!w-[min(calc(100vw-2rem),72rem)] max-w-6xl">
           <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="form-builder-title"
-            className="relative flex max-h-[94dvh] w-full max-w-6xl flex-col overflow-hidden rounded-[24px] border border-[#ddd5c9] bg-[#fffdfa] shadow-2xl"
+            className="relative flex max-h-[94dvh] w-full flex-col overflow-hidden rounded-[24px] bg-[#fffdfa]"
           >
             <header className="flex shrink-0 items-center gap-3 border-b border-[#e4ddd2] px-4 py-3 sm:px-5">
               <span className="flex size-9 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd] text-[#8a6200]">
@@ -474,8 +465,7 @@ export function FormBuilder({
               )}
             </footer>
           </section>
-        </div>
-      )}
+      </AccessibleDialog>
     </>
   );
 }

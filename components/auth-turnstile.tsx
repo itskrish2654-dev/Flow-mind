@@ -91,7 +91,7 @@ export function AuthTurnstile({
   }, [resetSignal]);
 
   return (
-    <div className="rounded-xl border border-[#ddd5c9] bg-[#faf8f4] px-3 py-2.5">
+    <div className="turnstile-safe rounded-xl border border-[#ddd5c9] bg-[#faf8f4] px-2 py-2.5 sm:px-3">
       <Script
         id="flowmind-auth-turnstile"
         src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
@@ -99,7 +99,7 @@ export function AuthTurnstile({
         onReady={() => setScriptReady(true)}
         onError={() => onError("The security challenge could not load. Please retry.")}
       />
-      <div ref={containerRef} className="min-h-[65px]" aria-label="Security challenge" />
+      <div ref={containerRef} className="min-h-[65px] max-w-full" aria-label="Security challenge" />
       <p className="mt-1 text-center text-[10px] text-slate-500">{helperText}</p>
     </div>
   );

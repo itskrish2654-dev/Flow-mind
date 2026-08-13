@@ -105,6 +105,33 @@ a {
   -webkit-tap-highlight-color: transparent;
 }
 
+:where(a, button, input, textarea, select, [tabindex]):focus-visible {
+  outline: 3px solid #b18410;
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.touch-target {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+.turnstile-safe {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+}
+
 button {
   cursor: pointer;
 }
@@ -158,6 +185,24 @@ button:disabled {
 .dashboard-theme .text-amber-400,
 .dashboard-theme .text-amber-600 {
   color: #8a5c00;
+}
+
+.dashboard-theme .text-\[8px\],
+.dashboard-theme .text-\[9px\] {
+  font-size: 0.6875rem;
+  line-height: 1rem;
+}
+
+.dashboard-theme .text-\[10px\] {
+  font-size: 0.75rem;
+  line-height: 1.05rem;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .dashboard-theme button,
+  .dashboard-theme a {
+    min-height: 44px;
+  }
 }
 
 .composer-icon {
