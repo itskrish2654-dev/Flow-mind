@@ -118,3 +118,15 @@ test("demo quick examples populate only and never submit implicitly", async () =
   assert.match(source, /function chooseExample\(example: string\)[\s\S]*reset\(example\)/);
   assert.doesNotMatch(source, /function chooseExample\(example: string\)[\s\S]{0,180}buildLoop/);
 });
+
+test("demo textarea focus uses a neutral treatment without a yellow glow", async () => {
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(
+    css,
+    /\.landing-demo-prompt-editable textarea:focus-visible\s*\{[^}]*box-shadow:\s*none;/,
+  );
+  assert.doesNotMatch(
+    css,
+    /\.landing-demo-prompt-editable textarea:focus-visible\s*\{[^}]*rgba\(241,\s*212,\s*47/,
+  );
+});

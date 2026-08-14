@@ -2489,9 +2489,9 @@ html {
 
 .landing-demo-prompt-editable:hover,
 .landing-demo-prompt-editable:focus-within {
-  border-color: #bca321;
-  background: #fffdf3;
-  box-shadow: 0 10px 30px rgba(74, 65, 21, .08);
+  border-color: #c5bfb2;
+  background: #fffefa;
+  box-shadow: 0 10px 28px rgba(42, 39, 31, .055);
 }
 
 .landing-demo-prompt-editable .landing-demo-avatar {
@@ -2532,7 +2532,7 @@ html {
 
 .landing-demo-prompt-editable textarea:focus-visible {
   border-radius: 7px;
-  box-shadow: 0 0 0 3px rgba(241, 212, 47, .35);
+  box-shadow: none;
 }
 
 .landing-demo-guide {
