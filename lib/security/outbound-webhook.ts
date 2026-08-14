@@ -1,6 +1,6 @@
 import { lookup } from "node:dns/promises";
 import { request } from "node:https";
-import { isIP } from "node:net";
+import { isIP, type LookupFunction } from "node:net";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_RESPONSE_BYTES = 64 * 1024;
@@ -83,6 +83,16 @@ export function selectPinnedWebhookAddress(
   return { address: selected.address, family: selected.family as 4 | 6 };
 }
 
+export function createPinnedWebhookLookup(address: string, family: 4 | 6): LookupFunction {
+  return (_hostname, options, callback) => {
+    if (options.all) {
+      callback(null, [{ address, family }]);
+      return;
+    }
+    callback(null, address, family);
+  };
+}
+
 export async function resolveTrustedWebhook(value: string): Promise<{
   destination: URL;
   address: string;
@@ -129,7 +139,7 @@ export async function postTrustedWebhook(
           ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
         },
         timeout: REQUEST_TIMEOUT_MS,
-        lookup: (_hostname, _options, callback) => callback(null, address, family),
+        lookup: createPinnedWebhookLookup(address, family),
       },
       (response) => {
         let received = 0;

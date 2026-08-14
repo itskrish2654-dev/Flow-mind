@@ -8,7 +8,7 @@ import { assessConnectorPlan } from "../lib/connectors/planning";
 import { applyPollResult, renewalKey, shouldRenewSubscription } from "../lib/connectors/polling";
 import { getConnector, getConnectorOperation, getConnectorTrigger, listCustomerConnectors, validateConnectorRegistry } from "../lib/connectors/registry";
 import { CompiledWorkflowSchema } from "../lib/schemas/workflow";
-import { isBlockedOutboundAddress, parseTrustedWebhookUrl, selectPinnedWebhookAddress } from "../lib/security/outbound-webhook";
+import { createPinnedWebhookLookup, isBlockedOutboundAddress, parseTrustedWebhookUrl, selectPinnedWebhookAddress } from "../lib/security/outbound-webhook";
 import { compileReadyPlan } from "../lib/workflow-compiler";
 import { planWorkflow } from "../lib/workflow-planner";
 
@@ -93,6 +93,14 @@ test("48b generic HTTP prefers public IPv4 when DNS publishes IPv6 first", () =>
     ]),
     { address: "1.1.1.1", family: 4 },
   );
+});
+
+test("48c pinned DNS lookup supports Node's all-address request shape", async () => {
+  const pinned = createPinnedWebhookLookup("1.1.1.1", 4);
+  const result = await new Promise<unknown>((resolve, reject) => {
+    pinned("example.com", { all: true }, (error, address) => error ? reject(error) : resolve(address));
+  });
+  assert.deepEqual(result, [{ address: "1.1.1.1", family: 4 }]);
 });
 
 test("49-53 gateway source enforces rate/quota/body/dedupe/owner-derived subscription", async () => {

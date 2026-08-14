@@ -153,7 +153,8 @@ test("10. redirects are not acknowledged or followed", () => {
 test("11. DNS results are bounded, all checked, and a validated address is pinned", () => {
   assert.match(outboundSource, /DNS_TIMEOUT_MS = 2_000/);
   assert.match(outboundSource, /addresses\.some\(\(\{ address \}\) => isBlockedOutboundAddress\(address\)\)/);
-  assert.match(outboundSource, /lookup: \(_hostname, _options, callback\) => callback\(null, address, family\)/);
+  assert.match(outboundSource, /lookup: createPinnedWebhookLookup\(address, family\)/);
+  assert.match(outboundSource, /if \(options\.all\)/);
 });
 
 test("12. credentials are excluded from localStorage persistence and legacy keys are cleaned", () => {
