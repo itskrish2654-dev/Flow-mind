@@ -1,0 +1,89 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+import { planHomepageDemo } from "../lib/homepage-demo";
+import {
+  HOMEPAGE_DEMO_DRAFT_TTL_SECONDS,
+  openHomepageDemoDraft,
+  sealHomepageDemoDraft,
+} from "../lib/security/homepage-demo-draft";
+
+const TEST_KEY = Buffer.alloc(32, 37).toString("base64");
+
+test("homepage default prompt previews the truthful Request → AI → PDF → Store path", () => {
+  const result = planHomepageDemo(
+    "When a new request comes in, summarize it, create a PDF and save the result.",
+  );
+  assert.equal(result.status, "supported");
+  if (result.status !== "supported") return;
+  assert.deepEqual(result.steps.map(({ label }) => label), ["Request", "AI", "PDF", "Store"]);
+  assert.equal(result.message, "4 steps. Nothing to wire together.");
+});
+
+test("homepage planner rejects TikTok and Salesforce without fabricated steps", () => {
+  const result = planHomepageDemo(
+    "When someone comments on TikTok, update Salesforce.",
+  );
+  assert.equal(result.status, "unsupported");
+  if (result.status !== "unsupported") return;
+  assert.equal(result.title, "PART OF THIS LOOP ISN'T AVAILABLE YET.");
+  assert.equal(result.message, "TikTok and Salesforce aren't supported connectors yet.");
+});
+
+test("homepage planner requests one useful clarification and then stops the public conversation", () => {
+  const first = planHomepageDemo("Summarize incoming requests");
+  assert.equal(first.status, "clarification");
+  if (first.status !== "clarification") return;
+  assert.equal(first.canClarify, true);
+  assert.match(first.question, /where/i);
+
+  const second = planHomepageDemo("Summarize incoming requests", "I am not sure", 1);
+  assert.equal(second.status, "clarification");
+  if (second.status !== "clarification") return;
+  assert.equal(second.canClarify, false);
+});
+
+test("homepage draft is opaque, authenticated, short-lived, and tamper resistant", () => {
+  const prompt = "Collect a request in a form and store it in CrazyLoops";
+  const now = Date.parse("2026-08-14T10:00:00.000Z");
+  const token = sealHomepageDemoDraft(prompt, now, TEST_KEY);
+  assert.equal(token.includes(prompt), false);
+  assert.equal(openHomepageDemoDraft(token, now + 1_000, TEST_KEY), prompt);
+  assert.equal(
+    openHomepageDemoDraft(token, now + HOMEPAGE_DEMO_DRAFT_TTL_SECONDS * 1_000 + 1, TEST_KEY),
+    null,
+  );
+  assert.equal(openHomepageDemoDraft(`${token.slice(0, -1)}A`, now, TEST_KEY), null);
+});
+
+test("homepage preview server action has no workflow execution or connector side effects", async () => {
+  const source = await readFile(new URL("../app/actions/homepage-demo.ts", import.meta.url), "utf8");
+  for (const forbidden of [
+    "runTestWorkflow",
+    "executeWorkflow",
+    "generatePdf",
+    "saveWorkflow",
+    "createWorkflow",
+    "connector-execution",
+  ]) {
+    assert.equal(source.includes(forbidden), false, `unexpected side-effect path: ${forbidden}`);
+  }
+  assert.match(source, /enforceRateLimit/);
+  assert.match(source, /2_000/);
+});
+
+test("homepage analytics names are allowlisted without prompt properties", async () => {
+  const source = await readFile(new URL("../lib/observability.ts", import.meta.url), "utf8");
+  for (const event of [
+    "homepage_demo_started",
+    "homepage_demo_submitted",
+    "homepage_demo_supported",
+    "homepage_demo_unsupported",
+    "homepage_demo_clarification",
+    "homepage_demo_build_clicked",
+  ]) {
+    assert.match(source, new RegExp(`\\"${event}\\"`));
+  }
+  assert.match(source, /PRIVATE_METADATA_KEY[\s\S]*prompt/);
+});

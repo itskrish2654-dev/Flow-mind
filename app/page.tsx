@@ -24,7 +24,7 @@ import {
   X,
 } from "lucide-react";
 
-import { TrustLinks } from "@/components/trust-links";
+import { HomepageWorkflowDemo } from "@/components/homepage-workflow-demo";
 
 const title = "CrazyLoops — Run the work. Not every task.";
 const description =
@@ -203,7 +203,7 @@ export default function HomePage() {
               <Link href="/login?mode=signup" className="landing-button landing-button-primary">
                 Start building <ArrowRight aria-hidden="true" />
               </Link>
-              <a href="#product" className="landing-button landing-button-secondary">
+              <a href="#demo" className="landing-button landing-button-secondary">
                 See how it works <ChevronDown aria-hidden="true" />
               </a>
             </div>
@@ -211,6 +211,7 @@ export default function HomePage() {
           <div className="landing-hero-visual">
             <LoopMark />
             <ProductDemo />
+            <a href="#demo" className="landing-hero-demo-link">Try it yourself <ArrowDown aria-hidden="true" /></a>
           </div>
         </div>
       </section>
@@ -228,13 +229,14 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className="landing-section landing-describe-section" aria-labelledby="describe-title">
+      <section id="demo" className="landing-section landing-describe-section" aria-labelledby="describe-title">
         <div className="landing-shell">
           <div className="landing-section-heading">
             <p className="landing-eyebrow">Describe the outcome</p>
             <h2 id="describe-title">You don’t start with boxes.<br />You start with what needs to happen.</h2>
+            <p>Try it. Describe a process and CrazyLoops will show you the loop.</p>
           </div>
-          <ProductDemo compact />
+          <HomepageWorkflowDemo />
           <div className="landing-describe-copy">
             <p>You don’t wire nodes together.</p>
             <p>You don’t translate your work into automation software.</p>
@@ -363,11 +365,13 @@ export default function HomePage() {
         <div className="landing-shell">
           <div className="landing-footer-brand"><Wordmark /><p>Run the work. Not every task.</p><small>crazyloops.com</small></div>
           <div className="landing-footer-links">
-            <nav aria-label="Product links"><p>Product</p><a href="#product">Product</a><a href="#connectors">Connections</a><Link href="/security">Security</Link></nav>
-            <div><p>Trust</p><TrustLinks /></div>
+            <nav aria-label="Product links"><p>Product</p><Link href="/login?mode=signup">Start building</Link><a href="#connectors">Connections</a><Link href="/security">Security</Link></nav>
+            <nav aria-label="Resource links"><p>Resources</p><Link href="/data-use">Data Use</Link><Link href="/support">Support</Link></nav>
+            <nav aria-label="Legal links"><p>Legal</p><Link href="/privacy">Privacy</Link><Link href="/terms">Terms</Link></nav>
+            <nav aria-label="Account links"><p>Account</p><Link href="/login">Sign in</Link><Link href="/login?mode=signup">Create account</Link></nav>
           </div>
         </div>
-        <div className="landing-shell landing-footer-bottom"><p>© {new Date().getFullYear()} CrazyLoops</p><p>The work keeps moving.</p></div>
+        <div className="landing-shell landing-footer-bottom"><p>© {new Date().getFullYear()} CrazyLoops</p></div>
       </footer>
     </main>
   );

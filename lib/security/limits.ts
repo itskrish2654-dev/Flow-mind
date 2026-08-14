@@ -20,6 +20,8 @@ export const SECURITY_LIMITS = {
   recovery: { limit: 5, windowSeconds: 3_600 },
   accountDeletion: { limit: 3, windowSeconds: 3_600 },
   planning: { limit: 12, windowSeconds: 60 },
+  homepageDemo: { limit: 8, windowSeconds: 60 },
+  homepageDemoDraft: { limit: 6, windowSeconds: 60 },
   ai: { limit: 10, windowSeconds: 60 },
   customization: { limit: 8, windowSeconds: 60 },
   testExecution: { limit: 12, windowSeconds: 60 },

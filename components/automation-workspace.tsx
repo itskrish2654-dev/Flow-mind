@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 
 import { runTestWorkflow, type TestExecutionLog } from "@/app/actions/execute";
+import { clearHomepageDemoDraft } from "@/app/actions/homepage-demo";
 import { configureGoogleWorkflowStep, getGoogleConnectionOptions, inspectGoogleSheet } from "@/app/actions/connections";
 import {
   getWorkflowCredentialMetadata,
@@ -77,6 +78,7 @@ type AutomationWorkspaceProps = {
   initialWorkflowId?: string | null;
   initialWorkflowName?: string;
   initialPrompt?: string;
+  initialDraftReady?: boolean;
   initialPublished?: boolean;
   initialSetupConfig?: InputValues;
 };
@@ -171,13 +173,13 @@ function WorkflowNode({ step, index, selected, ready, onSelect }: { step: Step; 
   );
 }
 
-function EmptyCanvas() {
+function EmptyCanvas({ draftReady = false }: { draftReady?: boolean }) {
   return (
     <div className="flex h-full items-center justify-center px-6 text-center">
       <div>
         <span className="mx-auto flex size-12 items-center justify-center rounded-2xl border border-[#e7c75f] bg-[#fff3c8] text-[#9a7007]"><Network className="size-5" /></span>
-        <h2 className="mt-4 text-[13px] font-semibold text-slate-900">Your workflow will appear here</h2>
-        <p className="mx-auto mt-1.5 max-w-sm text-[11px] leading-5 text-slate-500">Describe what you want below. The generated steps will become a real, selectable workflow.</p>
+        <h2 className="mt-4 text-[13px] font-semibold text-slate-900">{draftReady ? "Your loop is ready to finish." : "Your workflow will appear here"}</h2>
+        <p className="mx-auto mt-1.5 max-w-sm text-[11px] leading-5 text-slate-500">{draftReady ? "Your homepage description is restored below. Review it, then build the real workflow when you’re ready." : "Describe what you want below. The generated steps will become a real, selectable workflow."}</p>
       </div>
     </div>
   );
@@ -591,6 +593,7 @@ export function AutomationWorkspace({
   initialWorkflowId = null,
   initialWorkflowName = "",
   initialPrompt = "",
+  initialDraftReady = false,
   initialPublished = false,
   initialSetupConfig = {},
 }: AutomationWorkspaceProps) {
@@ -618,6 +621,11 @@ export function AutomationWorkspace({
   const [planning, setPlanning] = useState<WorkflowPlan | null>(null);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const buildRequestInFlight = useRef(false);
+
+  useEffect(() => {
+    if (!initialDraftReady) return;
+    void clearHomepageDemoDraft();
+  }, [initialDraftReady]);
 
   useEffect(() => {
     if (!workflowId || !published || !workflow?.steps.some((step) => step.capabilityId === "generic_webhook_trigger")) return;
@@ -946,7 +954,7 @@ export function AutomationWorkspace({
         </header>
 
         <section className="workflow-canvas relative h-[44%] min-h-[260px] shrink-0 overflow-hidden border-b border-[#e4ddd2]">
-          {!workflow ? <EmptyCanvas /> : (
+          {!workflow ? <EmptyCanvas draftReady={initialDraftReady} /> : (
             <div className="h-full overflow-x-auto px-6">
               <div className="flex h-full min-w-max items-center justify-center">
                 {steps.map((step, index) => (
