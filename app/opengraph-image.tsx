@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 
-export const alt = "CrazyLoops — Automate work by describing it";
+export const alt = "CrazyLoops — Run the work. Not every task.";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 
@@ -24,7 +24,7 @@ export default function OpenGraphImage() {
       </div>
       <div style={{ display: "flex", flexDirection: "column" }}>
         <div style={{ maxWidth: 900, fontSize: 78, fontWeight: 600, letterSpacing: "-4.8px", lineHeight: 1.01 }}>
-          Automate work by describing it.
+          Run the work. Not every task.
         </div>
         <div style={{ display: "flex", marginTop: 34, color: "#68675f", fontSize: 25 }}>
           Reliable workflows across AI, forms, webhooks, documents, and data.

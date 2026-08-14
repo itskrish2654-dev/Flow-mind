@@ -73,7 +73,7 @@ export async function GET() {
     }
 
     const archive = {
-      format: "flowmind-account-export",
+      format: "crazyloops-account-export",
       version: 1,
       generatedAt: new Date().toISOString(),
       account: { email: auth.user.email ?? null, createdAt: auth.user.created_at },

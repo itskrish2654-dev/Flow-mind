@@ -4,7 +4,7 @@ test("public CrazyLoops homepage renders without an auth redirect", async ({ pag
   const response = await page.goto("/");
   expect(response?.status()).toBe(200);
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole("heading", { level: 1, name: /automate work by describing it/i })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: /run the work\. not every task\./i })).toBeVisible();
   await expect(page.getByRole("link", { name: /start building/i }).first()).toHaveAttribute("href", "/login?mode=signup");
   await expect(page.getByRole("link", { name: /privacy/i })).toBeVisible();
   await expect(page.getByText(/beta — google approval pending/i).first()).toBeVisible();
