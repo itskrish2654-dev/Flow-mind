@@ -22,6 +22,8 @@ export const SECURITY_LIMITS = {
   planning: { limit: 12, windowSeconds: 60 },
   homepageDemo: { limit: 8, windowSeconds: 60 },
   homepageDemoDraft: { limit: 6, windowSeconds: 60 },
+  homepageDemoInteraction: { limit: 30, windowSeconds: 60 },
+  turnstileDiagnostics: { limit: 10, windowSeconds: 5 * 60 },
   ai: { limit: 10, windowSeconds: 60 },
   customization: { limit: 8, windowSeconds: 60 },
   testExecution: { limit: 12, windowSeconds: 60 },

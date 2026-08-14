@@ -36,6 +36,34 @@ function capabilityCategories(result: HomepageDemoResult): string {
     : result.status;
 }
 
+const DemoInteractionSchema = z.enum([
+  "demo_viewed",
+  "demo_input_focused",
+  "demo_example_clicked",
+]);
+
+export async function trackHomepageDemoInteraction(
+  event: "demo_viewed" | "demo_input_focused" | "demo_example_clicked",
+): Promise<void> {
+  const parsed = DemoInteractionSchema.safeParse(event);
+  if (!parsed.success) return;
+  try {
+    const ip = await getClientIp();
+    await enforceRateLimit(
+      "homepage-demo-interaction",
+      [ip],
+      SECURITY_LIMITS.homepageDemoInteraction,
+    );
+    await trackProductEvent({
+      event: parsed.data,
+      anonymousId: ip,
+      properties: { source: "homepage" },
+    });
+  } catch {
+    // Analytics must never interrupt the public demo.
+  }
+}
+
 export async function previewHomepageDemo(input: {
   prompt: string;
   clarification?: string;
@@ -51,12 +79,7 @@ export async function previewHomepageDemo(input: {
   try {
     await enforceRateLimit("homepage-demo", [ip], SECURITY_LIMITS.homepageDemo);
     await trackProductEvent({
-      event: "homepage_demo_started",
-      anonymousId: ip,
-      properties: { source: "homepage" },
-    });
-    await trackProductEvent({
-      event: "homepage_demo_submitted",
+      event: "demo_submitted",
       anonymousId: ip,
       properties: { source: "homepage" },
     });
@@ -75,21 +98,18 @@ export async function previewHomepageDemo(input: {
       if (timeout) clearTimeout(timeout);
     });
 
-    const event = result.status === "supported"
-      ? "homepage_demo_supported"
-      : result.status === "unsupported"
-        ? "homepage_demo_unsupported"
-        : "homepage_demo_clarification";
-    await trackProductEvent({
-      event,
-      anonymousId: ip,
-      properties: {
-        planner_status: result.plannerStatus,
-        step_count: result.status === "supported" ? result.steps.length : 0,
-        category: capabilityCategories(result),
-        duration_ms: Date.now() - startedAt,
-      },
-    });
+    if (result.status !== "clarification") {
+      await trackProductEvent({
+        event: result.status === "supported" ? "demo_supported" : "demo_unsupported",
+        anonymousId: ip,
+        properties: {
+          planner_status: result.plannerStatus,
+          step_count: result.status === "supported" ? result.steps.length : 0,
+          category: capabilityCategories(result),
+          duration_ms: Date.now() - startedAt,
+        },
+      });
+    }
     return { ok: true, result };
   } catch (error) {
     const rateLimited = error instanceof SecurityGateError && error.code === "RATE_LIMITED";
@@ -132,7 +152,7 @@ export async function preserveHomepageDemoDraft(input: {
       maxAge: HOMEPAGE_DEMO_DRAFT_TTL_SECONDS,
     });
     await trackProductEvent({
-      event: "homepage_demo_build_clicked",
+      event: "demo_signup_clicked",
       anonymousId: ip,
       properties: { source: "homepage" },
     });

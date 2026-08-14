@@ -100,8 +100,8 @@ export function planHomepageDemo(
       status: "unsupported",
       title: "PART OF THIS LOOP ISN'T AVAILABLE YET.",
       message: names.length === 1
-        ? `${subject} isn't a supported connector yet.`
-        : `${subject} aren't supported connectors yet.`,
+        ? `${subject} isn't supported yet.`
+        : `${subject} aren't supported yet.`,
       plannerStatus: "UNSUPPORTED",
     };
   }

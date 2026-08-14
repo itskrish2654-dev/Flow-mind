@@ -3,6 +3,9 @@
 import Script from "next/script";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { reportTurnstileClientError } from "@/app/actions/turnstile";
+import type { TurnstileBrowserCategory } from "@/lib/turnstile-diagnostics";
+
 type TurnstileApi = {
   render: (
     container: HTMLElement,
@@ -12,7 +15,8 @@ type TurnstileApi = {
       appearance: "interaction-only";
       callback: (token: string) => void;
       "expired-callback": () => void;
-      "error-callback": () => void;
+      "error-callback": (errorCode: string) => void;
+      "timeout-callback": () => void;
       "response-field": boolean;
       "response-field-name": string;
     },
@@ -43,7 +47,28 @@ export function AuthTurnstile({
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetIdRef = useRef<string | null>(null);
   const callbacksRef = useRef({ onToken, onError });
+  const correlationIdRef = useRef<string | null>(null);
   const [scriptReady, setScriptReady] = useState(false);
+
+  function browserCategory(): TurnstileBrowserCategory {
+    const agent = window.navigator.userAgent;
+    if (/Edg\//.test(agent)) return "edge";
+    if (/Firefox\//.test(agent)) return "firefox";
+    if (/Safari\//.test(agent) && !/Chrome\//.test(agent)) return "safari";
+    if (/Chrome\//.test(agent)) return "chrome";
+    return "other";
+  }
+
+  const reportFailure = useCallback((errorCode: string) => {
+    if (!correlationIdRef.current) correlationIdRef.current = crypto.randomUUID();
+    void reportTurnstileClientError({
+      errorCode,
+      hostname: window.location.hostname,
+      page: window.location.pathname,
+      browserCategory: browserCategory(),
+      correlationId: correlationIdRef.current,
+    });
+  }, []);
 
   useEffect(() => {
     callbacksRef.current = { onToken, onError };
@@ -65,12 +90,18 @@ export function AuthTurnstile({
         callbacksRef.current.onToken(null);
         callbacksRef.current.onError("The security challenge expired. Please complete it again.");
       },
-      "error-callback": () => {
+      "error-callback": (errorCode) => {
         callbacksRef.current.onToken(null);
+        reportFailure(errorCode || "unknown_error");
         callbacksRef.current.onError("The security challenge could not load. Please retry.");
       },
+      "timeout-callback": () => {
+        callbacksRef.current.onToken(null);
+        reportFailure("challenge_timeout");
+        callbacksRef.current.onError("The security challenge timed out. Please retry.");
+      },
     });
-  }, [siteKey]);
+  }, [reportFailure, siteKey]);
 
   useEffect(() => {
     if (!scriptReady) return;
@@ -97,7 +128,10 @@ export function AuthTurnstile({
         src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
         strategy="afterInteractive"
         onReady={() => setScriptReady(true)}
-        onError={() => onError("The security challenge could not load. Please retry.")}
+        onError={() => {
+          reportFailure("script_load_failure");
+          onError("The security challenge could not load. Please retry.");
+        }}
       />
       <div ref={containerRef} role="group" className="min-h-[65px] max-w-full" aria-label="Security challenge" />
       <p className="mt-1 text-center text-[10px] text-slate-500">{helperText}</p>

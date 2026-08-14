@@ -23,12 +23,12 @@ test("homepage default prompt previews the truthful Request → AI → PDF → S
 
 test("homepage planner rejects TikTok and Salesforce without fabricated steps", () => {
   const result = planHomepageDemo(
-    "When someone comments on TikTok, update Salesforce.",
+    "When a TikTok comment arrives, update Salesforce.",
   );
   assert.equal(result.status, "unsupported");
   if (result.status !== "unsupported") return;
   assert.equal(result.title, "PART OF THIS LOOP ISN'T AVAILABLE YET.");
-  assert.equal(result.message, "TikTok and Salesforce aren't supported connectors yet.");
+  assert.equal(result.message, "TikTok and Salesforce aren't supported yet.");
 });
 
 test("homepage planner requests one useful clarification and then stops the public conversation", () => {
@@ -73,17 +73,48 @@ test("homepage preview server action has no workflow execution or connector side
   assert.match(source, /2_000/);
 });
 
-test("homepage analytics names are allowlisted without prompt properties", async () => {
+test("homepage analytics uses the required privacy-safe event vocabulary", async () => {
   const source = await readFile(new URL("../lib/observability.ts", import.meta.url), "utf8");
   for (const event of [
-    "homepage_demo_started",
-    "homepage_demo_submitted",
-    "homepage_demo_supported",
-    "homepage_demo_unsupported",
-    "homepage_demo_clarification",
-    "homepage_demo_build_clicked",
+    "demo_viewed",
+    "demo_input_focused",
+    "demo_example_clicked",
+    "demo_submitted",
+    "demo_supported",
+    "demo_unsupported",
+    "demo_signup_clicked",
   ]) {
     assert.match(source, new RegExp(`\\"${event}\\"`));
   }
   assert.match(source, /PRIVATE_METADATA_KEY[\s\S]*prompt/);
+});
+
+test("homepage demo makes editing, guide, truthful result and state labels explicit", async () => {
+  const source = await readFile(new URL("../components/homepage-workflow-demo.tsx", import.meta.url), "utf8");
+  for (const text of [
+    "Try it — type what should happen",
+    "Describe something you do repeatedly...",
+    "Build the loop",
+    "Build my loop",
+    "Understanding…",
+    "Loop ready ✓",
+    "Build it for real",
+    "Built from what you just typed.",
+    "Nothing runs until you choose to build it.",
+    "No account needed.",
+  ]) {
+    assert.ok(source.includes(text), `missing demo copy: ${text}`);
+  }
+  for (const category of ["Trigger", "AI", "Create", "Store"]) {
+    assert.match(source, new RegExp(`return \\"${category}\\"`));
+  }
+  assert.match(source, /sessionStorage/);
+  assert.match(source, /IntersectionObserver/);
+  assert.match(source, /prefers-reduced-motion/);
+});
+
+test("demo quick examples populate only and never submit implicitly", async () => {
+  const source = await readFile(new URL("../components/homepage-workflow-demo.tsx", import.meta.url), "utf8");
+  assert.match(source, /function chooseExample\(example: string\)[\s\S]*reset\(example\)/);
+  assert.doesNotMatch(source, /function chooseExample\(example: string\)[\s\S]{0,180}buildLoop/);
 });
