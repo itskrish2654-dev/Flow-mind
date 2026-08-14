@@ -139,8 +139,8 @@ export type Database = {
         Relationships: [];
       };
       connector_oauth_states: {
-        Row: { state_hash: string; user_id: string; connector_id: string; provider_family: string; requested_scopes: string[]; return_path: string; pkce_ciphertext: string; pkce_nonce: string; pkce_auth_tag: string; expires_at: string; consumed_at: string | null; created_at: string };
-        Insert: { state_hash: string; user_id: string; connector_id: string; provider_family: string; requested_scopes?: string[]; return_path: string; pkce_ciphertext: string; pkce_nonce: string; pkce_auth_tag: string; expires_at: string; consumed_at?: string | null; created_at?: string };
+        Row: { state_hash: string; user_id: string; connector_id: string; provider_family: string; requested_scopes: string[]; return_path: string; pkce_ciphertext: string; pkce_nonce: string; pkce_auth_tag: string; intended_connection_id: string | null; operation_key: string | null; expires_at: string; consumed_at: string | null; created_at: string };
+        Insert: { state_hash: string; user_id: string; connector_id: string; provider_family: string; requested_scopes?: string[]; return_path: string; pkce_ciphertext: string; pkce_nonce: string; pkce_auth_tag: string; intended_connection_id?: string | null; operation_key?: string | null; expires_at: string; consumed_at?: string | null; created_at?: string };
         Update: { consumed_at?: string | null };
         Relationships: [];
       };

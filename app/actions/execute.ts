@@ -198,6 +198,7 @@ export async function runTestWorkflow(
           // If quota fails, both nested leases are released by their finally blocks.
           await enforceUsageQuota(auth.user.id, "executions");
           return executeWorkflowSteps({
+            userId: auth.user.id,
             workflowId: request.data.workflowId,
             workflowName: snapshot.name,
             steps: snapshot.workflow.steps,
@@ -433,6 +434,7 @@ export async function retryWorkflowExecution(executionId: string): Promise<TestW
       withConcurrencyLease("workflow-execution", [existing.workflow_id], 1, async () => {
         await enforceUsageQuota(auth.user.id, "executions");
         return executeWorkflowSteps({
+          userId: auth.user.id,
           workflowId: existing.workflow_id,
           workflowName: identity.name,
           steps: workflow.data.steps,

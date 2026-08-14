@@ -1,6 +1,8 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 import { ambiguousAcknowledgement, classifyConnectorHttpFailure } from "@/lib/connectors/errors";
+import { GOOGLE_AUTHORIZATION_URL, GOOGLE_TOKEN_URL } from "@/lib/connectors/google/oauth-provider";
+import { GOOGLE_SCOPES } from "@/lib/connectors/google/scopes";
 import type {
   ConnectorActionHandler,
   ConnectorManifest,
@@ -92,6 +94,63 @@ const internalTestManifest: ConnectorManifest = {
   limitations: ["Never available in production or customer-facing connector lists."],
 };
 
+const googleGmailManifest: ConnectorManifest = {
+  id: "google_gmail",
+  providerFamily: "google",
+  displayName: "Gmail",
+  description: "Receives new Gmail messages and sends acknowledged email or threaded replies.",
+  status: "BETA",
+  version: 1,
+  auth: { type: "oauth2", authorizationUrl: GOOGLE_AUTHORIZATION_URL, tokenUrl: GOOGLE_TOKEN_URL, defaultScopes: ["openid", "email"], pkceRequired: true },
+  triggers: [
+    { key: "new_email", version: 1, kind: "trigger", displayName: "New Gmail email", description: "Starts from a new message resolved through Gmail history.", input: [], output: [{ key: "message", label: "Message", type: "object", required: true }], requiredScopes: [GOOGLE_SCOPES.gmailReadonly], connectionRequired: true, testMode: true, production: true, deliverySemantics: "trigger" },
+    { key: "new_email_matching_search", version: 1, kind: "trigger", displayName: "New Gmail email matching search", description: "Starts when a newly resolved Gmail message matches the configured Gmail filter.", input: [{ key: "search", label: "Email filter", type: "string", required: true }], output: [{ key: "message", label: "Message", type: "object", required: true }], requiredScopes: [GOOGLE_SCOPES.gmailReadonly], connectionRequired: true, testMode: true, production: true, deliverySemantics: "trigger" },
+  ],
+  actions: [
+    { key: "send_email", version: 1, kind: "action", displayName: "Send Gmail email", description: "Sends an email and succeeds only after Gmail returns a message ID.", input: [{ key: "to", label: "To", type: "string", required: true }, { key: "cc", label: "Cc", type: "string" }, { key: "bcc", label: "Bcc", type: "string" }, { key: "subject", label: "Subject", type: "string", required: true }, { key: "body", label: "Body", type: "string", required: true }], output: [{ key: "messageId", label: "Message ID", type: "string", required: true }, { key: "threadId", label: "Thread ID", type: "string" }], requiredScopes: [GOOGLE_SCOPES.gmailSend], connectionRequired: true, testMode: true, production: true, deliverySemantics: "acknowledged_external" },
+    { key: "reply_to_email", version: 1, kind: "action", displayName: "Reply in Gmail", description: "Replies to a validated Gmail message in its existing thread.", input: [{ key: "messageId", label: "Message ID", type: "string", required: true }, { key: "threadId", label: "Thread ID", type: "string", required: true }, { key: "to", label: "To", type: "string" }, { key: "subject", label: "Subject", type: "string" }, { key: "body", label: "Reply", type: "string", required: true }], output: [{ key: "messageId", label: "Reply message ID", type: "string", required: true }, { key: "threadId", label: "Thread ID", type: "string", required: true }], requiredScopes: [GOOGLE_SCOPES.gmailReadonly, GOOGLE_SCOPES.gmailSend], connectionRequired: true, testMode: true, production: true, deliverySemantics: "acknowledged_external" },
+  ],
+  limitations: ["Google production verification is required before broad public availability.", "Attachments are exposed as metadata only and are never downloaded automatically."],
+  documentationUrl: "https://developers.google.com/gmail/api",
+};
+
+const googleSheetsManifest: ConnectorManifest = {
+  id: "google_sheets",
+  providerFamily: "google",
+  displayName: "Google Sheets",
+  description: "Finds, appends, and deterministically updates rows in a selected worksheet.",
+  status: "BETA",
+  version: 1,
+  auth: { type: "oauth2", authorizationUrl: GOOGLE_AUTHORIZATION_URL, tokenUrl: GOOGLE_TOKEN_URL, defaultScopes: ["openid", "email"], pkceRequired: true },
+  triggers: [],
+  actions: [
+    { key: "add_row", version: 1, kind: "action", displayName: "Add row to Google Sheets", description: "Adds one safely encoded row using the worksheet's real headers.", input: [{ key: "spreadsheetId", label: "Spreadsheet", type: "string", required: true }, { key: "worksheet", label: "Worksheet", type: "string", required: true }, { key: "values", label: "Column values", type: "object", required: true }], output: [{ key: "updatedRange", label: "Added row", type: "string", required: true }], requiredScopes: [GOOGLE_SCOPES.sheets], connectionRequired: true, testMode: true, production: true, deliverySemantics: "acknowledged_external" },
+    { key: "find_row", version: 1, kind: "action", displayName: "Find row in Google Sheets", description: "Finds an exact unique value and reports zero or ambiguous matches truthfully.", input: [{ key: "spreadsheetId", label: "Spreadsheet", type: "string", required: true }, { key: "worksheet", label: "Worksheet", type: "string", required: true }, { key: "matchColumn", label: "Lookup column", type: "string", required: true }, { key: "matchValue", label: "Lookup value", type: "string", required: true }], output: [{ key: "found", label: "Found", type: "boolean", required: true }, { key: "rowNumber", label: "Row number", type: "number" }, { key: "values", label: "Column values", type: "object" }], requiredScopes: [GOOGLE_SCOPES.sheets], connectionRequired: true, testMode: true, production: true, deliverySemantics: "internal" },
+    { key: "update_row", version: 1, kind: "action", displayName: "Update row in Google Sheets", description: "Updates exactly one explicitly identified row.", input: [{ key: "spreadsheetId", label: "Spreadsheet", type: "string", required: true }, { key: "worksheet", label: "Worksheet", type: "string", required: true }, { key: "rowNumber", label: "Row number", type: "number", required: true }, { key: "values", label: "Column values", type: "object", required: true }], output: [{ key: "updatedRange", label: "Updated row", type: "string", required: true }], requiredScopes: [GOOGLE_SCOPES.sheets], connectionRequired: true, testMode: true, production: true, deliverySemantics: "acknowledged_external" },
+  ],
+  limitations: ["Google production verification is required before broad public availability.", "Values use RAW input semantics; formulas are not executed."],
+  documentationUrl: "https://developers.google.com/sheets/api",
+};
+
+const googleTriggerAdapter = {
+  verify: async () => false,
+  normalize: async () => { throw new Error("Gmail push events must use the authenticated Google Pub/Sub route."); },
+};
+
+// Keep the authoritative registry importable by the planner and tests without
+// eagerly loading server-only credential modules. The implementation is still
+// resolved exclusively on the server when the action actually executes.
+const gmailSendHandler: ConnectorActionHandler = async (input, context) =>
+  (await import("@/lib/connectors/google/gmail")).gmailSendEmail(input, context);
+const gmailReplyHandler: ConnectorActionHandler = async (input, context) =>
+  (await import("@/lib/connectors/google/gmail")).gmailReplyToEmail(input, context);
+const sheetsAddHandler: ConnectorActionHandler = async (input, context) =>
+  (await import("@/lib/connectors/google/sheets")).sheetsAddRow(input, context);
+const sheetsFindHandler: ConnectorActionHandler = async (input, context) =>
+  (await import("@/lib/connectors/google/sheets")).sheetsFindRow(input, context);
+const sheetsUpdateHandler: ConnectorActionHandler = async (input, context) =>
+  (await import("@/lib/connectors/google/sheets")).sheetsUpdateRow(input, context);
+
 const httpPostHandler: ConnectorActionHandler = async (input, context) => {
   try {
     const response = await postTrustedWebhook(String(input.url ?? ""), input.body, context.idempotencyKey);
@@ -137,6 +196,17 @@ const connectors: RegisteredConnector[] = [
     },
   },
   { manifest: genericHttpManifest, runtime: { actionHandlers: { "post_json@1": httpPostHandler }, triggerHandlers: {} } },
+  {
+    manifest: googleGmailManifest,
+    runtime: {
+      actionHandlers: { "send_email@1": gmailSendHandler, "reply_to_email@1": gmailReplyHandler },
+      triggerHandlers: { "new_email@1": googleTriggerAdapter, "new_email_matching_search@1": googleTriggerAdapter },
+    },
+  },
+  {
+    manifest: googleSheetsManifest,
+    runtime: { actionHandlers: { "add_row@1": sheetsAddHandler, "find_row@1": sheetsFindHandler, "update_row@1": sheetsUpdateHandler }, triggerHandlers: {} },
+  },
   {
     manifest: internalTestManifest,
     runtime: {

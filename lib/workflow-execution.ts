@@ -7,6 +7,8 @@ import {
   resolveStepCapabilityId,
 } from "@/lib/capability-registry";
 import { getConnectorOperation } from "@/lib/connectors/registry";
+import { ConnectorError } from "@/lib/connectors/errors";
+import { applyFieldMappings, type FieldMapping } from "@/lib/connectors/mapping";
 import {
   generatePdfBuffer,
   PdfRenderError,
@@ -93,6 +95,11 @@ export function validateRequiredSetupInputs(
   inputValues: InputValues,
 ): string | null {
   for (const step of steps) {
+    const connectorConfig = step.config?.connector;
+    if (connectorConfig) {
+      const operation = getConnectorOperation(connectorConfig.connectorId, connectorConfig.operationKind, connectorConfig.operationKey, connectorConfig.operationVersion);
+      if (operation?.operation.connectionRequired && !connectorConfig.connectionId) return `Choose an account for ${operation.connector.manifest.displayName}.`;
+    }
     if (["public_form_trigger", "webhook_trigger", "store_data"].includes(step.type)) {
       continue;
     }
@@ -115,8 +122,15 @@ export function validateRequiredSetupInputs(
       continue;
     }
 
-    for (const input of step.inputsRequired ?? []) {
-      const value = (
+      for (const input of step.inputsRequired ?? []) {
+        const mapping = connectorConfig?.mappings.find((item) => item.target === input.key);
+        const isResolvedByMapping = Boolean(
+          mapping &&
+          (mapping.source.kind !== "literal" ||
+            (mapping.source.value !== undefined && mapping.source.value !== null && mapping.source.value !== "")),
+        );
+        if (isResolvedByMapping) continue;
+        const value = (
         inputValues[`${step.id}-${input.key}`] ??
         inputValues[input.key] ??
         input.value ??
@@ -185,6 +199,7 @@ function executionVariables(
 }
 
 export async function executeWorkflowSteps({
+  userId = "runtime-owner",
   workflowId,
   workflowName,
   steps,
@@ -198,6 +213,7 @@ export async function executeWorkflowSteps({
   completedStepIds = new Set<string>(),
   resumeState,
 }: {
+  userId?: string;
   workflowId: string;
   workflowName: string;
   steps: WorkflowStep[];
@@ -226,6 +242,13 @@ export async function executeWorkflowSteps({
     workflowId,
     workflowName,
   );
+  const parseInputValue = (value: string): unknown => {
+    const trimmed = value.trim();
+    if (!trimmed || !/^[\[{]/.test(trimmed)) return value;
+    try { return JSON.parse(trimmed); } catch { return value; }
+  };
+  const triggerContext = Object.fromEntries(Object.entries(inputData).map(([key, value]) => [key, parseInputValue(value)]));
+  const connectorStepOutputs: Record<string, Record<string, unknown>> = {};
   let delivered = false;
   let aiResult: string | null = resumeState?.aiResult ?? null;
   let failureReason: string | null = null;
@@ -233,6 +256,11 @@ export async function executeWorkflowSteps({
     variables.ai_result = aiResult;
     variables.ai_summary = aiResult;
     variables.ai = { result: aiResult, summary: aiResult };
+    for (const step of steps) {
+      if (step.type === "ai_transform" && completedStepIds.has(step.id)) {
+        connectorStepOutputs[step.id] = { result: aiResult };
+      }
+    }
   }
 
   const finish = (): WorkflowExecutionResult => {
@@ -335,14 +363,56 @@ export async function executeWorkflowSteps({
       await skipRemaining(index + 1, message);
     };
 
-    if (capabilityId === "public_form_submission" || capabilityId === "generic_webhook_trigger") {
+    if (capabilityId === "public_form_submission" || capabilityId === "generic_webhook_trigger" || capabilityId === "manual_trigger" || step.type === "connector_trigger") {
       await succeed(
         capabilityId === "generic_webhook_trigger"
           ? "Received an authenticated webhook event."
+          : capabilityId.startsWith("gmail_")
+            ? "Received and resolved a new Gmail message."
+          : capabilityId === "manual_trigger"
+            ? "Started by an authenticated manual run."
           : mode === "public-form"
           ? `Received ${Object.keys(inputData).length} submitted field${Object.keys(inputData).length === 1 ? "" : "s"}.`
           : "A safe sample form submission started the test.",
       );
+      continue;
+    }
+
+    if (step.type === "connector_action") {
+      const connectorConfig = step.config?.connector;
+      if (!connectorConfig || connectorConfig.operationKind !== "action") { await fail("This connector action is missing its versioned operation configuration."); break; }
+      const registered = getConnectorOperation(connectorConfig.connectorId, "action", connectorConfig.operationKey, connectorConfig.operationVersion);
+      if (!registered || typeof registered.handler !== "function") { await fail("This connector action is not supported by the current server runtime."); break; }
+      if (mode === "public-form" && !registered.operation.production) { await fail("This connector action is not available in production."); break; }
+      const direct: Record<string, unknown> = {};
+      for (const field of registered.operation.input) {
+        const configured = inputValues[`${step.id}-${field.key}`] ?? inputValues[field.key] ?? step.config?.connector?.settings?.[field.key];
+        if (configured !== undefined && configured !== "") {
+          if (field.type === "number") direct[field.key] = Number(configured);
+          else if (field.type === "boolean") direct[field.key] = configured === "true";
+          else if (field.type === "object" && typeof configured === "string") { try { direct[field.key] = JSON.parse(configured); } catch { direct[field.key] = configured; } }
+          else direct[field.key] = configured;
+        }
+      }
+      try {
+        const unresolvedFields = registered.operation.input.filter((field) => direct[field.key] === undefined);
+        const mapped = applyFieldMappings(unresolvedFields, connectorConfig.mappings as FieldMapping[], { trigger: triggerContext, steps: connectorStepOutputs });
+        const connectorInput: Record<string, unknown> = { ...mapped, ...direct };
+        if (registered.operation.input.some((field) => field.key === "values") && connectorInput.values === undefined) connectorInput.values = triggerContext.message ?? triggerContext;
+        if (connectorConfig.connectorId === "google_sheets" && connectorInput.values && typeof connectorInput.values === "object" && !Array.isArray(connectorInput.values)) {
+          const latestAi = Object.values(connectorStepOutputs).reverse().find((output) => typeof output.result === "string");
+          connectorInput.values = {
+            ...triggerContext,
+            ...(connectorInput.values as Record<string, unknown>),
+            ...(latestAi ? { summary: latestAi.result, ai_result: latestAi.result } : {}),
+          };
+        }
+        const result = await registered.handler(connectorInput, { userId, workflowId, executionId: idempotencyKey ?? workflowId, stepId: step.id, ...(connectorConfig.connectionId ? { connectionId: connectorConfig.connectionId } : {}), idempotencyKey: `${idempotencyKey ?? workflowId}:${step.id}` });
+        if (result.status !== "succeeded" || !result.acknowledged) { await fail(result.error?.message ?? "The connector did not acknowledge this action.", "failed", result.error ? new ConnectorError(result.error) : undefined); break; }
+        connectorStepOutputs[step.id] = result.output; variables[step.id] = result.output;
+        delivered = delivered || result.externallyDelivered;
+        await succeed(result.externallyDelivered ? `${registered.operation.displayName} was acknowledged by the provider.` : `${registered.operation.displayName} completed.`, result.metadata, result.providerReferenceId);
+      } catch (error) { await fail(error instanceof Error ? error.message : "The connector action failed.", "failed", error); break; }
       continue;
     }
 
@@ -424,6 +494,7 @@ export async function executeWorkflowSteps({
         variables.ai_transformed_content = aiResult;
         variables.generated_content = aiResult;
         variables[step.id] = aiResult;
+        connectorStepOutputs[step.id] = { result: aiResult };
         await succeed(
           `AI completed this step using ${result.metadata.provider}/${result.metadata.model}.`,
           { provider: result.metadata.provider, model: result.metadata.model },

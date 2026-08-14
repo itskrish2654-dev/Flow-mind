@@ -42,11 +42,11 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
   const steps: CompiledWorkflow["steps"] = [
     {
       id: "step_1",
-      type: plan.trigger.capabilityId === "generic_webhook_trigger" ? "webhook_trigger" : "public_form_trigger",
+      type: plan.trigger.capabilityId.startsWith("gmail_") || plan.trigger.capabilityId === "manual_trigger" ? "connector_trigger" : plan.trigger.capabilityId === "generic_webhook_trigger" ? "webhook_trigger" : "public_form_trigger",
       capabilityId: plan.trigger.capabilityId,
-      title: plan.trigger.capabilityId === "generic_webhook_trigger" ? "Incoming webhook" : "Public form submission",
-      description: plan.trigger.capabilityId === "generic_webhook_trigger" ? "Starts from an authenticated FlowMind webhook endpoint." : "Starts when someone submits the hosted FlowMind form.",
-      ...(plan.trigger.capabilityId === "generic_webhook_trigger" ? { config: { connector: { connectorId: "flowmind_webhook", operationKind: "trigger" as const, operationKey: "event_received", operationVersion: 1, mappings: [] } } } : {}),
+      title: plan.trigger.displayName,
+      description: plan.trigger.capabilityId.startsWith("gmail_") ? "Starts from a new message resolved through Gmail history." : plan.trigger.capabilityId === "manual_trigger" ? "Starts when you explicitly run this workflow." : plan.trigger.capabilityId === "generic_webhook_trigger" ? "Starts from an authenticated FlowMind webhook endpoint." : "Starts when someone submits the hosted FlowMind form.",
+      ...(plan.trigger.capabilityId.startsWith("gmail_") ? { config: { connector: { connectorId: "google_gmail", operationKind: "trigger" as const, operationKey: plan.trigger.capabilityId === "gmail_new_email_matching_search" ? "new_email_matching_search" : "new_email", operationVersion: 1, mappings: [], ...(plan.trigger.instruction ? { settings: { search: plan.trigger.instruction } } : {}) } } } : plan.trigger.capabilityId === "generic_webhook_trigger" ? { config: { connector: { connectorId: "flowmind_webhook", operationKind: "trigger" as const, operationKey: "event_received", operationVersion: 1, mappings: [] } } } : {}),
     },
     ...plan.transformations.map((transformation, index) => ({
       id: `step_${index + 2}`,
@@ -62,7 +62,19 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
   ];
 
   const destinationIndex = steps.length + 1;
-  if (plan.destination.capabilityId === "generic_http_action") {
+  if (plan.destination.capabilityId.startsWith("google_sheets_")) {
+    const operationKey = plan.destination.capabilityId.replace("google_sheets_", "");
+    const operationInputs = operationKey === "find_row"
+      ? [{ key: "matchColumn", label: "Exact-match column", type: "text" as const }, { key: "matchValue", label: "Value to find", type: "text" as const }]
+      : operationKey === "update_row"
+        ? [{ key: "rowNumber", label: "Exact row number", type: "text" as const }]
+        : [];
+    steps.push({ id: `step_${destinationIndex}`, type: "connector_action", capabilityId: plan.destination.capabilityId, title: plan.destination.displayName, description: "Uses the selected Google account, spreadsheet, and worksheet.", inputsRequired: [{ key: "spreadsheetId", label: "Google spreadsheet URL or ID", type: "text" }, { key: "worksheet", label: "Worksheet name", type: "text" }, ...operationInputs], config: { connector: { connectorId: "google_sheets", operationKind: "action", operationKey, operationVersion: 1, mappings: [{ target: "spreadsheetId", source: { kind: "literal", value: "" } }, { target: "worksheet", source: { kind: "literal", value: "" } }, ...(["add_row", "update_row"].includes(operationKey) ? [{ target: "values", source: { kind: "trigger" as const, path: "" } }] : [])] } } });
+  } else if (plan.destination.capabilityId === "gmail_send_email" || plan.destination.capabilityId === "gmail_reply_to_email") {
+    const reply = plan.destination.capabilityId === "gmail_reply_to_email";
+    const aiStep = steps.find((step) => step.type === "ai_transform");
+    steps.push({ id: `step_${destinationIndex}`, type: "connector_action", capabilityId: plan.destination.capabilityId, title: plan.destination.displayName, description: reply ? "Replies in the validated Gmail thread after acknowledgement." : "Sends through the selected Gmail account after acknowledgement.", inputsRequired: [...(!reply ? [{ key: "to", label: "Recipient", type: "text" as const }, { key: "subject", label: "Subject", type: "text" as const }] : []), { key: "body", label: reply ? "Reply" : "Email body", type: "text" as const }], config: { connector: { connectorId: "google_gmail", operationKind: "action", operationKey: reply ? "reply_to_email" : "send_email", operationVersion: 1, mappings: [...(reply ? [{ target: "messageId", source: { kind: "trigger" as const, path: "message.id" } }, { target: "threadId", source: { kind: "trigger" as const, path: "message.threadId" } }] : []), ...(aiStep ? [{ target: "body", source: { kind: "ai" as const, stepId: aiStep.id } }] : [])] } } });
+  } else if (plan.destination.capabilityId === "generic_http_action") {
     const endpoint = prompt.match(/https:\/\/[^\s)\]]+/i)?.[0];
     steps.push({
       id: `step_${destinationIndex}`,
@@ -107,7 +119,11 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
   }
 
   const summaryParts = [
-    plan.trigger.capabilityId === "generic_webhook_trigger"
+    plan.trigger.capabilityId.startsWith("gmail_")
+      ? "Receives a resolved new Gmail message"
+      : plan.trigger.capabilityId === "manual_trigger"
+        ? "Starts when the user runs it"
+      : plan.trigger.capabilityId === "generic_webhook_trigger"
       ? "Receives an authenticated FlowMind webhook event"
       : "Receives a FlowMind hosted form submission",
     ...plan.transformations.map((transformation) =>
@@ -117,6 +133,10 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
       ? "generates a downloadable PDF"
       : plan.destination.capabilityId === "generic_http_action"
         ? "posts the result as JSON to the configured HTTP destination"
+        : plan.destination.capabilityId.startsWith("google_sheets_")
+          ? plan.destination.displayName.toLowerCase()
+          : plan.destination.capabilityId.startsWith("gmail_")
+            ? plan.destination.displayName.toLowerCase()
         : "stores the result inside FlowMind",
   ];
   const summary = `${summaryParts.join(", then ")}.`.slice(0, 300);
@@ -127,7 +147,11 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
         ? "Your submission has been stored in FlowMind."
         : plan.destination.capabilityId === "generate_pdf"
           ? "Your PDF has been generated and stored in FlowMind."
-          : "Your submission was sent to the configured HTTP destination.",
+          : plan.destination.capabilityId.startsWith("google_sheets_")
+            ? "Your submission was processed by the configured Google Sheets action."
+            : plan.destination.capabilityId.startsWith("gmail_")
+              ? "Your submission was processed by the configured Gmail action."
+              : "Your submission was sent to the configured HTTP destination.",
   } : undefined;
 
   return annotateWorkflowCapabilities(

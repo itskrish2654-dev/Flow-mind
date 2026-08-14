@@ -4,6 +4,7 @@ import { after, NextResponse } from "next/server";
 import { getConnectorTrigger } from "@/lib/connectors/registry";
 import { verifyConnectorEndpointToken } from "@/lib/connectors/subscriptions";
 import { dispatchConnectorReceipt } from "@/lib/connectors/webhook-dispatch";
+import { processGmailPush, verifyGooglePubSubRequest } from "@/lib/connectors/google/gmail-push";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Json } from "@/lib/supabase/types";
 import { SECURITY_LIMITS, enforceRateLimit, enforceUsageQuota } from "@/lib/security/limits";
@@ -14,7 +15,22 @@ const MAX_EVENT_BYTES = 64 * 1024;
 
 export async function POST(request: Request, { params }: { params: Promise<{ provider: string }> }) {
   const { provider } = await params;
-  if (provider !== "flowmind_webhook") return NextResponse.json({ error: "Provider not found." }, { status: 404 });
+  if (!['flowmind_webhook', 'google_gmail'].includes(provider)) return NextResponse.json({ error: "Provider not found." }, { status: 404 });
+  const contentLength = Number(request.headers.get("content-length") ?? 0);
+  if (contentLength > MAX_EVENT_BYTES) return NextResponse.json({ error: "Payload too large." }, { status: 413 });
+  const raw = new Uint8Array(await request.arrayBuffer());
+  if (raw.byteLength > MAX_EVENT_BYTES) return NextResponse.json({ error: "Payload too large." }, { status: 413 });
+  let payload: unknown; try { payload = JSON.parse(Buffer.from(raw).toString("utf8")); } catch { return NextResponse.json({ error: "Valid JSON is required." }, { status: 400 }); }
+  if (provider === "google_gmail") {
+    if (!(await verifyGooglePubSubRequest(request))) {
+      return NextResponse.json({ error: "Google notification verification failed." }, { status: 401 });
+    }
+    try {
+      const receiptIds = await processGmailPush(request, payload, true);
+      after(() => Promise.allSettled(receiptIds.map((receiptId) => dispatchConnectorReceipt(receiptId))));
+      return NextResponse.json({ accepted: true, queued: receiptIds.length }, { status: 202 });
+    } catch { return NextResponse.json({ error: "Google notification processing is temporarily unavailable." }, { status: 503 }); }
+  }
   const url = new URL(request.url); const subscriptionId = url.searchParams.get("subscription") ?? ""; const token = url.searchParams.get("token") ?? "";
   if (!/^[0-9a-f-]{36}$/i.test(subscriptionId)) return NextResponse.json({ error: "Invalid endpoint." }, { status: 404 });
   let verified = false; try { verified = verifyConnectorEndpointToken(subscriptionId, token); } catch { verified = false; }
@@ -22,11 +38,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
   const admin = createAdminClient();
   const { data: subscription } = await admin.from("connector_subscriptions").select("id, user_id, workflow_id, workflow_version_id, connector_id, operation_key, operation_version, status").eq("id", subscriptionId).eq("connector_id", provider).eq("status", "active").maybeSingle();
   if (!subscription) return NextResponse.json({ error: "Subscription not found." }, { status: 404 });
-  const contentLength = Number(request.headers.get("content-length") ?? 0);
-  if (contentLength > MAX_EVENT_BYTES) return NextResponse.json({ error: "Payload too large." }, { status: 413 });
-  const raw = new Uint8Array(await request.arrayBuffer());
-  if (raw.byteLength > MAX_EVENT_BYTES) return NextResponse.json({ error: "Payload too large." }, { status: 413 });
-  let payload: unknown; try { payload = JSON.parse(Buffer.from(raw).toString("utf8")); } catch { return NextResponse.json({ error: "Valid JSON is required." }, { status: 400 }); }
   const registered = getConnectorTrigger(provider, subscription.operation_key, subscription.operation_version);
   if (!registered || !registered.operation.production || !registered.handler || !(await registered.handler.verify(request, raw))) return NextResponse.json({ error: "Webhook verification failed." }, { status: 401 });
   try {

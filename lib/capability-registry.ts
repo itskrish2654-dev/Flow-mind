@@ -30,6 +30,11 @@ const defineCapability = <T extends CapabilityDefinition>(capability: T) => capa
  * this registry. Provider model output is never allowed to declare support.
  */
 export const CAPABILITY_REGISTRY = {
+  manual_trigger: defineCapability({
+    id: "manual_trigger", displayName: "Manual run", category: "trigger", supported: true,
+    executionImplementation: "flowmind-test-run", requiredSetupFields: [], credentialsRequired: false,
+    availableInTest: true, availableInProduction: true, limitations: ["Starts only when an authenticated owner explicitly runs the workflow."], aliases: ["manual", "manually", "when i run"],
+  }),
   public_form_submission: defineCapability({
     id: "public_form_submission",
     displayName: "Public form submission",
@@ -205,18 +210,64 @@ export const CAPABILITY_REGISTRY = {
     limitations: ["Salesforce is not currently supported."],
     aliases: ["salesforce"],
   }),
-  google_sheets: defineCapability({
-    id: "google_sheets",
-    displayName: "Google Sheets",
+  gmail_new_email: defineCapability({
+    id: "gmail_new_email", displayName: "New Gmail email", category: "trigger", supported: true,
+    executionImplementation: "connector:google_gmail/new_email@1", requiredSetupFields: [], credentialsRequired: true,
+    availableInTest: true, availableInProduction: true,
+    limitations: ["Beta until Google OAuth verification and live production acceptance are complete."], aliases: ["gmail message arrives", "new gmail", "gmail email arrives"],
+  }),
+  gmail_new_email_matching_search: defineCapability({
+    id: "gmail_new_email_matching_search", displayName: "New Gmail email matching search", category: "trigger", supported: true,
+    executionImplementation: "connector:google_gmail/new_email_matching_search@1", requiredSetupFields: [{ key: "search", label: "Email filter", type: "text" }], credentialsRequired: true,
+    availableInTest: true, availableInProduction: true,
+    limitations: ["Uses Gmail-compatible search and requires a resolved filter."], aliases: ["gmail contains", "gmail from", "email contains"],
+  }),
+  gmail_send_email: defineCapability({
+    id: "gmail_send_email", displayName: "Send email through Gmail", category: "destination", supported: true,
+    executionImplementation: "connector:google_gmail/send_email@1", requiredSetupFields: [{ key: "to", label: "To", type: "text" }, { key: "subject", label: "Subject", type: "text" }, { key: "body", label: "Body", type: "text" }], credentialsRequired: true,
+    availableInTest: true, availableInProduction: true,
+    limitations: ["Requires Gmail acknowledgement; ambiguous sends are never retried automatically."], aliases: ["send through gmail", "gmail send", "email it through gmail"],
+  }),
+  gmail_reply_to_email: defineCapability({
+    id: "gmail_reply_to_email", displayName: "Reply in Gmail", category: "destination", supported: true,
+    executionImplementation: "connector:google_gmail/reply_to_email@1", requiredSetupFields: [{ key: "messageId", label: "Gmail message", type: "text" }, { key: "threadId", label: "Gmail thread", type: "text" }, { key: "body", label: "Reply", type: "text" }], credentialsRequired: true,
+    availableInTest: true, availableInProduction: true,
+    limitations: ["Requires a valid Gmail message and thread reference."], aliases: ["reply in gmail", "gmail reply", "reply to email"],
+  }),
+  google_sheets_add_row: defineCapability({
+    id: "google_sheets_add_row",
+    displayName: "Add row to Google Sheets",
     category: "destination",
-    supported: false,
-    executionImplementation: null,
-    requiredSetupFields: [],
+    supported: true,
+    executionImplementation: "connector:google_sheets/add_row@1",
+    requiredSetupFields: [{ key: "spreadsheetId", label: "Spreadsheet", type: "text" }, { key: "worksheet", label: "Worksheet", type: "text" }],
     credentialsRequired: true,
-    availableInTest: false,
-    availableInProduction: false,
-    limitations: ["Google Sheets delivery is not currently supported."],
-    aliases: ["google sheets", "google sheet", "sheets"],
+    availableInTest: true,
+    availableInProduction: true,
+    limitations: ["Beta until Google OAuth verification and live production acceptance are complete.", "Writes use RAW value semantics."],
+    aliases: ["add to google sheets", "add row to google sheet", "save to google sheets", "google sheets", "google sheet"],
+  }),
+  google_sheets_find_row: defineCapability({
+    id: "google_sheets_find_row", displayName: "Find row in Google Sheets", category: "transformation", supported: true,
+    executionImplementation: "connector:google_sheets/find_row@1", requiredSetupFields: [{ key: "spreadsheetId", label: "Spreadsheet", type: "text" }, { key: "worksheet", label: "Worksheet", type: "text" }, { key: "matchColumn", label: "Lookup column", type: "text" }], credentialsRequired: true,
+    availableInTest: true, availableInProduction: true, limitations: ["Exact matches only; multiple matches fail clearly."], aliases: ["find row in google sheets", "lookup in google sheets"],
+  }),
+  google_sheets_update_row: defineCapability({
+    id: "google_sheets_update_row", displayName: "Update row in Google Sheets", category: "destination", supported: true,
+    executionImplementation: "connector:google_sheets/update_row@1", requiredSetupFields: [{ key: "spreadsheetId", label: "Spreadsheet", type: "text" }, { key: "worksheet", label: "Worksheet", type: "text" }], credentialsRequired: true,
+    availableInTest: true, availableInProduction: true, limitations: ["Requires an explicit unique row reference."], aliases: ["update row in google sheets"],
+  }),
+  google_calendar: defineCapability({
+    id: "google_calendar", displayName: "Google Calendar", category: "destination", supported: false,
+    executionImplementation: null, requiredSetupFields: [], credentialsRequired: true,
+    availableInTest: false, availableInProduction: false,
+    limitations: ["Google Calendar is not currently supported."], aliases: ["google calendar", "calendar event"],
+  }),
+  google_drive: defineCapability({
+    id: "google_drive", displayName: "Google Drive", category: "destination", supported: false,
+    executionImplementation: null, requiredSetupFields: [], credentialsRequired: true,
+    availableInTest: false, availableInProduction: false,
+    limitations: ["Google Drive is not currently supported."], aliases: ["google drive", "upload to drive", "save to drive"],
   }),
   slack: defineCapability({
     id: "slack",
@@ -367,12 +418,20 @@ export function resolveStepCapabilityId(
   if (step.capabilityId) {
     const compatibleTypes: Partial<Record<CapabilityId, WorkflowStepType[]>> = {
       public_form_submission: ["public_form_trigger", "webhook_trigger"],
+      manual_trigger: ["connector_trigger"],
       generic_webhook_trigger: ["webhook_trigger"],
       ai_text_transform: ["ai_transform"],
       flowmind_data_store: ["store_data"],
       generate_pdf: ["generate_pdf"],
       webhook_post: ["webhook_post", "http_request"],
       generic_http_action: ["webhook_post", "http_request"],
+      gmail_new_email: ["connector_trigger"],
+      gmail_new_email_matching_search: ["connector_trigger"],
+      gmail_send_email: ["connector_action"],
+      gmail_reply_to_email: ["connector_action"],
+      google_sheets_add_row: ["connector_action"],
+      google_sheets_find_row: ["connector_action"],
+      google_sheets_update_row: ["connector_action"],
     };
     const compatible = compatibleTypes[step.capabilityId as CapabilityId];
     return compatible?.includes(step.type) ? step.capabilityId : null;
@@ -405,6 +464,9 @@ export function resolveStepCapabilityId(
         : "webhook_post";
     case "filter_condition":
       return null;
+    case "connector_trigger":
+    case "connector_action":
+      return step.capabilityId ?? null;
   }
 }
 

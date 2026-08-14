@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getAuthenticatedContext } from "@/lib/auth";
-import { activateWorkflowConnectorSubscriptions, connectorWebhookUrl, deactivateWorkflowConnectorSubscriptions } from "@/lib/connectors/subscriptions";
+import { activateWorkflowConnectorSubscriptions, connectorWebhookUrl, deactivateWorkflowConnectorSubscriptions, validateWorkflowConnectorConnections } from "@/lib/connectors/subscriptions";
 import {
   annotateWorkflowCapabilities,
   assessWorkflowCapabilities,
@@ -700,6 +700,11 @@ export async function setWorkflowPublication(
         error: unavailable.assessment.message ?? "This workflow cannot be published safely.",
       };
     }
+    const snapshot = await loadWorkflowSnapshot(admin, parsedId.data, auth.user.id);
+    const incomplete = validateRequiredSetupInputs(workflow.data.steps, snapshot?.setupConfig ?? {});
+    if (incomplete) return { ok: false, error: incomplete };
+    const connectorReadiness = await validateWorkflowConnectorConnections({ userId: auth.user.id, steps: workflow.data.steps });
+    if (connectorReadiness) return { ok: false, error: connectorReadiness };
   }
   const { error: updateError } = await admin
     .from("workflows")

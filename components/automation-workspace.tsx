@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 
 import { runTestWorkflow, type TestExecutionLog } from "@/app/actions/execute";
+import { configureGoogleWorkflowStep, getGoogleConnectionOptions, inspectGoogleSheet } from "@/app/actions/connections";
 import {
   getWorkflowCredentialMetadata,
   revokeWorkflowCredential,
@@ -95,6 +96,8 @@ const stepVisuals = {
   http_request: { label: "Destination", icon: Send, tone: "violet" },
   generate_pdf: { label: "PDF Document", icon: FileText, tone: "rose" },
   filter_condition: { label: "Condition", icon: Filter, tone: "amber" },
+  connector_trigger: { label: "Connected Trigger", icon: Zap, tone: "emerald" },
+  connector_action: { label: "Connected Action", icon: Send, tone: "violet" },
 } as const;
 
 const toneClasses = {
@@ -237,6 +240,11 @@ function Inspector({
   const [configuredSecrets, setConfiguredSecrets] = useState<Set<string>>(new Set());
   const [credentialBusy, setCredentialBusy] = useState<string | null>(null);
   const [credentialError, setCredentialError] = useState<string | null>(null);
+  const [googleConnections, setGoogleConnections] = useState<Array<{ id: string; label: string; status: string; scopes: string[] }>>([]);
+  const [googleConnectionMessage, setGoogleConnectionMessage] = useState<string | null>(null);
+  const [pendingGoogleConnectionId, setPendingGoogleConnectionId] = useState<string | null>(null);
+  const [googleSheetInfo, setGoogleSheetInfo] = useState<{ title: string; worksheets: Array<{ id: number; title: string }> } | null>(null);
+  const [googleSheetBusy, setGoogleSheetBusy] = useState(false);
 
   useEffect(() => {
     if (!workflowId) return;
@@ -255,6 +263,13 @@ function Inspector({
       active = false;
     };
   }, [workflowId]);
+
+  useEffect(() => {
+    if (!step?.config?.connector?.connectorId.startsWith("google_")) return;
+    let active = true;
+    void getGoogleConnectionOptions().then((result) => { if (active && result.ok) setGoogleConnections(result.connections); });
+    return () => { active = false; };
+  }, [step]);
 
   async function copyValue(id: string, value: string) {
     if (!value) return;
@@ -292,6 +307,14 @@ function Inspector({
           </div>
         )}
         <div className="my-4 h-px bg-[#eee8de]" />
+        {step.config?.connector?.connectorId.startsWith("google_") && workflowId && (
+          <div className="mb-4 rounded-xl border border-[#e7c75f] bg-[#fff7dc] p-3.5">
+            <p className="text-[10px] font-semibold text-slate-900">Google account</p>
+            <p className="mt-1 text-[9px] leading-4 text-slate-500">Choose the exact account for this step. FlowMind never selects the first connected account automatically.</p>
+            {googleConnections.length ? <select aria-label="Google account for this step" value={step.config.connector.connectionId ?? ""} onChange={async (event) => { const selectedId = event.target.value; setPendingGoogleConnectionId(selectedId); setGoogleConnectionMessage(null); const result = await configureGoogleWorkflowStep(workflowId, step.id, selectedId); if (!result.ok) { setGoogleConnectionMessage(result.error); return; } window.location.reload(); }} className="mt-3 h-10 w-full rounded-lg border border-[#d8caa8] bg-white px-3 text-xs text-slate-800"><option value="">Choose Google account</option>{googleConnections.map((connection) => <option key={connection.id} value={connection.id}>{connection.label} · {connection.status}</option>)}</select> : <a href={`/api/connectors/oauth/${step.config.connector.connectorId}/start?operation=${step.config.connector.operationKey}&return=${encodeURIComponent(`/dashboard/projects/${workflowId}`)}`} className="mt-3 flex h-10 items-center justify-center rounded-lg border border-[#d7aa2f] bg-white text-[10px] font-semibold text-[#6f5100]">Connect Google</a>}
+            {googleConnectionMessage && <><p role="alert" className="mt-2 text-[9px] text-rose-700">{googleConnectionMessage}</p><a href={`/api/connectors/oauth/${step.config.connector.connectorId}/start?operation=${step.config.connector.operationKey}&connection=${pendingGoogleConnectionId ?? step.config.connector.connectionId ?? ""}&return=${encodeURIComponent(`/dashboard/projects/${workflowId}`)}`} className="mt-2 block text-[9px] font-semibold text-[#795700]">Approve the additional permission</a></>}
+          </div>
+        )}
         {step.type === "public_form_trigger" && publicFormPath && (
           <div className="mb-4 rounded-xl border border-[#e7c75f] bg-[#fff7dc] p-3.5">
             <p className="flex items-center gap-2 text-[10px] font-semibold text-slate-900">
@@ -455,17 +478,42 @@ function Inspector({
                   ) : (
                     <>
                       <div className="relative mt-2">
-                        <input
-                          id={id}
-                          type={input.type === "secret" ? "password" : input.type === "url" ? "url" : "text"}
-                          value={value}
-                          onChange={(event) => onChange(id, event.target.value)}
-                          placeholder={input.type === "secret" && configuredSecrets.has(`${step.capabilityId ?? step.type}:${input.key}`) ? "Configured — enter a replacement" : input.placeholder}
-                          autoComplete={input.type === "secret" ? "new-password" : undefined}
-                          className="h-10 w-full rounded-lg border border-[#ded6ca] bg-[#f8f4ec] px-3 pr-9 text-[10px] text-slate-800 outline-none placeholder:text-slate-400 focus:border-[#d7aa2f] focus:bg-white focus:ring-4 focus:ring-[#f4e5ad]"
-                        />
+                        {step.config?.connector?.connectorId === "google_sheets" && input.key === "worksheet" && googleSheetInfo?.worksheets.length ? (
+                          <select id={id} value={value} onChange={(event) => onChange(id, event.target.value)} className="h-10 w-full rounded-lg border border-[#ded6ca] bg-[#f8f4ec] px-3 text-[10px] text-slate-800 outline-none focus:border-[#d7aa2f] focus:bg-white focus:ring-4 focus:ring-[#f4e5ad]">
+                            <option value="">Choose worksheet</option>
+                            {googleSheetInfo.worksheets.map((worksheet) => <option key={worksheet.id} value={worksheet.title}>{worksheet.title}</option>)}
+                          </select>
+                        ) : (
+                          <input
+                            id={id}
+                            type={input.type === "secret" ? "password" : input.type === "url" ? "url" : "text"}
+                            value={value}
+                            onChange={(event) => onChange(id, event.target.value)}
+                            placeholder={input.type === "secret" && configuredSecrets.has(`${step.capabilityId ?? step.type}:${input.key}`) ? "Configured — enter a replacement" : input.placeholder}
+                            autoComplete={input.type === "secret" ? "new-password" : undefined}
+                            className="h-10 w-full rounded-lg border border-[#ded6ca] bg-[#f8f4ec] px-3 pr-9 text-[10px] text-slate-800 outline-none placeholder:text-slate-400 focus:border-[#d7aa2f] focus:bg-white focus:ring-4 focus:ring-[#f4e5ad]"
+                          />
+                        )}
                         {input.type === "url" && value && <button type="button" onClick={() => void copyValue(id, value)} className="absolute right-1 top-1 flex size-8 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-800">{copied === id ? <Check className="size-3.5 text-emerald-500" /> : <Copy className="size-3.5" />}</button>}
                       </div>
+                      {step.config?.connector?.connectorId === "google_sheets" && input.key === "spreadsheetId" && (
+                        <button
+                          type="button"
+                          disabled={!value || !step.config.connector.connectionId || googleSheetBusy}
+                          onClick={async () => {
+                            if (!step.config?.connector?.connectionId) return;
+                            setGoogleSheetBusy(true);
+                            setGoogleConnectionMessage(null);
+                            const result = await inspectGoogleSheet(step.config.connector.connectionId, value);
+                            setGoogleSheetBusy(false);
+                            if (!result.ok) { setGoogleConnectionMessage(result.error); return; }
+                            setGoogleSheetInfo(result.spreadsheet);
+                          }}
+                          className="mt-2 h-8 rounded-lg border border-[#d7aa2f] px-2.5 text-[9px] font-semibold text-[#6f5100] disabled:opacity-40"
+                        >
+                          {googleSheetBusy ? "Checking…" : "Load worksheet names"}
+                        </button>
+                      )}
                       {input.type === "secret" && workflowId && (
                         <div className="mt-2 flex items-center gap-2">
                           <button

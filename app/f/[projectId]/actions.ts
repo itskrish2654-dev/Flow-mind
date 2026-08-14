@@ -290,6 +290,7 @@ export async function submitPublicWorkflow(
           // Concurrency is acquired before execution usage is consumed.
           await enforceUsageQuota(publicWorkflow.ownerId, "executions");
           return executeWorkflowSteps({
+            userId: publicWorkflow.ownerId,
             workflowId: publicWorkflow.id,
             workflowName: publicWorkflow.name,
             steps: publicWorkflow.workflow.steps,

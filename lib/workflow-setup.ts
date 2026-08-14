@@ -104,6 +104,8 @@ function defaultInputs(step: WorkflowStep): StepInput[] {
         },
       ];
     case "filter_condition":
+    case "connector_trigger":
+    case "connector_action":
       return [];
   }
 }

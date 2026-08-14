@@ -9,7 +9,7 @@ function context(userId: string, connectionId: string, connectorId: string, cred
 
 async function assertOwnedConnection(userId: string, connectionId: string) {
   const admin = createAdminClient();
-  const { data, error } = await admin.from("connector_connections").select("id, connector_id, status").eq("id", connectionId).eq("user_id", userId).maybeSingle();
+  const { data, error } = await admin.from("connector_connections").select("id, connector_id, provider_family, status").eq("id", connectionId).eq("user_id", userId).maybeSingle();
   if (error || !data || data.status === "revoked") throw new Error("Connection is unavailable.");
   return data;
 }
@@ -35,11 +35,31 @@ export async function readConnectionSecret(input: { userId: string; connectionId
 }
 
 export async function revokeConnection(userId: string, connectionId: string) {
-  await assertOwnedConnection(userId, connectionId);
+  const connection = await assertOwnedConnection(userId, connectionId);
   const admin = createAdminClient();
+  if (connection.provider_family === "google") {
+    const refreshToken = await readConnectionSecret({ userId, connectionId, credentialKey: "refresh_token" }).catch(() => null);
+    const accessToken = refreshToken ? null : await readConnectionSecret({ userId, connectionId, credentialKey: "access_token" }).catch(() => null);
+    const { stopGmailWatch } = await import("@/lib/connectors/google/gmail-push");
+    await stopGmailWatch({ userId, connectionId });
+    if (refreshToken || accessToken) {
+      const { revokeGoogleToken } = await import("@/lib/connectors/google/oauth-provider");
+      await revokeGoogleToken(refreshToken ?? accessToken!).catch(() => false);
+    }
+  }
   const { error: credentialError } = await admin.from("connector_connection_credentials").delete().eq("connection_id", connectionId).eq("user_id", userId);
   if (credentialError) throw new Error("Connection secrets could not be removed.");
   const { error } = await admin.from("connector_connections").update({ status: "revoked", granted_scopes: [], token_expires_at: null, updated_at: new Date().toISOString() }).eq("id", connectionId).eq("user_id", userId);
   if (error) throw new Error("Connection could not be disconnected.");
   await admin.from("connector_subscriptions").update({ status: "revoked", updated_at: new Date().toISOString() }).eq("connection_id", connectionId).eq("user_id", userId);
+}
+
+export async function revokeAllUserConnections(userId: string) {
+  const admin = createAdminClient();
+  for (;;) {
+    const { data, error } = await admin.from("connector_connections").select("id").eq("user_id", userId).neq("status", "revoked").limit(100);
+    if (error) throw new Error("Connection inventory could not be loaded.");
+    if (!data?.length) break;
+    for (const connection of data) await revokeConnection(userId, connection.id);
+  }
 }

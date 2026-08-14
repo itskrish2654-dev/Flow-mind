@@ -132,6 +132,8 @@ export const WorkflowStepSchema = z.object({
     "http_request",
     "generate_pdf",
     "filter_condition",
+    "connector_trigger",
+    "connector_action",
   ]),
   capabilityId: z.string().min(1).max(80).optional(),
   capabilityStatus: z.enum(["supported", "test_only", "unsupported"]).optional(),
@@ -166,6 +168,7 @@ export const WorkflowStepSchema = z.object({
             )
             .max(50)
             .default([]),
+          settings: z.record(z.string(), z.unknown()).optional(),
         })
         .optional(),
     })

@@ -10,6 +10,7 @@ import { getClientIp } from "@/lib/security/request-context";
 import { securityLog } from "@/lib/security/redaction";
 import { captureOperationalError, captureOperationalEvent } from "@/lib/observability";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { revokeAllUserConnections } from "@/lib/connectors/connection-vault";
 import { getSupabaseConfig } from "@/lib/supabase/config";
 
 const DeleteAccountSchema = z.object({
@@ -123,6 +124,8 @@ export async function deleteOwnAccount(input: {
       if (error) throw new Error("storage_cleanup_failed");
     }
 
+    try { await revokeAllUserConnections(auth.user.id); }
+    catch { throw new Error("connector_revocation_failed"); }
     const { data: connectorCleaned, error: connectorCleanupError } = await admin.rpc("cleanup_connector_account_data", { p_user_id: auth.user.id });
     if (connectorCleanupError || !connectorCleaned) throw new Error("connector_cleanup_failed");
     const { data: cleaned, error: cleanupError } = await admin.rpc("cleanup_account_data", {

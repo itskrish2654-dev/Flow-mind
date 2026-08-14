@@ -129,7 +129,8 @@ test("3. AI execution enforces a timeout", async () => {
 test("4. named unsupported connectors never compile as generic steps", () => {
   const prompts = [
     ["Connect to Salesforce.", "salesforce"],
-    ["Send this to Google Sheets.", "google_sheets"],
+    ["Connect Google Calendar.", "google_calendar"],
+    ["Upload this to Google Drive.", "google_drive"],
     ["Post it to Slack.", "slack"],
     ["Charge the customer with Stripe.", "stripe"],
     ["Send to WhatsApp.", "whatsapp"],

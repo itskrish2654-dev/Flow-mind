@@ -139,6 +139,17 @@ function detectsPdfDestination(prompt: string): boolean {
   return /\b(pdf|invoice|proposal|document|downloadable report)\b/i.test(prompt);
 }
 
+export function deriveGmailSearch(prompt: string): string | null {
+  const terms: string[] = [];
+  const from = prompt.match(/\bfrom\s+(@[A-Za-z0-9.-]+|[^\s,]+@[^\s,]+)/i)?.[1];
+  if (from) terms.push(`from:(${from})`);
+  const contains = prompt.match(/\bcontains?\s+["']([^"']{1,100})["']/i)?.[1] ?? prompt.match(/\bcontains?\s+([A-Za-z0-9_-]{2,60})/i)?.[1];
+  if (contains) terms.push(`"${contains.replace(/["\\]/g, "")}"`);
+  const subject = prompt.match(/\bsubject(?:\s+contains?|\s+is)?\s+["']?([A-Za-z0-9 _-]{2,80})["']?/i)?.[1]?.trim();
+  if (subject) terms.push(`subject:("${subject.replace(/["\\]/g, "")}")`);
+  return terms.length ? terms.join(" ") : null;
+}
+
 export function planWorkflow(prompt: string): WorkflowPlan {
   const normalizedPrompt = prompt.trim();
   const base = {
@@ -168,7 +179,9 @@ export function planWorkflow(prompt: string): WorkflowPlan {
     };
   }
 
-  const unsupported = findRequestedUnsupportedCapabilities(normalizedPrompt);
+  const asksForGmail = /\bgmail\b/i.test(normalizedPrompt);
+  const asksForSheets = /\bgoogle sheets?\b|\bsheets?\b/i.test(normalizedPrompt);
+  const unsupported = findRequestedUnsupportedCapabilities(normalizedPrompt).filter((capability) => !(asksForGmail && ["email_ingestion", "email_delivery"].includes(capability.id)));
   if (
     /\b(every\s+(?:hour|weekday|day|week|month|morning|evening|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)|on a schedule)\b/i.test(
       normalizedPrompt,
@@ -182,7 +195,7 @@ export function planWorkflow(prompt: string): WorkflowPlan {
     /\b(connect(?:\s+to)?|sync\s+(?:to|with)|post\s+(?:it\s+)?to)\b/i.test(
       normalizedPrompt,
     ) &&
-    !/\b(flowmind|pdf|document|webhook|http request)\b/i.test(normalizedPrompt) &&
+    !/\b(flowmind|pdf|document|webhook|http request|gmail|google sheets?|sheets?)\b/i.test(normalizedPrompt) &&
     unsupported.length === 0;
   if (asksForUnknownExternalConnection) {
     const externalIntegration = getCapability("external_integration");
@@ -216,13 +229,28 @@ export function planWorkflow(prompt: string): WorkflowPlan {
     };
   }
 
-  const trigger = detectsWebhookTrigger(normalizedPrompt)
+  const gmailSearch = asksForGmail && /\b(contains?|from|subject)\b/i.test(normalizedPrompt);
+  const derivedGmailSearch = gmailSearch ? deriveGmailSearch(normalizedPrompt) : null;
+  if (gmailSearch && !derivedGmailSearch) {
+    return { ...base, status: "NEEDS_CLARIFICATION", missingRequirements: ["gmail search"], message: "FlowMind needs a specific sender, subject, or phrase for the Gmail filter.", clarificationQuestions: ["Which sender, subject, or exact phrase should the new Gmail message match?"] };
+  }
+  const trigger = asksForGmail && /\b(new|arrives?|received?|when)\b/i.test(normalizedPrompt)
+    ? plannedCapability(gmailSearch ? "gmail_new_email_matching_search" : "gmail_new_email", derivedGmailSearch ?? undefined)
+    : /\b(manual(?:ly)?|when i run|on demand)\b/i.test(normalizedPrompt)
+      ? plannedCapability("manual_trigger")
+    : detectsWebhookTrigger(normalizedPrompt)
     ? plannedCapability("generic_webhook_trigger")
     : detectsPublicFormTrigger(normalizedPrompt)
       ? plannedCapability("public_form_submission")
       : null;
   const transformations = detectTransformations(normalizedPrompt);
-  const destination = detectsHttpDestination(normalizedPrompt) || (asksForWebhook && !detectsWebhookTrigger(normalizedPrompt))
+  const destination = asksForSheets
+    ? plannedCapability(/\bupdate row\b/i.test(normalizedPrompt) ? "google_sheets_update_row" : /\bfind|lookup\b/i.test(normalizedPrompt) ? "google_sheets_find_row" : "google_sheets_add_row")
+    : asksForGmail && /\breply\b/i.test(normalizedPrompt)
+      ? plannedCapability("gmail_reply_to_email")
+      : asksForGmail && /\b(send|email it|mail it)\b/i.test(normalizedPrompt)
+        ? plannedCapability("gmail_send_email")
+    : detectsHttpDestination(normalizedPrompt) || (asksForWebhook && !detectsWebhookTrigger(normalizedPrompt))
     ? plannedCapability("generic_http_action")
     : detectsPdfDestination(normalizedPrompt)
     ? plannedCapability("generate_pdf")
