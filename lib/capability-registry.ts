@@ -282,18 +282,50 @@ export const CAPABILITY_REGISTRY = {
     availableInTest: false, availableInProduction: false,
     limitations: ["Google Drive is not currently supported."], aliases: ["google drive", "upload to drive", "save to drive"],
   }),
-  slack: defineCapability({
-    id: "slack",
-    displayName: "Slack",
-    category: "destination",
-    supported: false,
-    executionImplementation: null,
-    requiredSetupFields: [],
-    credentialsRequired: true,
-    availableInTest: false,
-    availableInProduction: false,
-    limitations: ["Slack delivery is not currently supported."],
-    aliases: ["slack"],
+  slack_new_channel_message: defineCapability({
+    id: "slack_new_channel_message", displayName: "New message in Slack channel", category: "trigger", supported: true,
+    executionImplementation: "connector:slack/new_channel_message@1", requiredSetupFields: [{ key: "channel", label: "Slack channel", type: "text" }], credentialsRequired: true,
+    availableInTest: true, availableInProduction: true, limitations: ["Beta until live Slack acceptance is complete.", "Public channels accessible to the installed bot only."], aliases: ["slack message", "message in slack", "posts in slack"],
+  }),
+  slack_send_channel_message: defineCapability({
+    id: "slack_send_channel_message", displayName: "Send Slack channel message", category: "destination", supported: true,
+    executionImplementation: "connector:slack/send_channel_message@1", requiredSetupFields: [{ key: "channel", label: "Slack channel", type: "text" }, { key: "text", label: "Message", type: "text" }], credentialsRequired: true,
+    availableInTest: true, availableInProduction: true, limitations: ["Requires Slack acknowledgement before delivery is reported."], aliases: ["send to slack", "post to slack", "slack alert"],
+  }),
+  slack_reply_in_thread: defineCapability({
+    id: "slack_reply_in_thread", displayName: "Reply in Slack thread", category: "destination", supported: true,
+    executionImplementation: "connector:slack/reply_in_thread@1", requiredSetupFields: [{ key: "channel", label: "Slack channel", type: "text" }, { key: "threadTs", label: "Slack thread", type: "text" }, { key: "text", label: "Reply", type: "text" }], credentialsRequired: true,
+    availableInTest: true, availableInProduction: true, limitations: ["Requires an exact Slack thread reference."], aliases: ["reply in slack thread", "slack thread reply"],
+  }),
+  notion_page_created_or_added: defineCapability({
+    id: "notion_page_created_or_added", displayName: "Notion page created or added", category: "trigger", supported: true,
+    executionImplementation: "connector:notion/page_created_or_added@1", requiredSetupFields: [{ key: "resourceId", label: "Notion page or data source", type: "text" }], credentialsRequired: true,
+    availableInTest: true, availableInProduction: true, limitations: ["Beta until live Notion acceptance is complete.", "Only explicitly shared resources are visible."], aliases: ["notion page created", "new notion page"],
+  }),
+  notion_page_updated: defineCapability({
+    id: "notion_page_updated", displayName: "Notion page updated", category: "trigger", supported: true,
+    executionImplementation: "connector:notion/page_updated@1", requiredSetupFields: [{ key: "resourceId", label: "Notion page or data source", type: "text" }], credentialsRequired: true,
+    availableInTest: true, availableInProduction: true, limitations: ["Fetches current page metadata after a verified webhook event."], aliases: ["notion page updated", "notion update"],
+  }),
+  notion_create_page: defineCapability({
+    id: "notion_create_page", displayName: "Create Notion page", category: "destination", supported: true,
+    executionImplementation: "connector:notion/create_page@1", requiredSetupFields: [{ key: "parentPageId", label: "Parent page", type: "text" }, { key: "title", label: "Title", type: "text" }, { key: "content", label: "Content", type: "text" }], credentialsRequired: true,
+    availableInTest: true, availableInProduction: true, limitations: ["Parent page must be shared with the Notion connection."], aliases: ["create notion page"],
+  }),
+  notion_create_data_source_item: defineCapability({
+    id: "notion_create_data_source_item", displayName: "Add item to Notion data source", category: "destination", supported: true,
+    executionImplementation: "connector:notion/create_data_source_item@1", requiredSetupFields: [{ key: "dataSourceId", label: "Data source", type: "text" }], credentialsRequired: true,
+    availableInTest: true, availableInProduction: true, limitations: ["Only existing supported properties are mapped."], aliases: ["add to notion", "save to notion", "notion data source", "notion database"],
+  }),
+  notion_find_item: defineCapability({
+    id: "notion_find_item", displayName: "Find Notion item", category: "transformation", supported: true,
+    executionImplementation: "connector:notion/find_item@1", requiredSetupFields: [{ key: "dataSourceId", label: "Data source", type: "text" }, { key: "matchProperty", label: "Property", type: "text" }, { key: "matchValue", label: "Exact value", type: "text" }], credentialsRequired: true,
+    availableInTest: true, availableInProduction: true, limitations: ["Exact match only; multiple matches fail as ambiguous."], aliases: ["find notion item", "lookup notion item"],
+  }),
+  notion_update_item: defineCapability({
+    id: "notion_update_item", displayName: "Update Notion item", category: "destination", supported: true,
+    executionImplementation: "connector:notion/update_item@1", requiredSetupFields: [{ key: "dataSourceId", label: "Data source", type: "text" }, { key: "pageId", label: "Page or item", type: "text" }], credentialsRequired: true,
+    availableInTest: true, availableInProduction: true, limitations: ["Requires an exact page/item ID or a preceding unambiguous find."], aliases: ["update notion item", "update in notion"],
   }),
   stripe: defineCapability({
     id: "stripe",
@@ -445,6 +477,15 @@ export function resolveStepCapabilityId(
       google_sheets_add_row: ["connector_action"],
       google_sheets_find_row: ["connector_action"],
       google_sheets_update_row: ["connector_action"],
+      slack_new_channel_message: ["connector_trigger"],
+      slack_send_channel_message: ["connector_action"],
+      slack_reply_in_thread: ["connector_action"],
+      notion_page_created_or_added: ["connector_trigger"],
+      notion_page_updated: ["connector_trigger"],
+      notion_create_page: ["connector_action"],
+      notion_create_data_source_item: ["connector_action"],
+      notion_find_item: ["connector_action"],
+      notion_update_item: ["connector_action"],
     };
     const compatible = compatibleTypes[step.capabilityId as CapabilityId];
     return compatible?.includes(step.type) ? step.capabilityId : null;

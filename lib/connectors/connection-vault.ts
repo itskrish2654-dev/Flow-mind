@@ -47,6 +47,13 @@ export async function revokeConnection(userId: string, connectionId: string) {
       await revokeGoogleToken(refreshToken ?? accessToken!).catch(() => false);
     }
   }
+  if (connection.provider_family === "slack") {
+    const accessToken = await readConnectionSecret({ userId, connectionId, credentialKey: "access_token" }).catch(() => null);
+    if (accessToken) {
+      const { revokeSlackToken } = await import("@/lib/connectors/slack/oauth-provider");
+      await revokeSlackToken(accessToken).catch(() => false);
+    }
+  }
   const { error: credentialError } = await admin.from("connector_connection_credentials").delete().eq("connection_id", connectionId).eq("user_id", userId);
   if (credentialError) throw new Error("Connection secrets could not be removed.");
   const { error } = await admin.from("connector_connections").update({ status: "revoked", granted_scopes: [], token_expires_at: null, updated_at: new Date().toISOString() }).eq("id", connectionId).eq("user_id", userId);

@@ -3,6 +3,9 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { ambiguousAcknowledgement, classifyConnectorHttpFailure } from "@/lib/connectors/errors";
 import { GOOGLE_AUTHORIZATION_URL, GOOGLE_TOKEN_URL } from "@/lib/connectors/google/oauth-provider";
 import { GOOGLE_SCOPES } from "@/lib/connectors/google/scopes";
+import { SLACK_AUTHORIZATION_URL, SLACK_TOKEN_URL } from "@/lib/connectors/slack/oauth-provider";
+import { SLACK_SCOPES } from "@/lib/connectors/slack/scopes";
+import { NOTION_AUTHORIZATION_URL, NOTION_CAPABILITIES, NOTION_TOKEN_URL } from "@/lib/connectors/notion/constants";
 import type {
   ConnectorActionHandler,
   ConnectorManifest,
@@ -132,6 +135,45 @@ const googleSheetsManifest: ConnectorManifest = {
   documentationUrl: "https://developers.google.com/sheets/api",
 };
 
+const slackManifest: ConnectorManifest = {
+  id: "slack",
+  providerFamily: "slack",
+  displayName: "Slack",
+  description: "Receives channel messages and sends acknowledged channel messages or thread replies.",
+  status: "BETA",
+  version: 1,
+  auth: { type: "oauth2", authorizationUrl: SLACK_AUTHORIZATION_URL, tokenUrl: SLACK_TOKEN_URL, defaultScopes: [SLACK_SCOPES.channelsRead], pkceRequired: true },
+  triggers: [{ key: "new_channel_message", version: 1, kind: "trigger", displayName: "New message in a Slack channel", description: "Starts from a new non-bot message in the selected public channel.", input: [{ key: "channel", label: "Channel", type: "string", required: true }], output: [{ key: "message", label: "Message", type: "object", required: true }], requiredScopes: [SLACK_SCOPES.channelsRead, SLACK_SCOPES.channelsHistory], connectionRequired: true, testMode: true, production: true, deliverySemantics: "trigger" }],
+  actions: [
+    { key: "send_channel_message", version: 1, kind: "action", displayName: "Send Slack channel message", description: "Sends text to the selected channel and succeeds only after Slack acknowledgement.", input: [{ key: "channel", label: "Channel", type: "string", required: true }, { key: "text", label: "Message", type: "string", required: true }], output: [{ key: "messageId", label: "Message timestamp", type: "string", required: true }, { key: "channelId", label: "Channel", type: "string", required: true }], requiredScopes: [SLACK_SCOPES.channelsRead, SLACK_SCOPES.chatWrite], connectionRequired: true, testMode: true, production: true, deliverySemantics: "acknowledged_external" },
+    { key: "reply_in_thread", version: 1, kind: "action", displayName: "Reply in Slack thread", description: "Replies to the exact selected Slack thread and validates the acknowledgement.", input: [{ key: "channel", label: "Channel", type: "string", required: true }, { key: "threadTs", label: "Thread", type: "string", required: true }, { key: "text", label: "Reply", type: "string", required: true }], output: [{ key: "messageId", label: "Reply timestamp", type: "string", required: true }, { key: "threadTs", label: "Thread", type: "string", required: true }], requiredScopes: [SLACK_SCOPES.channelsRead, SLACK_SCOPES.chatWrite], connectionRequired: true, testMode: true, production: true, deliverySemantics: "acknowledged_external" },
+  ],
+  limitations: ["Beta until live Slack app acceptance is complete.", "Initial release supports public channels the installed bot can access; it does not advertise DMs or reaction triggers."],
+  documentationUrl: "https://docs.slack.dev/",
+};
+
+const notionManifest: ConnectorManifest = {
+  id: "notion",
+  providerFamily: "notion",
+  displayName: "Notion",
+  description: "Receives page changes and creates, finds, or updates accessible pages and data-source items.",
+  status: "BETA",
+  version: 1,
+  auth: { type: "oauth2", authorizationUrl: NOTION_AUTHORIZATION_URL, tokenUrl: NOTION_TOKEN_URL, defaultScopes: [NOTION_CAPABILITIES.readContent], pkceRequired: false },
+  triggers: [
+    { key: "page_created_or_added", version: 1, kind: "trigger", displayName: "Notion page created or added", description: "Starts after a verified page.created event and fetches the current accessible page.", input: [], output: [{ key: "page", label: "Page", type: "object", required: true }], requiredScopes: [NOTION_CAPABILITIES.readContent], connectionRequired: true, testMode: true, production: true, deliverySemantics: "trigger" },
+    { key: "page_updated", version: 1, kind: "trigger", displayName: "Notion page updated", description: "Starts after a verified page update event and fetches the current accessible page.", input: [], output: [{ key: "page", label: "Page", type: "object", required: true }], requiredScopes: [NOTION_CAPABILITIES.readContent], connectionRequired: true, testMode: true, production: true, deliverySemantics: "trigger" },
+  ],
+  actions: [
+    { key: "create_page", version: 1, kind: "action", displayName: "Create Notion page", description: "Creates a page under the selected accessible parent page.", input: [{ key: "parentPageId", label: "Parent page", type: "string", required: true }, { key: "title", label: "Title", type: "string", required: true }, { key: "content", label: "Content", type: "string" }], output: [{ key: "page", label: "Page", type: "object", required: true }], requiredScopes: [NOTION_CAPABILITIES.readContent, NOTION_CAPABILITIES.insertContent], connectionRequired: true, testMode: true, production: true, deliverySemantics: "acknowledged_external" },
+    { key: "create_data_source_item", version: 1, kind: "action", displayName: "Add item to Notion data source", description: "Inspects the selected data source and creates one item using supported existing properties.", input: [{ key: "dataSourceId", label: "Data source", type: "string", required: true }, { key: "values", label: "Property values", type: "object", required: true }], output: [{ key: "page", label: "Created item", type: "object", required: true }], requiredScopes: [NOTION_CAPABILITIES.readContent, NOTION_CAPABILITIES.insertContent], connectionRequired: true, testMode: true, production: true, deliverySemantics: "acknowledged_external" },
+    { key: "find_item", version: 1, kind: "action", displayName: "Find Notion item", description: "Finds an exact unique item and reports zero or ambiguous matches truthfully.", input: [{ key: "dataSourceId", label: "Data source", type: "string", required: true }, { key: "matchProperty", label: "Property", type: "string", required: true }, { key: "matchValue", label: "Exact value", type: "string", required: true }], output: [{ key: "found", label: "Found", type: "boolean", required: true }, { key: "page", label: "Item", type: "object" }], requiredScopes: [NOTION_CAPABILITIES.readContent], connectionRequired: true, testMode: true, production: true, deliverySemantics: "internal" },
+    { key: "update_item", version: 1, kind: "action", displayName: "Update Notion item", description: "Updates one explicit page/item ID using the selected data source schema.", input: [{ key: "dataSourceId", label: "Data source", type: "string", required: true }, { key: "pageId", label: "Page or item", type: "string", required: true }, { key: "values", label: "Property values", type: "object", required: true }], output: [{ key: "page", label: "Updated item", type: "object", required: true }], requiredScopes: [NOTION_CAPABILITIES.readContent, NOTION_CAPABILITIES.updateContent], connectionRequired: true, testMode: true, production: true, deliverySemantics: "acknowledged_external" },
+  ],
+  limitations: ["Beta until live Notion public integration acceptance is complete.", "Only resources explicitly shared during Notion authorization are accessible.", "Complex property types are rejected rather than guessed."],
+  documentationUrl: "https://developers.notion.com/",
+};
+
 const googleTriggerAdapter = {
   verify: async () => false,
   normalize: async () => { throw new Error("Gmail push events must use the authenticated Google Pub/Sub route."); },
@@ -150,6 +192,23 @@ const sheetsFindHandler: ConnectorActionHandler = async (input, context) =>
   (await import("@/lib/connectors/google/sheets")).sheetsFindRow(input, context);
 const sheetsUpdateHandler: ConnectorActionHandler = async (input, context) =>
   (await import("@/lib/connectors/google/sheets")).sheetsUpdateRow(input, context);
+const slackSendHandler: ConnectorActionHandler = async (input, context) =>
+  (await import("@/lib/connectors/slack/messages")).slackSendChannelMessage(input, context);
+const slackReplyHandler: ConnectorActionHandler = async (input, context) =>
+  (await import("@/lib/connectors/slack/messages")).slackReplyInThread(input, context);
+const notionCreatePageHandler: ConnectorActionHandler = async (input, context) =>
+  (await import("@/lib/connectors/notion/actions")).notionCreatePage(input, context);
+const notionCreateItemHandler: ConnectorActionHandler = async (input, context) =>
+  (await import("@/lib/connectors/notion/actions")).notionCreateDataSourceItem(input, context);
+const notionFindHandler: ConnectorActionHandler = async (input, context) =>
+  (await import("@/lib/connectors/notion/actions")).notionFindItem(input, context);
+const notionUpdateHandler: ConnectorActionHandler = async (input, context) =>
+  (await import("@/lib/connectors/notion/actions")).notionUpdateItem(input, context);
+
+const providerManagedTrigger = {
+  verify: async () => false,
+  normalize: async () => { throw new Error("Provider-managed webhook events must use the verified provider route."); },
+};
 
 const httpPostHandler: ConnectorActionHandler = async (input, context) => {
   try {
@@ -206,6 +265,14 @@ const connectors: RegisteredConnector[] = [
   {
     manifest: googleSheetsManifest,
     runtime: { actionHandlers: { "add_row@1": sheetsAddHandler, "find_row@1": sheetsFindHandler, "update_row@1": sheetsUpdateHandler }, triggerHandlers: {} },
+  },
+  {
+    manifest: slackManifest,
+    runtime: { actionHandlers: { "send_channel_message@1": slackSendHandler, "reply_in_thread@1": slackReplyHandler }, triggerHandlers: { "new_channel_message@1": providerManagedTrigger } },
+  },
+  {
+    manifest: notionManifest,
+    runtime: { actionHandlers: { "create_page@1": notionCreatePageHandler, "create_data_source_item@1": notionCreateItemHandler, "find_item@1": notionFindHandler, "update_item@1": notionUpdateHandler }, triggerHandlers: { "page_created_or_added@1": providerManagedTrigger, "page_updated@1": providerManagedTrigger } },
   },
   {
     manifest: internalTestManifest,

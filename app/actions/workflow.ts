@@ -684,6 +684,7 @@ export async function setWorkflowPublication(
     .maybeSingle();
   if (error || !data) return { ok: false, error: "Workflow not found." };
   const workflow = CompiledWorkflowSchema.safeParse(data.compiled_steps);
+  let publicationSetupConfig: Record<string, string> = {};
   if (publish) {
     if (!workflow.success) {
       return { ok: false, error: "This automation needs to be created again." };
@@ -701,7 +702,8 @@ export async function setWorkflowPublication(
       };
     }
     const snapshot = await loadWorkflowSnapshot(admin, parsedId.data, auth.user.id);
-    const incomplete = validateRequiredSetupInputs(workflow.data.steps, snapshot?.setupConfig ?? {});
+    publicationSetupConfig = snapshot?.setupConfig ?? {};
+    const incomplete = validateRequiredSetupInputs(workflow.data.steps, publicationSetupConfig);
     if (incomplete) return { ok: false, error: incomplete };
     const connectorReadiness = await validateWorkflowConnectorConnections({ userId: auth.user.id, steps: workflow.data.steps });
     if (connectorReadiness) return { ok: false, error: connectorReadiness };
@@ -721,7 +723,7 @@ export async function setWorkflowPublication(
   let connectorEndpoints: string[] = [];
   try {
     if (publish && workflow.success && data.current_version_id) {
-      const subscriptions = await activateWorkflowConnectorSubscriptions({ userId: auth.user.id, workflowId: parsedId.data, workflowVersionId: data.current_version_id, steps: workflow.data.steps });
+      const subscriptions = await activateWorkflowConnectorSubscriptions({ userId: auth.user.id, workflowId: parsedId.data, workflowVersionId: data.current_version_id, setupConfig: publicationSetupConfig, steps: workflow.data.steps });
       connectorEndpoints = subscriptions.map((subscription) => subscription.url);
     } else {
       await deactivateWorkflowConnectorSubscriptions(auth.user.id, parsedId.data);

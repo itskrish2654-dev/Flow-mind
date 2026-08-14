@@ -125,5 +125,5 @@ test("54-56 connector configuration is pinned/versioned and secrets are excluded
 test("57-62 all prior regression suites remain discoverable", async () => {
   const files = await import("node:fs/promises").then((fs) => fs.readdir("tests"));
   for (const phase of ["phase-one", "phase-two", "phase-three", "phase-four", "phase-five", "phase-six"]) assert.ok(files.some((file) => file.startsWith(phase)), `${phase} suite missing`);
-  assert.deepEqual(listCustomerConnectors().map((item) => item.id).sort(), ["flowmind_http", "flowmind_webhook", "google_gmail", "google_sheets"]);
+  assert.deepEqual(listCustomerConnectors().map((item) => item.id).sort(), ["flowmind_http", "flowmind_webhook", "google_gmail", "google_sheets", "notion", "slack"]);
 });

@@ -44,24 +44,36 @@ export function connectorWebhookUrl(subscriptionId: string) {
   return `${siteUrl}/api/connectors/events/flowmind_webhook?subscription=${encodeURIComponent(subscriptionId)}&token=${encodeURIComponent(connectorEndpointToken(subscriptionId))}`;
 }
 
-export async function activateWorkflowConnectorSubscriptions(input: { userId: string; workflowId: string; workflowVersionId: string; steps: Array<{ config?: { connector?: { connectorId: string; operationKind: "trigger" | "action"; operationKey: string; operationVersion: number; connectionId?: string; settings?: Record<string, unknown> } } }> }) {
+function providerWebhookUrl(provider: "google_gmail" | "slack" | "notion") {
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "");
+  if (!siteUrl) throw new Error("NEXT_PUBLIC_SITE_URL is not configured.");
+  return `${siteUrl}/api/connectors/events/${provider}`;
+}
+
+export async function activateWorkflowConnectorSubscriptions(input: { userId: string; workflowId: string; workflowVersionId: string; setupConfig?: Record<string, string>; steps: Array<{ id?: string; config?: { connector?: { connectorId: string; operationKind: "trigger" | "action"; operationKey: string; operationVersion: number; connectionId?: string; settings?: Record<string, unknown> } } }> }) {
   const admin = createAdminClient();
   await admin.from("connector_subscriptions").update({ status: "revoked", updated_at: new Date().toISOString() }).eq("workflow_id", input.workflowId).eq("user_id", input.userId).eq("status", "active");
-  const triggers = input.steps.flatMap((step) => step.config?.connector?.operationKind === "trigger" ? [step.config.connector] : []);
+  const triggers = input.steps.flatMap((step) => step.config?.connector?.operationKind === "trigger" ? [{ ...step.config.connector, stepId: step.id ?? "" }] : []);
   const created: Array<{ id: string; url: string }> = [];
   try {
     for (const trigger of triggers) {
+      const runtimeSettings = {
+        ...(trigger.settings ?? {}),
+        ...Object.fromEntries(Object.entries(input.setupConfig ?? {}).flatMap(([key, value]) => key.startsWith(`${trigger.stepId}-`) && value ? [[key.slice(trigger.stepId.length + 1), value]] : [])),
+      };
       if (trigger.connectorId === "google_gmail" && !trigger.connectionId) throw new Error("Choose a Google account before activating Gmail.");
+      if (trigger.connectorId === "slack" && !String(runtimeSettings.channel ?? runtimeSettings.channelId ?? "").trim()) throw new Error("Choose a Slack channel before activating this workflow.");
+      if (trigger.connectorId === "notion" && !String(runtimeSettings.resourceId ?? runtimeSettings.pageId ?? runtimeSettings.dataSourceId ?? "").trim()) throw new Error("Choose a Notion page or data source before activating this workflow.");
       const id = randomUUID();
       const token = connectorEndpointToken(id);
       const { error } = await admin.from("connector_subscriptions").insert({
         id, user_id: input.userId, workflow_id: input.workflowId, workflow_version_id: input.workflowVersionId,
         ...(trigger.connectionId ? { connection_id: trigger.connectionId } : {}), connector_id: trigger.connectorId,
         operation_key: trigger.operationKey, operation_version: trigger.operationVersion, endpoint_token_hash: createHash("sha256").update(token).digest("hex"), status: "active",
-        safe_metadata: (trigger.settings ?? {}) as Json,
+        safe_metadata: runtimeSettings as Json,
       });
       if (error) throw new Error("Connector subscription could not be activated.");
-      created.push({ id, url: trigger.connectorId === "google_gmail" ? `${process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "")}/api/connectors/events/google_gmail` : connectorWebhookUrl(id) });
+      created.push({ id, url: trigger.connectorId === "google_gmail" || trigger.connectorId === "slack" || trigger.connectorId === "notion" ? providerWebhookUrl(trigger.connectorId) : connectorWebhookUrl(id) });
     }
     for (const connectionId of Array.from(new Set(triggers.filter((trigger) => trigger.connectorId === "google_gmail").flatMap((trigger) => trigger.connectionId ? [trigger.connectionId] : [])))) {
       await activateGmailWatch({ userId: input.userId, connectionId });

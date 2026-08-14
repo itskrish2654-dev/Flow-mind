@@ -9,13 +9,17 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import type { Json } from "@/lib/supabase/types";
 import { SECURITY_LIMITS, enforceRateLimit, enforceUsageQuota } from "@/lib/security/limits";
 import { getClientIp } from "@/lib/security/request-context";
+import { queueSlackEvent } from "@/lib/connectors/slack/inbound";
+import { queueNotionEvent } from "@/lib/connectors/notion/inbound";
+import type { SlackEventEnvelope } from "@/lib/connectors/slack/events";
+import { verifyNotionVerificationToken, type NotionWebhookEvent } from "@/lib/connectors/notion/webhooks";
 
 export const maxDuration = 30;
 const MAX_EVENT_BYTES = 64 * 1024;
 
 export async function POST(request: Request, { params }: { params: Promise<{ provider: string }> }) {
   const { provider } = await params;
-  if (!['flowmind_webhook', 'google_gmail'].includes(provider)) return NextResponse.json({ error: "Provider not found." }, { status: 404 });
+  if (!["flowmind_webhook", "google_gmail", "slack", "notion"].includes(provider)) return NextResponse.json({ error: "Provider not found." }, { status: 404 });
   const contentLength = Number(request.headers.get("content-length") ?? 0);
   if (contentLength > MAX_EVENT_BYTES) return NextResponse.json({ error: "Payload too large." }, { status: 413 });
   const raw = new Uint8Array(await request.arrayBuffer());
@@ -30,6 +34,33 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
       after(() => Promise.allSettled(receiptIds.map((receiptId) => dispatchConnectorReceipt(receiptId))));
       return NextResponse.json({ accepted: true, queued: receiptIds.length }, { status: 202 });
     } catch { return NextResponse.json({ error: "Google notification processing is temporarily unavailable." }, { status: 503 }); }
+  }
+  if (provider === "slack") {
+    try {
+      const queued = await queueSlackEvent(request, raw, payload as SlackEventEnvelope);
+      if ("challenge" in queued) return NextResponse.json({ challenge: queued.challenge });
+      after(() => Promise.allSettled(queued.receiptIds.map((receiptId) => dispatchConnectorReceipt(receiptId))));
+      return NextResponse.json({ accepted: true, queued: queued.receiptIds.length }, { status: 200 });
+    } catch (error) {
+      const invalid = error instanceof Error && error.message === "SLACK_SIGNATURE_INVALID";
+      return NextResponse.json({ error: invalid ? "Slack request verification failed." : "Slack event could not be queued." }, { status: invalid ? 401 : 503 });
+    }
+  }
+  if (provider === "notion") {
+    try {
+      const notionPayload = payload as NotionWebhookEvent;
+      if (notionPayload.verification_token) {
+        return verifyNotionVerificationToken(notionPayload.verification_token)
+          ? NextResponse.json({ accepted: true }, { status: 200 })
+          : NextResponse.json({ error: "Notion verification token mismatch." }, { status: 401 });
+      }
+      const queued = await queueNotionEvent(request, raw, notionPayload);
+      after(() => Promise.allSettled(queued.receiptIds.map((receiptId) => dispatchConnectorReceipt(receiptId))));
+      return NextResponse.json({ accepted: true, queued: queued.receiptIds.length }, { status: 200 });
+    } catch (error) {
+      const invalid = error instanceof Error && ["NOTION_SIGNATURE_INVALID", "NOTION_VERSION_MISMATCH"].includes(error.message);
+      return NextResponse.json({ error: invalid ? "Notion request verification failed." : "Notion event could not be queued." }, { status: invalid ? 401 : 503 });
+    }
   }
   const url = new URL(request.url); const subscriptionId = url.searchParams.get("subscription") ?? ""; const token = url.searchParams.get("token") ?? "";
   if (!/^[0-9a-f-]{36}$/i.test(subscriptionId)) return NextResponse.json({ error: "Invalid endpoint." }, { status: 404 });

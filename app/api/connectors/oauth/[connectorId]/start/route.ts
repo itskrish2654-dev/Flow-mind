@@ -3,6 +3,7 @@ import { buildAuthorizationUrl } from "@/lib/connectors/oauth-exchange";
 import { createOAuthAuthorization, safeOAuthReturnPath } from "@/lib/connectors/oauth";
 import { getConnector } from "@/lib/connectors/registry";
 import { googleScopesForOperation } from "@/lib/connectors/google/scopes";
+import { slackScopesForOperation } from "@/lib/connectors/slack/scopes";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -21,7 +22,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ conn
       if (!data) throw new Error("Connection not found.");
       loginHint = data.external_account_label;
     }
-    const scopes = connector.manifest.providerFamily === "google" ? googleScopesForOperation(connectorId, operation?.key) : operation?.requiredScopes;
+    const scopes = connector.manifest.providerFamily === "google"
+      ? googleScopesForOperation(connectorId, operation?.key)
+      : connector.manifest.providerFamily === "slack"
+        ? slackScopesForOperation(operation?.key)
+        : operation?.requiredScopes;
     const auth = await createOAuthAuthorization({ userId: user.id, connectorId, scopes, returnPath: safeOAuthReturnPath(requestUrl.searchParams.get("return")), ...(connectionId ? { connectionId } : {}), ...(operation?.key ? { operationKey: operation.key } : {}) });
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL; if (!siteUrl) throw new Error("Site URL is missing.");
     const redirectUri = new URL(`/api/connectors/oauth/${connectorId}/callback`, siteUrl).toString();

@@ -14,12 +14,14 @@ import {
   KeyRound,
   LockKeyhole,
   Mail,
+  MessageSquare,
   Menu,
   RefreshCcw,
   Route,
   ShieldCheck,
   Sparkles,
   Table2,
+  NotebookPen,
   Webhook,
   X,
 } from "lucide-react";
@@ -311,9 +313,11 @@ export default function HomePage() {
               <div className="landing-connector-row"><div><span><Braces aria-hidden="true" /></span><strong>HTTP JSON</strong></div><p>Send JSON to approved HTTPS endpoints.</p></div>
             </div>
             <div className="landing-connector-group landing-connector-beta">
-              <div className="landing-connector-group-heading"><span className="status-dot status-beta" /><div><p>Beta</p><small>Google approval pending</small></div></div>
+              <div className="landing-connector-group-heading"><span className="status-dot status-beta" /><div><p>Beta</p><small>External app acceptance pending</small></div></div>
               <div className="landing-connector-row"><div><span><Mail aria-hidden="true" /></span><strong>Gmail</strong></div><p>Google approval pending</p></div>
               <div className="landing-connector-row"><div><span><Table2 aria-hidden="true" /></span><strong>Google Sheets</strong></div><p>Google approval pending</p></div>
+              <div className="landing-connector-row"><div><span><MessageSquare aria-hidden="true" /></span><strong>Slack</strong></div><p>Live acceptance pending</p></div>
+              <div className="landing-connector-row"><div><span><NotebookPen aria-hidden="true" /></span><strong>Notion</strong></div><p>Live acceptance pending</p></div>
             </div>
           </div>
           <div className="landing-google-note"><KeyRound aria-hidden="true" /><p>When you connect Google, CrazyLoops requests only the permissions required by the workflows you choose to build.</p><Link href="/data-use">Learn about data use <ArrowRight aria-hidden="true" /></Link></div>

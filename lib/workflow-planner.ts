@@ -181,6 +181,8 @@ export function planWorkflow(prompt: string): WorkflowPlan {
 
   const asksForGmail = /\bgmail\b/i.test(normalizedPrompt);
   const asksForSheets = /\bgoogle sheets?\b|\bsheets?\b/i.test(normalizedPrompt);
+  const asksForSlack = /\bslack\b|#[a-z0-9_-]+/i.test(normalizedPrompt);
+  const asksForNotion = /\bnotion\b/i.test(normalizedPrompt);
   const unsupported = findRequestedUnsupportedCapabilities(normalizedPrompt).filter((capability) => !(asksForGmail && ["email_ingestion", "email_delivery"].includes(capability.id)));
   if (
     /\b(every\s+(?:hour|weekday|day|week|month|morning|evening|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)|on a schedule)\b/i.test(
@@ -195,7 +197,7 @@ export function planWorkflow(prompt: string): WorkflowPlan {
     /\b(connect(?:\s+to)?|sync\s+(?:to|with)|post\s+(?:it\s+)?to)\b/i.test(
       normalizedPrompt,
     ) &&
-    !/\b(crazyloops|flowmind|pdf|document|webhook|http request|gmail|google sheets?|sheets?)\b/i.test(normalizedPrompt) &&
+    !/\b(crazyloops|flowmind|pdf|document|webhook|http request|gmail|google sheets?|sheets?|slack|notion)\b/i.test(normalizedPrompt) &&
     unsupported.length === 0;
   if (asksForUnknownExternalConnection) {
     const externalIntegration = getCapability("external_integration");
@@ -234,7 +236,13 @@ export function planWorkflow(prompt: string): WorkflowPlan {
   if (gmailSearch && !derivedGmailSearch) {
     return { ...base, status: "NEEDS_CLARIFICATION", missingRequirements: ["gmail search"], message: "CrazyLoops needs a specific sender, subject, or phrase for the Gmail filter.", clarificationQuestions: ["Which sender, subject, or exact phrase should the new Gmail message match?"] };
   }
-  const trigger = asksForGmail && /\b(new|arrives?|received?|when)\b/i.test(normalizedPrompt)
+  const slackTrigger = asksForSlack && (/\b(when|whenever)\b[^.]{0,80}\b(someone posts?|new message|message (?:is )?posted)\b/i.test(normalizedPrompt) || /\bnew slack (?:channel )?message\b/i.test(normalizedPrompt));
+  const notionTrigger = asksForNotion && !/\b(manual(?:ly)?|when i run|on demand)\b/i.test(normalizedPrompt) && /\b(when|whenever)\b/i.test(normalizedPrompt) && /\b(updated?|changed?|created?|added?)\b/i.test(normalizedPrompt);
+  const trigger = slackTrigger
+    ? plannedCapability("slack_new_channel_message", normalizedPrompt.match(/#[a-z0-9_-]+/i)?.[0])
+    : notionTrigger
+      ? plannedCapability(/\b(created?|added?|new)\b/i.test(normalizedPrompt) ? "notion_page_created_or_added" : "notion_page_updated")
+    : asksForGmail && /\b(new|arrives?|received?|when)\b/i.test(normalizedPrompt)
     ? plannedCapability(gmailSearch ? "gmail_new_email_matching_search" : "gmail_new_email", derivedGmailSearch ?? undefined)
     : /\b(manual(?:ly)?|when i run|on demand)\b/i.test(normalizedPrompt)
       ? plannedCapability("manual_trigger")
@@ -244,12 +252,23 @@ export function planWorkflow(prompt: string): WorkflowPlan {
       ? plannedCapability("public_form_submission")
       : null;
   const transformations = detectTransformations(normalizedPrompt);
+  if (asksForNotion && /\b(find|lookup)\b/i.test(normalizedPrompt) && /\bupdate\b/i.test(normalizedPrompt)) transformations.unshift(plannedCapability("notion_find_item", "Find exactly one matching Notion item."));
   const destination = asksForSheets
     ? plannedCapability(/\bupdate row\b/i.test(normalizedPrompt) ? "google_sheets_update_row" : /\bfind|lookup\b/i.test(normalizedPrompt) ? "google_sheets_find_row" : "google_sheets_add_row")
     : asksForGmail && /\breply\b/i.test(normalizedPrompt)
       ? plannedCapability("gmail_reply_to_email")
       : asksForGmail && /\b(send|email it|mail it)\b/i.test(normalizedPrompt)
         ? plannedCapability("gmail_send_email")
+    : asksForSlack && /\b(reply)\b[^.]{0,30}\bthread\b|\bthread\b[^.]{0,30}\breply\b/i.test(normalizedPrompt)
+      ? plannedCapability("slack_reply_in_thread")
+    : asksForSlack && /\b(send|post|alert|notify|message)\b/i.test(normalizedPrompt) && !(slackTrigger && asksForNotion)
+      ? plannedCapability("slack_send_channel_message")
+    : asksForNotion && /\bupdate\b/i.test(normalizedPrompt) && !notionTrigger
+      ? plannedCapability("notion_update_item")
+    : asksForNotion && /\bcreate\b[^.]{0,30}\bpage\b|\bpage\b[^.]{0,30}\bcreate\b/i.test(normalizedPrompt)
+      ? plannedCapability("notion_create_page")
+    : asksForNotion && /\b(save|add|create|store|notion)\b/i.test(normalizedPrompt) && !notionTrigger
+      ? plannedCapability("notion_create_data_source_item")
     : detectsHttpDestination(normalizedPrompt) || (asksForWebhook && !detectsWebhookTrigger(normalizedPrompt))
     ? plannedCapability("generic_http_action")
     : detectsPdfDestination(normalizedPrompt)

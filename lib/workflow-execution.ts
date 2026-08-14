@@ -407,6 +407,13 @@ export async function executeWorkflowSteps({
             ...(latestAi ? { summary: latestAi.result, ai_result: latestAi.result } : {}),
           };
         }
+        if (connectorConfig.connectorId === "notion" && connectorInput.values && typeof connectorInput.values === "object" && !Array.isArray(connectorInput.values)) {
+          const latestAi = Object.values(connectorStepOutputs).reverse().find((output) => typeof output.result === "string");
+          connectorInput.values = {
+            ...(connectorInput.values as Record<string, unknown>),
+            ...(latestAi ? { Summary: latestAi.result, ai_result: latestAi.result } : {}),
+          };
+        }
         const result = await registered.handler(connectorInput, { userId, workflowId, executionId: idempotencyKey ?? workflowId, stepId: step.id, ...(connectorConfig.connectionId ? { connectionId: connectorConfig.connectionId } : {}), idempotencyKey: `${idempotencyKey ?? workflowId}:${step.id}` });
         if (result.status !== "succeeded" || !result.acknowledged) { await fail(result.error?.message ?? "The connector did not acknowledge this action.", "failed", result.error ? new ConnectorError(result.error) : undefined); break; }
         connectorStepOutputs[step.id] = result.output; variables[step.id] = result.output;

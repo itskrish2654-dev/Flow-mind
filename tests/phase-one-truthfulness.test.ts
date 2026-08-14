@@ -131,7 +131,6 @@ test("4. named unsupported connectors never compile as generic steps", () => {
     ["Connect to Salesforce.", "salesforce"],
     ["Connect Google Calendar.", "google_calendar"],
     ["Upload this to Google Drive.", "google_drive"],
-    ["Post it to Slack.", "slack"],
     ["Charge the customer with Stripe.", "stripe"],
     ["Send to WhatsApp.", "whatsapp"],
     ["Connect QuickBooks.", "quickbooks"],
@@ -236,7 +235,7 @@ test("10. an existing legacy workflow with an unsupported connector fails before
   let fetchCalls = 0;
   const result = await executeWorkflowSteps({
     workflowId,
-    workflowName: "Legacy Slack workflow",
+    workflowName: "Legacy Salesforce workflow",
     steps: workflowSteps([
       {
         id: "legacy-trigger",
@@ -245,10 +244,10 @@ test("10. an existing legacy workflow with an unsupported connector fails before
         description: "Receive a form.",
       },
       {
-        id: "legacy-slack",
+        id: "legacy-salesforce",
         type: "http_request",
-        title: "Send to Slack",
-        description: "Post a message to Slack.",
+        title: "Send to Salesforce",
+        description: "Post a record to Salesforce.",
         config: { endpoint: "https://1.1.1.1/test", method: "POST" },
       },
     ]),
