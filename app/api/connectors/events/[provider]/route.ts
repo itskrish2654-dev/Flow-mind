@@ -11,7 +11,7 @@ import { SECURITY_LIMITS, enforceRateLimit, enforceUsageQuota } from "@/lib/secu
 import { getClientIp } from "@/lib/security/request-context";
 import { queueSlackEvent } from "@/lib/connectors/slack/inbound";
 import { queueNotionEvent } from "@/lib/connectors/notion/inbound";
-import type { SlackEventEnvelope } from "@/lib/connectors/slack/events";
+import { getSlackUrlVerificationChallenge, verifySlackRequest, type SlackEventEnvelope } from "@/lib/connectors/slack/events";
 import { verifyNotionVerificationToken, type NotionWebhookEvent } from "@/lib/connectors/notion/webhooks";
 
 export const maxDuration = 30;
@@ -37,8 +37,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
   }
   if (provider === "slack") {
     try {
-      const queued = await queueSlackEvent(request, raw, payload as SlackEventEnvelope);
-      if ("challenge" in queued) return NextResponse.json({ challenge: queued.challenge });
+      const slackPayload = payload as SlackEventEnvelope;
+      const challenge = getSlackUrlVerificationChallenge(slackPayload);
+      if (slackPayload.type === "url_verification") {
+        if (!verifySlackRequest(request, raw)) return NextResponse.json({ error: "Slack request verification failed." }, { status: 401 });
+        if (!challenge) return NextResponse.json({ error: "Slack challenge is missing." }, { status: 400 });
+        return new Response(challenge, { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+      }
+      const queued = await queueSlackEvent(request, raw, slackPayload);
       after(() => Promise.allSettled(queued.receiptIds.map((receiptId) => dispatchConnectorReceipt(receiptId))));
       return NextResponse.json({ accepted: true, queued: queued.receiptIds.length }, { status: 200 });
     } catch (error) {

@@ -5,7 +5,7 @@ import test from "node:test";
 
 import { getConnector, getConnectorOperation, validateConnectorRegistry } from "../lib/connectors/registry";
 import { assessConnectorPlan } from "../lib/connectors/planning";
-import { normalizeSlackMessage, verifySlackRequest } from "../lib/connectors/slack/events";
+import { getSlackUrlVerificationChallenge, normalizeSlackMessage, verifySlackRequest } from "../lib/connectors/slack/events";
 import { SLACK_SCOPES, slackScopesForOperation } from "../lib/connectors/slack/scopes";
 import { encodeNotionProperty, mapNotionProperties, notionExactMatchFilter } from "../lib/connectors/notion/properties";
 import { verifyNotionWebhook } from "../lib/connectors/notion/webhooks";
@@ -43,6 +43,15 @@ test("7B2-4. Slack raw-body signature validates and replayed timestamps fail", (
     assert.equal(verifySlackRequest(request, raw, now), true); assert.equal(verifySlackRequest(request, raw, now + 601), false);
     assert.equal(verifySlackRequest(new Request("https://example.com", { headers: { "x-slack-request-timestamp": timestamp, "x-slack-signature": "v0=" + "0".repeat(64) } }), raw, now), false);
   } finally { if (previous === undefined) delete process.env.FLOWMIND_CONNECTOR_SLACK_SIGNING_SECRET; else process.env.FLOWMIND_CONNECTOR_SLACK_SIGNING_SECRET = previous; }
+});
+
+test("7B2-4b. Slack URL verification echoes only a bounded challenge", async () => {
+  assert.equal(getSlackUrlVerificationChallenge({ type: "url_verification", challenge: "slack-challenge" }), "slack-challenge");
+  assert.equal(getSlackUrlVerificationChallenge({ type: "event_callback", challenge: "not-a-challenge" }), null);
+  assert.equal(getSlackUrlVerificationChallenge({ type: "url_verification", challenge: "" }), null);
+  const route = await readFile("app/api/connectors/events/[provider]/route.ts", "utf8");
+  assert.match(route, /verifySlackRequest\(request, raw\)/);
+  assert.match(route, /new Response\(challenge, \{ status: 200, headers: \{ "Content-Type": "text\/plain; charset=utf-8" \} \}\)/);
 });
 
 test("7B2-5. Slack normalization rejects own bot/system events and bounds content", () => {

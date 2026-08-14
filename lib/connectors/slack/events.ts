@@ -21,6 +21,11 @@ export type SlackEventEnvelope = {
   event?: { type?: string; subtype?: string; channel?: string; user?: string; bot_id?: string; app_id?: string; text?: string; ts?: string; thread_ts?: string };
 };
 
+export function getSlackUrlVerificationChallenge(payload: SlackEventEnvelope) {
+  if (payload.type !== "url_verification" || typeof payload.challenge !== "string") return null;
+  return payload.challenge.length > 0 && payload.challenge.length <= 512 ? payload.challenge : null;
+}
+
 export function normalizeSlackMessage(payload: SlackEventEnvelope) {
   const event = payload.event;
   if (payload.type !== "event_callback" || event?.type !== "message" || event.subtype || event.bot_id || event.app_id || !payload.event_id || !payload.team_id || !event.channel || !event.ts) return null;
