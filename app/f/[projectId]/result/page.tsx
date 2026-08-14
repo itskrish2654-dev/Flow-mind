@@ -3,8 +3,8 @@ import Link from "next/link";
 import { CheckCircle2, CircleAlert, RotateCcw, Zap } from "lucide-react";
 
 export const metadata: Metadata = {
-  title: "Submission Result | FlowMind",
-  description: "The result of a FlowMind hosted form submission.",
+  title: "Submission Result",
+  description: "The result of a CrazyLoops hosted form submission.",
   robots: { index: false, follow: false },
 };
 
@@ -15,12 +15,12 @@ const outcomes: Record<
   stored: {
     success: true,
     title: "Submission received",
-    message: "Your submission was stored in FlowMind.",
+    message: "Your submission was stored in CrazyLoops.",
   },
   pdf_generated: {
     success: true,
     title: "Document generated",
-    message: "Your PDF was generated and stored in FlowMind.",
+    message: "Your PDF was generated and stored in CrazyLoops.",
   },
   completed: {
     success: true,
@@ -50,12 +50,12 @@ const outcomes: Record<
   execution_failed: {
     success: false,
     title: "Workflow could not finish",
-    message: "FlowMind could not complete this workflow safely. Please try again.",
+    message: "CrazyLoops could not complete this workflow safely. Please try again.",
   },
   persistence_failed: {
     success: false,
     title: "Submission was not saved",
-    message: "FlowMind could not save this submission. Please try again.",
+    message: "CrazyLoops could not save this submission. Please try again.",
   },
   workflow_failed: {
     success: false,
@@ -100,7 +100,7 @@ export default async function PublicFormResultPage({
             <span className="flex size-6 items-center justify-center rounded-lg border border-[#e4c35d] bg-[#fff2bd] text-[#8a6200]">
               <Zap className="size-3.5 fill-current" />
             </span>
-            FlowMind secure automation
+            CrazyLoops secure automation
           </div>
           <span className={`mx-auto flex size-16 items-center justify-center rounded-2xl ${outcome.success ? "bg-emerald-50 text-emerald-600" : "bg-rose-50 text-rose-600"}`}>
             <Icon className="size-8" />

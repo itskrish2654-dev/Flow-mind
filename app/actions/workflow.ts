@@ -528,7 +528,7 @@ export async function compileWorkflow(
     return {
       success: false,
       status: "ERROR",
-      error: "FlowMind could not safely compile this workflow.",
+      error: "CrazyLoops could not safely compile this workflow.",
     };
   }
 

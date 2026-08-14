@@ -5,8 +5,8 @@ import { PublicWorkflowForm } from "@/components/public-workflow-form";
 import { getPublicExecutableWorkflow } from "@/lib/public-workflow";
 
 export const metadata: Metadata = {
-  title: "Secure Form | FlowMind",
-  description: "Submit information to a secure FlowMind automation.",
+  title: "Secure Form",
+  description: "Submit information to a secure CrazyLoops automation.",
   robots: { index: false, follow: false },
 };
 

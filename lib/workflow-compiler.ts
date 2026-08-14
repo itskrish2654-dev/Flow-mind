@@ -17,7 +17,7 @@ function titleFromPrompt(prompt: string): string {
   const title = words
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(" ");
-  return title || "FlowMind Automation";
+  return title || "CrazyLoops Automation";
 }
 
 function transformationTitle(instruction: string, index: number): string {
@@ -45,7 +45,7 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
       type: plan.trigger.capabilityId.startsWith("gmail_") || plan.trigger.capabilityId === "manual_trigger" ? "connector_trigger" : plan.trigger.capabilityId === "generic_webhook_trigger" ? "webhook_trigger" : "public_form_trigger",
       capabilityId: plan.trigger.capabilityId,
       title: plan.trigger.displayName,
-      description: plan.trigger.capabilityId.startsWith("gmail_") ? "Starts from a new message resolved through Gmail history." : plan.trigger.capabilityId === "manual_trigger" ? "Starts when you explicitly run this workflow." : plan.trigger.capabilityId === "generic_webhook_trigger" ? "Starts from an authenticated FlowMind webhook endpoint." : "Starts when someone submits the hosted FlowMind form.",
+      description: plan.trigger.capabilityId.startsWith("gmail_") ? "Starts from a new message resolved through Gmail history." : plan.trigger.capabilityId === "manual_trigger" ? "Starts when you explicitly run this workflow." : plan.trigger.capabilityId === "generic_webhook_trigger" ? "Starts from an authenticated CrazyLoops webhook endpoint." : "Starts when someone submits the hosted CrazyLoops form.",
       ...(plan.trigger.capabilityId.startsWith("gmail_") ? { config: { connector: { connectorId: "google_gmail", operationKind: "trigger" as const, operationKey: plan.trigger.capabilityId === "gmail_new_email_matching_search" ? "new_email_matching_search" : "new_email", operationVersion: 1, mappings: [], ...(plan.trigger.instruction ? { settings: { search: plan.trigger.instruction } } : {}) } } } : plan.trigger.capabilityId === "generic_webhook_trigger" ? { config: { connector: { connectorId: "flowmind_webhook", operationKind: "trigger" as const, operationKey: "event_received", operationVersion: 1, mappings: [] } } } : {}),
     },
     ...plan.transformations.map((transformation, index) => ({
@@ -113,7 +113,7 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
       id: `step_${destinationIndex}`,
       type: "store_data",
       capabilityId: "flowmind_data_store",
-      title: "Store inside FlowMind",
+      title: "Store inside CrazyLoops",
       description: "Stores the submission and completed results in Executions & Data.",
     });
   }
@@ -124,8 +124,8 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
       : plan.trigger.capabilityId === "manual_trigger"
         ? "Starts when the user runs it"
       : plan.trigger.capabilityId === "generic_webhook_trigger"
-      ? "Receives an authenticated FlowMind webhook event"
-      : "Receives a FlowMind hosted form submission",
+      ? "Receives an authenticated CrazyLoops webhook event"
+      : "Receives a CrazyLoops hosted form submission",
     ...plan.transformations.map((transformation) =>
       (transformation.instruction ?? "Transforms the submission").replace(/\.$/, ""),
     ),
@@ -137,16 +137,16 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
           ? plan.destination.displayName.toLowerCase()
           : plan.destination.capabilityId.startsWith("gmail_")
             ? plan.destination.displayName.toLowerCase()
-        : "stores the result inside FlowMind",
+        : "stores the result inside CrazyLoops",
   ];
   const summary = `${summaryParts.join(", then ")}.`.slice(0, 300);
   const publicForm = plan.trigger.capabilityId === "public_form_submission" ? {
     ...createPublicFormDefinition(prompt, workflowName, summary),
     successMessage:
       plan.destination.capabilityId === "flowmind_data_store"
-        ? "Your submission has been stored in FlowMind."
+        ? "Your submission has been stored in CrazyLoops."
         : plan.destination.capabilityId === "generate_pdf"
-          ? "Your PDF has been generated and stored in FlowMind."
+          ? "Your PDF has been generated and stored in CrazyLoops."
           : plan.destination.capabilityId.startsWith("google_sheets_")
             ? "Your submission was processed by the configured Google Sheets action."
             : plan.destination.capabilityId.startsWith("gmail_")

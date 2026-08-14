@@ -7,7 +7,7 @@ import { deleteOwnAccount } from "@/app/actions/account";
 import { AuthTurnstile } from "@/components/auth-turnstile";
 import { createClient } from "@/lib/supabase/client";
 
-function clearFlowMindStorage() {
+function clearCrazyLoopsStorage() {
   for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
     const key = window.localStorage.key(index);
     if (key?.startsWith("flowmind:")) window.localStorage.removeItem(key);
@@ -32,7 +32,7 @@ export function AccountControls({ turnstileSiteKey }: { turnstileSiteKey: string
       setPending(null);
       return;
     }
-    clearFlowMindStorage();
+    clearCrazyLoopsStorage();
     window.location.replace("/login");
   }
 
@@ -45,7 +45,7 @@ export function AccountControls({ turnstileSiteKey }: { turnstileSiteKey: string
       setPending(null);
       return;
     }
-    clearFlowMindStorage();
+    clearCrazyLoopsStorage();
     window.location.replace("/login?recover=1");
   }
 
@@ -62,7 +62,7 @@ export function AccountControls({ turnstileSiteKey }: { turnstileSiteKey: string
       setPending(null);
       return;
     }
-    clearFlowMindStorage();
+    clearCrazyLoopsStorage();
     window.location.replace("/login?notice=account_deleted");
   }
 

@@ -20,11 +20,11 @@ export function LegalPageShell({
     <main className="dashboard-theme h-dvh overflow-y-auto bg-[#f7f4ee] text-slate-800">
       <header className="sticky top-0 z-10 border-b border-[#e4ddd2] bg-[#fffdfa]/95 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-5xl items-center px-5 sm:px-8">
-          <Link href="/login" className="flex items-center gap-2.5 text-sm font-bold text-[#272536]">
+          <Link href="/" className="flex items-center gap-2.5 text-sm font-bold text-[#272536]">
             <span className="flex size-8 items-center justify-center rounded-[10px] border border-[#e4c35d] bg-[#fff2bd] text-[#8a6200]"><Zap className="size-4 fill-current" /></span>
-            FlowMind
+            CrazyLoops
           </Link>
-          <Link href="/login" className="ml-auto flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-950"><ArrowLeft className="size-3.5" />Back to login</Link>
+          <Link href="/" className="ml-auto flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-950"><ArrowLeft className="size-3.5" />Back to home</Link>
         </div>
       </header>
       <article className="mx-auto max-w-3xl px-5 py-12 sm:px-8 sm:py-16">
@@ -39,7 +39,7 @@ export function LegalPageShell({
       <footer className="border-t border-[#e4ddd2] bg-[#fffdfa]">
         <div className="mx-auto max-w-5xl px-5 py-7 sm:px-8">
           <TrustLinks className="flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-600 [&_a:hover]:text-slate-950" />
-          <p className="mt-4 text-[11px] text-slate-500">FlowMind account and automation services.</p>
+          <p className="mt-4 text-[11px] text-slate-500">CrazyLoops account and automation services.</p>
         </div>
       </footer>
     </main>

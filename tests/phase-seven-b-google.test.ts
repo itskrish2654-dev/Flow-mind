@@ -136,8 +136,8 @@ test("7B-12. Gmail processed text is bounded", () => {
 });
 
 test("7B-13. Gmail reply MIME preserves threading headers and a stable message id", () => {
-  const raw = Buffer.from(buildRawGmailMessage({ to: ["alice@example.com"], subject: "Re: Demo", body: "Reply", messageId: "<stable@flowmind.invalid>", inReplyTo: "<original@example.com>", references: "<old@example.com> <original@example.com>" }), "base64url").toString("utf8");
-  assert.match(raw, /Message-ID: <stable@flowmind\.invalid>/);
+  const raw = Buffer.from(buildRawGmailMessage({ to: ["alice@example.com"], subject: "Re: Demo", body: "Reply", messageId: "<stable@crazyloops.com>", inReplyTo: "<original@example.com>", references: "<old@example.com> <original@example.com>" }), "base64url").toString("utf8");
+  assert.match(raw, /Message-ID: <stable@crazyloops\.com>/);
   assert.match(raw, /In-Reply-To: <original@example\.com>/);
   assert.match(raw, /References: <old@example\.com> <original@example\.com>/);
 });
@@ -223,8 +223,8 @@ test("7B-23. Google 429 and ambiguous write outcomes remain truthful", async () 
   assert.match(api, /externallyDelivered: false/);
 });
 
-test("7B-24. planner supports Gmail to FlowMind and Gmail to AI to Sheets", () => {
-  const storePrompt = "When a new Gmail message arrives, store it inside FlowMind.";
+test("7B-24. planner supports Gmail to CrazyLoops and Gmail to AI to Sheets", () => {
+  const storePrompt = "When a new Gmail message arrives, store it inside CrazyLoops.";
   const storePlan = planWorkflow(storePrompt);
   assert.equal(storePlan.status, "READY_TO_COMPILE");
   if (storePlan.status === "READY_TO_COMPILE") {
@@ -250,7 +250,7 @@ test("7B-25. planner supports form to Sheets and manual to Gmail", () => {
 
 test("7B-26. Gmail search is derived only from concrete sender, phrase, or subject", () => {
   assert.equal(deriveGmailSearch("When Gmail from @acme.com contains 'invoice'"), 'from:(@acme.com) "invoice"');
-  assert.equal(planWorkflow("When a new Gmail message arrives from a customer, store it in FlowMind.").status, "NEEDS_CLARIFICATION");
+  assert.equal(planWorkflow("When a new Gmail message arrives from a customer, store it in CrazyLoops.").status, "NEEDS_CLARIFICATION");
 });
 
 test("7B-27. compiled Google steps pin connector, operation, version, and exact connection slot", () => {

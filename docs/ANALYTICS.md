@@ -1,6 +1,6 @@
 # Privacy-safe analytics and telemetry
 
-FlowMind stores bounded operational events in `operational_events` and product events in `product_analytics_events`. Both are service-only tables with forced RLS and no `anon` or `authenticated` grants. Vercel structured runtime logs are the fallback when telemetry storage is unavailable.
+CrazyLoops stores bounded operational events in `operational_events` and product events in `product_analytics_events`. Both are service-only tables with forced RLS and no `anon` or `authenticated` grants. Vercel structured runtime logs are the fallback when telemetry storage is unavailable.
 
 ## Activation funnel
 

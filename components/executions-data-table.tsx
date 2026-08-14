@@ -462,7 +462,7 @@ export function ExecutionsDataTable({
       const url = URL.createObjectURL(new Blob([result.csv], { type: "text/csv;charset=utf-8" }));
       const link = document.createElement("a");
       link.href = url;
-      link.download = `flowmind-executions-${workflowId}.csv`;
+      link.download = `crazyloops-executions-${workflowId}.csv`;
       link.click();
       URL.revokeObjectURL(url);
       setError(result.truncated ? "Export reached the documented 10,000-row safety limit." : null);

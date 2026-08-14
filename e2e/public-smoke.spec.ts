@@ -1,5 +1,25 @@
 import { expect, test } from "@playwright/test";
 
+test("public CrazyLoops homepage renders without an auth redirect", async ({ page }) => {
+  const response = await page.goto("/");
+  expect(response?.status()).toBe(200);
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole("heading", { level: 1, name: /automate work by describing it/i })).toBeVisible();
+  await expect(page.getByRole("link", { name: /start building/i }).first()).toHaveAttribute("href", "/login?mode=signup");
+  await expect(page.getByRole("link", { name: /privacy/i })).toBeVisible();
+  await expect(page.getByText(/beta — google approval pending/i).first()).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0);
+});
+
+test("homepage mobile menu and layout work at 390 pixels", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.getByLabel("Open navigation menu").click();
+  await expect(page.getByRole("navigation", { name: "Mobile navigation" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Mobile navigation" }).getByRole("link", { name: "Security" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0);
+});
+
 test("login, recovery strategy, and legal links render without exposing errors", async ({ page }) => {
   await page.goto("/login");
   await expect(page.getByRole("heading", { name: /welcome/i })).toBeVisible();

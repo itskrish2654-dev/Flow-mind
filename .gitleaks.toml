@@ -1,4 +1,4 @@
-title = "FlowMind repository secret scanning"
+title = "CrazyLoops repository secret scanning"
 
 [extend]
 useDefault = true
@@ -23,7 +23,7 @@ keywords = ["service_role"]
 
 [[rules]]
 id = "flowmind-master-key-assignment"
-description = "Committed FlowMind credential master key"
+description = "Committed CrazyLoops credential master key"
 regex = '''FLOWMIND_CREDENTIAL_MASTER_KEY\s*=\s*[A-Za-z0-9+/]{40,}={0,2}'''
 keywords = ["FLOWMIND_CREDENTIAL_MASTER_KEY"]
 
@@ -32,4 +32,3 @@ id = "turnstile-secret-assignment"
 description = "Committed Turnstile secret"
 regex = '''TURNSTILE_SECRET_KEY\s*=\s*0x[A-Za-z0-9_-]{20,}'''
 keywords = ["TURNSTILE_SECRET_KEY"]
-

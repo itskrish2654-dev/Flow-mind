@@ -10,7 +10,7 @@ test("authenticated workflow, version, execution, and settings smoke", async ({ 
   await page.goto("/dashboard");
   await expect(page.getByText(/my automations/i)).toBeVisible();
   await page.getByPlaceholder(/describe the automation/i).fill(
-    "Collect customer feedback in a public form, summarize it with AI, and store it in FlowMind",
+    "Collect customer feedback in a public form, summarize it with AI, and store it in CrazyLoops",
   );
   await page.getByRole("button", { name: /generate workflow/i }).click();
   await expect(page).toHaveURL(/\/dashboard\/projects\//, { timeout: 30_000 });
@@ -21,4 +21,3 @@ test("authenticated workflow, version, execution, and settings smoke", async ({ 
   await page.goto("/settings/usage");
   await expect(page.getByRole("heading", { name: /usage and limits/i })).toBeVisible();
 });
-

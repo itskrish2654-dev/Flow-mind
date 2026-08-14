@@ -36,7 +36,7 @@ function readableAccountName(email: string, metadata: Record<string, unknown>): 
   if (savedName) return savedName.trim();
 
   const emailName = email.split("@")[0]?.replace(/[._-]+/g, " ").trim();
-  if (!emailName) return "FlowMind user";
+  if (!emailName) return "CrazyLoops user";
   return emailName.replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
@@ -149,7 +149,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         displayName: readableAccountName(user.email, user.user_metadata),
         email: user.email,
         memberSince: Number.isNaN(createdAt.getTime())
-          ? "FlowMind member"
+          ? "CrazyLoops member"
           : `Member since ${new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric" }).format(createdAt)}`,
       });
       setAccountError(null);
@@ -212,10 +212,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <button type="button" aria-label="Open navigation menu" onClick={() => setMobileNavOpen(true)} className="fixed left-3 top-3 z-40 flex size-11 items-center justify-center rounded-xl border border-[#d8caa8] bg-[#fffdfa] text-[#272536] shadow-sm lg:hidden">
         <Menu className="size-5" />
       </button>
-      <AccessibleDialog open={mobileNavOpen} onOpenChange={setMobileNavOpen} title="FlowMind navigation" description="Open workflows, account settings, usage, support, or log out." side="left" contentClassName="rounded-r-3xl">
+      <AccessibleDialog open={mobileNavOpen} onOpenChange={setMobileNavOpen} title="CrazyLoops navigation" description="Open workflows, account settings, usage, support, or log out." side="left" contentClassName="rounded-r-3xl">
         <nav aria-label="Mobile dashboard navigation" className="flex min-h-0 flex-1 flex-col pt-16">
           <div className="border-b border-[#e4ddd2] px-4 pb-4">
-            <p className="text-lg font-bold text-[#272536]">FlowMind</p>
+            <p className="text-lg font-bold text-[#272536]">CrazyLoops</p>
             <button type="button" onClick={newAutomation} className="mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#d7aa2f] bg-[#fff7dc] px-4 text-sm font-semibold text-[#272536]"><Plus className="size-4" />Create workflow</button>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
@@ -238,7 +238,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <span className="flex size-8 items-center justify-center rounded-[10px] border border-[#e4c35d] bg-[#fff2bd] text-[#8a6200]">
             <Zap className="size-4 fill-current" />
           </span>
-          <span className="text-[18px] font-bold tracking-[-0.03em] text-[#272536]">FlowMind</span>
+          <span className="text-[18px] font-bold tracking-[-0.03em] text-[#272536]">CrazyLoops</span>
           <span className="ml-auto rounded-full bg-[#f1c94b] px-2 py-0.5 text-[9px] font-bold tracking-[0.12em] text-[#272536]">AI</span>
         </Link>
 

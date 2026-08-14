@@ -23,7 +23,7 @@ export function toPlainEnglish(text: string): string {
         .replace(/\bendpoint\b/gi, "destination")
         .replace(/\bpayload\b/gi, "information")
         .replace(/\bJSON\b/gi, "information")
-        .replace(/\bLLM\b/gi, "FlowMind AI")
+        .replace(/\bLLM\b/gi, "CrazyLoops AI")
         .replace(/\bAPI\b/gi, "app connection")
         .replace(/\bHTTP\b/gi, "sending")
         .replace(/\bURL\b/gi, "link");
@@ -34,22 +34,22 @@ export function toPlainEnglish(text: string): string {
 function fallbackLabel(step: WorkflowStep, input: StepInput): string {
   if (!hiddenJargon.test(input.label)) return input.label;
   if (input.type === "secret") return "Security key for this app";
-  if (input.type === "url") return "Where should FlowMind send the result?";
-  if (step.type === "filter_condition") return "What should FlowMind check?";
-  return "What information should FlowMind use?";
+  if (input.type === "url") return "Where should CrazyLoops send the result?";
+  if (step.type === "filter_condition") return "What should CrazyLoops check?";
+  return "What information should CrazyLoops use?";
 }
 
 function fallbackHelpText(step: WorkflowStep, input: StepInput): string {
   if (input.type === "secret") {
-    return "This private key lets FlowMind connect to the app you chose.";
+    return "This private key lets CrazyLoops connect to the app you chose.";
   }
   if (input.type === "url") {
     return "This is the public destination that should acknowledge a test delivery.";
   }
   if (step.type === "filter_condition") {
-    return "Describe the rule FlowMind should check before it continues.";
+    return "Describe the rule CrazyLoops should check before it continues.";
   }
-  return "Tell FlowMind what you want it to do in your own words.";
+  return "Tell CrazyLoops what you want it to do in your own words.";
 }
 
 function fallbackGuide(step: WorkflowStep, input: StepInput): string {
@@ -81,7 +81,7 @@ function defaultInputs(step: WorkflowStep): StepInput[] {
           type: "url",
           placeholder: "https://webhook.site/your-test-id",
           helpText:
-            "FlowMind marks delivery successful only after this destination accepts the request.",
+            "CrazyLoops marks delivery successful only after this destination accepts the request.",
           howToGetIt:
             "Open Webhook.site, copy your unique URL, and paste it here. This connection is test-only.",
         },

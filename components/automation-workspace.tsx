@@ -82,8 +82,8 @@ type AutomationWorkspaceProps = {
 };
 
 const examples = [
-  "Collect customer feedback in a form and store it in FlowMind",
-  "Collect support requests in a form, summarize them, and store them in FlowMind",
+  "Collect customer feedback in a form and store it in CrazyLoops",
+  "Collect support requests in a form, summarize them, and store them in CrazyLoops",
   "Collect proposal details in a form, draft a proposal, and generate a PDF",
 ];
 
@@ -91,7 +91,7 @@ const stepVisuals = {
   public_form_trigger: { label: "Trigger", icon: Zap, tone: "emerald" },
   webhook_trigger: { label: "Trigger", icon: Zap, tone: "emerald" },
   ai_transform: { label: "AI Process", icon: Sparkles, tone: "indigo" },
-  store_data: { label: "FlowMind Storage", icon: Database, tone: "violet" },
+  store_data: { label: "CrazyLoops Storage", icon: Database, tone: "violet" },
   webhook_post: { label: "Test Webhook", icon: Send, tone: "violet" },
   http_request: { label: "Destination", icon: Send, tone: "violet" },
   generate_pdf: { label: "PDF Document", icon: FileText, tone: "rose" },
@@ -310,7 +310,7 @@ function Inspector({
         {step.config?.connector?.connectorId.startsWith("google_") && workflowId && (
           <div className="mb-4 rounded-xl border border-[#e7c75f] bg-[#fff7dc] p-3.5">
             <p className="text-[10px] font-semibold text-slate-900">Google account</p>
-            <p className="mt-1 text-[9px] leading-4 text-slate-500">Choose the exact account for this step. FlowMind never selects the first connected account automatically.</p>
+            <p className="mt-1 text-[9px] leading-4 text-slate-500">Choose the exact account for this step. CrazyLoops never selects the first connected account automatically.</p>
             {googleConnections.length ? <select aria-label="Google account for this step" value={step.config.connector.connectionId ?? ""} onChange={async (event) => { const selectedId = event.target.value; setPendingGoogleConnectionId(selectedId); setGoogleConnectionMessage(null); const result = await configureGoogleWorkflowStep(workflowId, step.id, selectedId); if (!result.ok) { setGoogleConnectionMessage(result.error); return; } window.location.reload(); }} className="mt-3 h-10 w-full rounded-lg border border-[#d8caa8] bg-white px-3 text-xs text-slate-800"><option value="">Choose Google account</option>{googleConnections.map((connection) => <option key={connection.id} value={connection.id}>{connection.label} · {connection.status}</option>)}</select> : <a href={`/api/connectors/oauth/${step.config.connector.connectorId}/start?operation=${step.config.connector.operationKey}&return=${encodeURIComponent(`/dashboard/projects/${workflowId}`)}`} className="mt-3 flex h-10 items-center justify-center rounded-lg border border-[#d7aa2f] bg-white text-[10px] font-semibold text-[#6f5100]">Connect Google</a>}
             {googleConnectionMessage && <><p role="alert" className="mt-2 text-[9px] text-rose-700">{googleConnectionMessage}</p><a href={`/api/connectors/oauth/${step.config.connector.connectorId}/start?operation=${step.config.connector.operationKey}&connection=${pendingGoogleConnectionId ?? step.config.connector.connectionId ?? ""}&return=${encodeURIComponent(`/dashboard/projects/${workflowId}`)}`} className="mt-2 block text-[9px] font-semibold text-[#795700]">Approve the additional permission</a></>}
           </div>
@@ -403,7 +403,7 @@ function Inspector({
               Native PDF generator
             </p>
             <p className="mt-1 text-[9px] leading-4 text-slate-500">
-              Describe the document you want and FlowMind will connect the right form answers and AI results automatically.
+              Describe the document you want and CrazyLoops will connect the right form answers and AI results automatically.
             </p>
             {publicForm && workflow && (
               <DataTableBuilder
@@ -937,7 +937,7 @@ export function AutomationWorkspace({
     <div className="flex h-full min-w-0 overflow-hidden">
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex min-h-[65px] shrink-0 items-center gap-3 border-b border-[#e4ddd2] bg-[#fffdfa] pl-16 pr-3 sm:px-5">
-          <div className="flex items-center gap-2 lg:hidden"><span className="flex size-8 items-center justify-center rounded-[10px] border border-[#e4c35d] bg-[#fff2bd] text-[#8a6200]"><Zap className="size-4 fill-current" /></span><span className="font-bold text-[#272536]">FlowMind</span></div>
+          <div className="flex items-center gap-2 lg:hidden"><span className="flex size-8 items-center justify-center rounded-[10px] border border-[#e4c35d] bg-[#fff2bd] text-[#8a6200]"><Zap className="size-4 fill-current" /></span><span className="font-bold text-[#272536]">CrazyLoops</span></div>
           <div className="hidden min-w-0 items-center gap-2 lg:flex"><Workflow className="size-4 shrink-0 text-[#b18410]" /><span className="truncate text-[13px] font-semibold text-[#272536]">{workflow ? toPlainEnglish(workflow.workflowName) : initialWorkflowName ? toPlainEnglish(initialWorkflowName) : "New Automation"}</span></div>
           {workflow && <span className={`hidden rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.08em] sm:block ${workflowReady ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"}`}>{workflowReady ? "Ready" : `${steps.length - readySteps} steps need setup`}</span>}
           <div className="ml-auto flex items-center gap-2">

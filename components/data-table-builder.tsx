@@ -165,7 +165,7 @@ export function DataTableBuilder({
               <span className="flex size-9 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd] text-[#8a6200]"><Columns3 className="size-4" /></span>
               <div className="min-w-0 flex-1">
                 <h2 id="data-table-builder-title" className="text-sm font-semibold text-[#272536]">Customize data columns</h2>
-                <p className="text-[10px] text-slate-500">Tell FlowMind what should appear and it will arrange the table.</p>
+                <p className="text-[10px] text-slate-500">Tell CrazyLoops what should appear and it will arrange the table.</p>
               </div>
               <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="flex size-9 items-center justify-center rounded-lg border border-[#ded6ca] text-slate-500 hover:bg-[#f8f4ec]"><X className="size-4" /></button>
             </header>

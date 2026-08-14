@@ -16,7 +16,7 @@ const EXPORT_LIMITS = {
 } as const;
 
 function attachmentName() {
-  return `flowmind-export-${new Date().toISOString().slice(0, 10)}.json`;
+  return `crazyloops-export-${new Date().toISOString().slice(0, 10)}.json`;
 }
 
 export async function GET() {

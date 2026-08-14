@@ -46,7 +46,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
     await enforceRateLimit("connector-webhook-subscription", [subscription.id], SECURITY_LIMITS.publicFormWorkflow);
     await enforceUsageQuota(subscription.user_id, "public_form_submissions");
   } catch { return NextResponse.json({ error: "Request limit reached." }, { status: 429 }); }
-  const providerEventKey = (request.headers.get("x-flowmind-event-id") ?? request.headers.get("idempotency-key") ?? createHash("sha256").update(raw).digest("hex")).slice(0, 200);
+  const providerEventKey = (request.headers.get("x-crazyloops-event-id") ?? request.headers.get("x-flowmind-event-id") ?? request.headers.get("idempotency-key") ?? createHash("sha256").update(raw).digest("hex")).slice(0, 200);
   const normalized = await registered.handler.normalize(request, payload, registered.operation);
   const receiptId = randomUUID();
   const { error } = await admin.from("connector_event_receipts").insert({ id: receiptId, subscription_id: subscription.id, workflow_id: subscription.workflow_id, workflow_version_id: subscription.workflow_version_id, provider_event_key: providerEventKey, status: "queued", payload: normalized.data as Json, safe_metadata: { connectorId: provider, operationKey: subscription.operation_key } });

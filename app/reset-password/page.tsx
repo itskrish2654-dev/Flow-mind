@@ -5,7 +5,7 @@ import { ResetPasswordForm } from "@/components/reset-password-form";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = {
-  title: "Reset password | FlowMind",
+  title: "Reset password",
   robots: { index: false, follow: false },
 };
 

@@ -24,7 +24,7 @@ export type CapabilityDefinition = {
 const defineCapability = <T extends CapabilityDefinition>(capability: T) => capability;
 
 /**
- * FlowMind's authoritative capability registry.
+ * CrazyLoops' authoritative capability registry.
  *
  * Planning, compilation, existing-workflow validation, and execution all consult
  * this registry. Provider model output is never allowed to declare support.
@@ -46,7 +46,7 @@ export const CAPABILITY_REGISTRY = {
     availableInTest: true,
     availableInProduction: true,
     limitations: [
-      "Starts only when a FlowMind hosted form is submitted or a test event is run.",
+      "Starts only when a CrazyLoops hosted form is submitted or a test event is run.",
     ],
     aliases: ["form", "form submission", "survey", "intake", "feedback"],
   }),
@@ -94,7 +94,7 @@ export const CAPABILITY_REGISTRY = {
   }),
   flowmind_data_store: defineCapability({
     id: "flowmind_data_store",
-    displayName: "Store inside FlowMind",
+    displayName: "Store inside CrazyLoops",
     category: "destination",
     supported: true,
     executionImplementation: "workflow-executions-table",
@@ -102,7 +102,7 @@ export const CAPABILITY_REGISTRY = {
     credentialsRequired: false,
     availableInTest: true,
     availableInProduction: true,
-    limitations: ["Stores submission and result data only inside FlowMind."],
+    limitations: ["Stores submission and result data only inside CrazyLoops."],
     aliases: ["flowmind", "internal table", "data table", "store", "save"],
   }),
   generate_pdf: defineCapability({
@@ -117,7 +117,7 @@ export const CAPABILITY_REGISTRY = {
     credentialsRequired: false,
     availableInTest: true,
     availableInProduction: true,
-    limitations: ["Generates text-based PDF documents from a FlowMind template."],
+    limitations: ["Generates text-based PDF documents from a CrazyLoops template."],
     aliases: ["pdf", "invoice", "proposal", "document", "report"],
   }),
   webhook_post: defineCapability({
@@ -147,7 +147,7 @@ export const CAPABILITY_REGISTRY = {
     credentialsRequired: false,
     availableInTest: false,
     availableInProduction: false,
-    limitations: ["Scheduling is coming soon and is not currently executed by FlowMind."],
+    limitations: ["Scheduling is coming soon and is not currently executed by CrazyLoops."],
     aliases: [
       "schedule",
       "scheduled",
@@ -171,7 +171,7 @@ export const CAPABILITY_REGISTRY = {
     credentialsRequired: false,
     availableInTest: false,
     availableInProduction: false,
-    limitations: ["FlowMind does not currently run a source polling worker."],
+    limitations: ["CrazyLoops does not currently run a source polling worker."],
     aliases: [
       "rss",
       "feed",
@@ -194,7 +194,7 @@ export const CAPABILITY_REGISTRY = {
     credentialsRequired: true,
     availableInTest: false,
     availableInProduction: false,
-    limitations: ["FlowMind does not currently ingest incoming email events."],
+    limitations: ["CrazyLoops does not currently ingest incoming email events."],
     aliases: ["incoming email", "email arrives", "new email", "customer emails"],
   }),
   salesforce: defineCapability({
@@ -482,7 +482,7 @@ export function assessCapability(
       supported: false,
       available: false,
       status: "unsupported",
-      message: "This workflow step is not recognized by the current FlowMind runtime.",
+      message: "This workflow step is not recognized by the current CrazyLoops runtime.",
     };
   }
 

@@ -39,7 +39,7 @@ export async function configureGoogleWorkflowStep(workflowId: string, stepId: st
   const registered = getConnectorOperation(connector.connectorId, connector.operationKind, connector.operationKey, connector.operationVersion);
   if (!registered) return { ok: false as const, error: "Google operation is unavailable." };
   const missing = registered.operation.requiredScopes.filter((scope) => !connection.granted_scopes.includes(scope));
-  if (missing.length) return { ok: false as const, error: "FlowMind needs additional Google permission for this workflow.", additionalScopes: missing };
+  if (missing.length) return { ok: false as const, error: "CrazyLoops needs additional Google permission for this workflow.", additionalScopes: missing };
   const workflow = structuredClone(parsed.data); workflow.steps[index] = { ...workflow.steps[index], config: { ...workflow.steps[index].config, connector: { ...connector, connectionId: connection.id } } };
   try { await createImmutableWorkflowVersion(admin, { workflowId: request.data.workflowId, userId: user.id, expectedVersionId: snapshot.versionId, workflow, setupConfig: snapshot.setupConfig, scope: "setup", summary: "Selected Google account for connector step." }); revalidatePath(`/dashboard/projects/${request.data.workflowId}`); return { ok: true as const, workflow }; }
   catch { return { ok: false as const, error: "Google account selection could not be saved." }; }

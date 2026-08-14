@@ -1,4 +1,4 @@
-name: FlowMind CI
+name: CrazyLoops CI
 
 on:
   pull_request:

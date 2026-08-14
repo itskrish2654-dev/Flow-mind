@@ -522,7 +522,7 @@ export async function executeWorkflowSteps({
         const document = await uploadGeneratedDocument({ bytes, stepId: step.id });
         documents.push({ id: document.id, filename: document.filename });
         variables.document_id = document.id;
-        await succeed("PDF generated and stored in FlowMind document storage.", { filename: document.filename }, document.id);
+        await succeed("PDF generated and stored in CrazyLoops document storage.", { filename: document.filename }, document.id);
       } catch (error: unknown) {
         securityLog("PDF generation failed", { error });
         await fail(error instanceof PdfRenderError ? error.message : "The PDF could not be generated or stored.", "failed", error);
@@ -532,7 +532,7 @@ export async function executeWorkflowSteps({
     }
 
     if (capabilityId === "flowmind_data_store") {
-      await succeed("Submission stored in FlowMind.");
+      await succeed("Submission stored in CrazyLoops.");
       continue;
     }
 

@@ -315,7 +315,7 @@ export function FormBuilder({
               </span>
               <div className="min-w-0 flex-1">
                 <h2 id="form-builder-title" className="text-sm font-semibold text-[#272536]">Customize hosted form</h2>
-                <p className="text-[10px] text-slate-500">Tell FlowMind what you need and review the result.</p>
+                <p className="text-[10px] text-slate-500">Tell CrazyLoops what you need and review the result.</p>
               </div>
               <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="flex size-9 items-center justify-center rounded-lg border border-[#ded6ca] text-slate-500 hover:bg-[#f8f4ec]">
                 <X className="size-4" />

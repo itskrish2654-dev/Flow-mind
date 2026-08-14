@@ -18,6 +18,6 @@ Exact retention periods for workflow/execution/document history, deletion-job au
 
 ## Recovery boundaries
 
-Database and Storage recovery depend on the enabled Supabase plan and project configuration. Operators must verify the project dashboard before promising backup, point-in-time recovery, or retention. FlowMind can retry interrupted execution/deletion state and can restore workflow intent from retained immutable versions; it cannot itself restore a deleted Auth identity, database row, or Storage object after provider retention is exhausted. Signed URLs are access grants, not backups.
+Database and Storage recovery depend on the enabled Supabase plan and project configuration. Operators must verify the project dashboard before promising backup, point-in-time recovery, or retention. CrazyLoops can retry interrupted execution/deletion state and can restore workflow intent from retained immutable versions; it cannot itself restore a deleted Auth identity, database row, or Storage object after provider retention is exhausted. Signed URLs are access grants, not backups.
 
 Test restores in a disposable project and record the result/date. Never run destructive recovery exercises against customer data.

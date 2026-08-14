@@ -72,7 +72,7 @@ const genericHttpManifest: ConnectorManifest = {
 const internalTestManifest: ConnectorManifest = {
   id: "flowmind_test",
   providerFamily: "flowmind_test",
-  displayName: "FlowMind test connector",
+  displayName: "CrazyLoops test connector",
   description: "Internal connector used to prove OAuth, refresh, triggers, and actions.",
   status: "INTERNAL",
   version: 1,

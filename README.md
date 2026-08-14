@@ -1,6 +1,6 @@
-# FlowMind
+# CrazyLoops
 
-FlowMind is a Next.js 16 automation builder backed by Supabase Auth, Postgres Row Level Security, and Groq.
+CrazyLoops is a Next.js 16 automation builder backed by Supabase Auth, Postgres Row Level Security, and Groq.
 
 ## Local setup
 
@@ -35,7 +35,7 @@ Open [http://localhost:3000](http://localhost:3000). Unauthenticated dashboard a
 - Every owner query includes the authenticated `user_id`.
 - Cloudflare Turnstile must be enabled in Supabase Auth Bot and Abuse Protection.
   Supabase Auth CAPTCHA is the authoritative control for direct signup, password
-  sign-in, and password-recovery endpoints. FlowMind's Postgres auth limiter is
+  sign-in, and password-recovery endpoints. CrazyLoops' Postgres auth limiter is
   additional defense in depth and does not protect requests sent directly to Supabase.
 - Authenticated browser roles can read only owner-scoped workflows and executions.
   Workflow mutations and trusted execution inserts use server actions and a

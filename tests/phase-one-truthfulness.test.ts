@@ -65,7 +65,7 @@ test("1. workflow execution invokes the AI provider path and records provider me
         type: "store_data",
         capabilityId: "flowmind_data_store",
         title: "Store",
-        description: "Store inside FlowMind.",
+        description: "Store inside CrazyLoops.",
       },
     ]),
     inputValues: { details: "Useful customer feedback" },
@@ -222,7 +222,7 @@ test("8. an acknowledged destination is marked succeeded and delivered", async (
 
 test("9. schedule requests are explicitly unsupported", () => {
   const plan = planWorkflow(
-    "Every weekday, summarize form submissions and store them in FlowMind.",
+    "Every weekday, summarize form submissions and store them in CrazyLoops.",
   );
   assert.equal(plan.status, "UNSUPPORTED");
   assert.ok(
@@ -267,7 +267,7 @@ test("10. an existing legacy workflow with an unsupported connector fails before
 });
 
 test("11. supported workflows can compile with no AI step", () => {
-  const prompt = "Collect customer feedback in a form and store it in FlowMind.";
+  const prompt = "Collect customer feedback in a form and store it in CrazyLoops.";
   const plan = planWorkflow(prompt);
   assert.equal(plan.status, "READY_TO_COMPILE");
   const workflow = compileReadyPlan(prompt, plan);
@@ -277,7 +277,7 @@ test("11. supported workflows can compile with no AI step", () => {
 
 test("12. supported workflows can contain more than three necessary steps", () => {
   const prompt =
-    "Use a form to collect feedback, summarize it, classify sentiment, draft a response, and store everything in FlowMind.";
+    "Use a form to collect feedback, summarize it, classify sentiment, draft a response, and store everything in CrazyLoops.";
   const plan = planWorkflow(prompt);
   assert.equal(plan.status, "READY_TO_COMPILE");
   const workflow = compileReadyPlan(prompt, plan);

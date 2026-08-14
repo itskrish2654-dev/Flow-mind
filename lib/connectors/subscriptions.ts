@@ -18,7 +18,7 @@ export async function validateWorkflowConnectorConnections(input: { userId: stri
     if (!config.connectionId) return `Choose an account for ${registered.connector.manifest.displayName}.`;
     const { data } = await admin.from("connector_connections").select("id,status,provider_family,granted_scopes").eq("id", config.connectionId).eq("user_id", input.userId).eq("provider_family", registered.connector.manifest.providerFamily).maybeSingle();
     if (!data || data.status !== "connected") return `Reconnect ${registered.connector.manifest.displayName} to continue.`;
-    if (registered.operation.requiredScopes.some((scope) => !data.granted_scopes.includes(scope))) return `FlowMind needs additional ${registered.connector.manifest.displayName} permission for this workflow.`;
+    if (registered.operation.requiredScopes.some((scope) => !data.granted_scopes.includes(scope))) return `CrazyLoops needs additional ${registered.connector.manifest.displayName} permission for this workflow.`;
   }
   return null;
 }

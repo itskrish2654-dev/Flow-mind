@@ -12,7 +12,7 @@ export default function ErrorPage({
   retry: () => void;
 }) {
   useEffect(() => {
-    console.error("FlowMind page error", { digest: error.digest ?? "unavailable" });
+    console.error("CrazyLoops page error", { digest: error.digest ?? "unavailable" });
   }, [error]);
 
   return (

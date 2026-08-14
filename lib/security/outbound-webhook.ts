@@ -135,7 +135,7 @@ export async function postTrustedWebhook(
         headers: {
           "Content-Type": "application/json",
           "Content-Length": body.byteLength,
-          "User-Agent": "FlowMind-Webhook/1.0",
+          "User-Agent": "CrazyLoops-Webhook/1.0",
           ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
         },
         timeout: REQUEST_TIMEOUT_MS,

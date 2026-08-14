@@ -55,7 +55,7 @@ export function PublicWorkflowForm({
             <Zap className="size-[18px] fill-current" />
           </span>
           <div>
-            <p className="text-base font-bold tracking-[-0.03em] text-[#272536]">FlowMind</p>
+            <p className="text-base font-bold tracking-[-0.03em] text-[#272536]">CrazyLoops</p>
             <p className="text-[10px] text-slate-500">Hosted automation form</p>
           </div>
         </div>
@@ -165,7 +165,7 @@ export function PublicWorkflowForm({
           challengeReady={challengeMode === "honeypot" || Boolean(challengeToken)}
         />
         <div className="border-t border-[#ece6dc] pt-4 text-center">
-          <p className="text-[10px] leading-5 text-slate-500">Powered by FlowMind. Your submission is handled according to the workflow owner’s configuration. AI processing may occur only if this workflow includes an AI step.</p>
+          <p className="text-[10px] leading-5 text-slate-500">Powered by CrazyLoops. Your submission is handled according to the workflow owner’s configuration. AI processing may occur only if this workflow includes an AI step.</p>
           <TrustLinks className="mt-2 flex flex-wrap justify-center gap-x-3 gap-y-1 text-[10px] text-slate-500 [&_a:hover]:text-slate-900" />
         </div>
       </form>

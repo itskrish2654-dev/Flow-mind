@@ -58,7 +58,7 @@ export function rowForHeaders(headers: string[], values: Record<string, unknown>
   }
   const exact = new Map(Object.entries(flattened));
   const insensitive = new Map(Object.entries(flattened).map(([key, value]) => [key.toLowerCase(), value]));
-  // Extra source fields are intentionally ignored. FlowMind never creates sheet
+  // Extra source fields are intentionally ignored. CrazyLoops never creates sheet
   // columns implicitly; only real header names become write targets.
   return headers.map((header) => safeSheetValue(exact.get(header) ?? insensitive.get(header.toLowerCase())));
 }

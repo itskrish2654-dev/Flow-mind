@@ -76,7 +76,7 @@ test("36-41 planning is registry/connection/scope aware and compiles a multi-ste
   assert.equal(assessConnectorPlan(internal.manifest, internalAction, [{ connectorId: internal.manifest.id, status: "connected", grantedScopes: [] }], "test").status, "ADDITIONAL_SCOPE_REQUIRED");
   const prompt = "When an incoming webhook arrives summarize it and post the result to https://example.com/hook";
   const plan = planWorkflow(prompt); assert.equal(plan.status, "READY_TO_COMPILE");
-  if (plan.status === "READY_TO_COMPILE") { const workflow = compileReadyPlan(prompt, plan); assert.equal(workflow.steps.length, 3); assert.equal(workflow.steps[0].capabilityId, "generic_webhook_trigger"); assert.equal(workflow.steps[2].capabilityId, "generic_http_action"); assert.match(workflow.summary, /authenticated FlowMind webhook event/); assert.match(workflow.summary, /posts the result as JSON/); assert.doesNotMatch(workflow.summary, /hosted form|stores the result inside FlowMind/); }
+  if (plan.status === "READY_TO_COMPILE") { const workflow = compileReadyPlan(prompt, plan); assert.equal(workflow.steps.length, 3); assert.equal(workflow.steps[0].capabilityId, "generic_webhook_trigger"); assert.equal(workflow.steps[2].capabilityId, "generic_http_action"); assert.match(workflow.summary, /authenticated CrazyLoops webhook event/); assert.match(workflow.summary, /posts the result as JSON/); assert.doesNotMatch(workflow.summary, /hosted form|stores the result inside CrazyLoops/); }
 });
 
 test("42-48 generic HTTP SSRF boundary blocks loopback/private/link-local/metadata and redirects by construction", () => {

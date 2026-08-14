@@ -47,7 +47,7 @@ export function AiCustomizationBar({
         <div>
           <h3 className="text-[11px] font-semibold text-[#272536]">{question}</h3>
           <p className="mt-0.5 text-[9px] leading-4 text-slate-500">
-            Describe the result normally. FlowMind handles the setup details.
+            Describe the result normally. CrazyLoops handles the setup details.
           </p>
         </div>
       </div>
@@ -102,7 +102,7 @@ export function AiCustomizationBar({
       </div>
 
       <div aria-live="polite" className="mt-2 min-h-4 text-[9px] leading-4">
-        {pending && <span className="text-[#7f5d00]">FlowMind is applying your changes…</span>}
+        {pending && <span className="text-[#7f5d00]">CrazyLoops is applying your changes…</span>}
         {!pending && error && <span role="alert" className="text-rose-600">{error}</span>}
         {!pending && !error && message && <span className="text-emerald-700">{message}</span>}
       </div>

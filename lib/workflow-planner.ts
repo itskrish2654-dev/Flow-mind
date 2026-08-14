@@ -41,7 +41,7 @@ function plannedCapability(
   instruction?: string,
 ): PlannedCapability {
   const capability = getCapability(capabilityId);
-  if (!capability) throw new Error(`Unknown FlowMind capability: ${capabilityId}`);
+  if (!capability) throw new Error(`Unknown CrazyLoops capability: ${capabilityId}`);
   return {
     capabilityId,
     displayName: capability.displayName,
@@ -63,12 +63,12 @@ function detectContradictions(prompt: string): string[] {
     /\b(ask me|approval|approve|review)\b[^.]{0,40}\b(before|first)\b|\b(before|first)\b[^.]{0,40}\b(send|sending|publish|post)\b/i.test(prompt)
   ) {
     contradictions.push(
-      "The request asks FlowMind to act automatically and also wait for approval before acting.",
+      "The request asks CrazyLoops to act automatically and also wait for approval before acting.",
     );
   }
   if (/\bnever store\b/i.test(prompt) && /\b(history|previous|store|save|data table)\b/i.test(prompt)) {
     contradictions.push(
-      "The request says not to store data but also asks FlowMind to retain it.",
+      "The request says not to store data but also asks CrazyLoops to retain it.",
     );
   }
   if (/\b(public|anyone)\b/i.test(prompt) && /\b(only me|private to me)\b/i.test(prompt)) {
@@ -132,7 +132,7 @@ function detectsHttpDestination(prompt: string): boolean {
 }
 
 function detectsInternalDestination(prompt: string): boolean {
-  return /\b(flowmind|internal(?:ly)?|data table|store|save|record|keep)\b/i.test(prompt);
+  return /\b(crazyloops|flowmind|internal(?:ly)?|data table|store|save|record|keep)\b/i.test(prompt);
 }
 
 function detectsPdfDestination(prompt: string): boolean {
@@ -172,7 +172,7 @@ export function planWorkflow(prompt: string): WorkflowPlan {
       ...base,
       status: "CONFLICTING_REQUIREMENTS",
       contradictions,
-      message: "These requirements conflict, so FlowMind will not invent a compromise.",
+      message: "These requirements conflict, so CrazyLoops will not invent a compromise.",
       clarificationQuestions: [
         "Should this automation act automatically, or wait for a person to approve it?",
       ],
@@ -195,7 +195,7 @@ export function planWorkflow(prompt: string): WorkflowPlan {
     /\b(connect(?:\s+to)?|sync\s+(?:to|with)|post\s+(?:it\s+)?to)\b/i.test(
       normalizedPrompt,
     ) &&
-    !/\b(flowmind|pdf|document|webhook|http request|gmail|google sheets?|sheets?)\b/i.test(normalizedPrompt) &&
+    !/\b(crazyloops|flowmind|pdf|document|webhook|http request|gmail|google sheets?|sheets?)\b/i.test(normalizedPrompt) &&
     unsupported.length === 0;
   if (asksForUnknownExternalConnection) {
     const externalIntegration = getCapability("external_integration");
@@ -222,7 +222,7 @@ export function planWorkflow(prompt: string): WorkflowPlan {
       ...base,
       status: "NEEDS_CLARIFICATION",
       missingRequirements: ["trigger", "outcome", "destination"],
-      message: "FlowMind needs a little more detail before it can create a truthful workflow.",
+      message: "CrazyLoops needs a little more detail before it can create a truthful workflow.",
       clarificationQuestions: [
         "What should start the automation, what should happen, and where should the result be stored?",
       ],
@@ -232,7 +232,7 @@ export function planWorkflow(prompt: string): WorkflowPlan {
   const gmailSearch = asksForGmail && /\b(contains?|from|subject)\b/i.test(normalizedPrompt);
   const derivedGmailSearch = gmailSearch ? deriveGmailSearch(normalizedPrompt) : null;
   if (gmailSearch && !derivedGmailSearch) {
-    return { ...base, status: "NEEDS_CLARIFICATION", missingRequirements: ["gmail search"], message: "FlowMind needs a specific sender, subject, or phrase for the Gmail filter.", clarificationQuestions: ["Which sender, subject, or exact phrase should the new Gmail message match?"] };
+    return { ...base, status: "NEEDS_CLARIFICATION", missingRequirements: ["gmail search"], message: "CrazyLoops needs a specific sender, subject, or phrase for the Gmail filter.", clarificationQuestions: ["Which sender, subject, or exact phrase should the new Gmail message match?"] };
   }
   const trigger = asksForGmail && /\b(new|arrives?|received?|when)\b/i.test(normalizedPrompt)
     ? plannedCapability(gmailSearch ? "gmail_new_email_matching_search" : "gmail_new_email", derivedGmailSearch ?? undefined)
@@ -263,13 +263,13 @@ export function planWorkflow(prompt: string): WorkflowPlan {
   if (!trigger) {
     missingRequirements.push("trigger");
     clarificationQuestions.push(
-      "Should this start from a FlowMind hosted form submission?",
+      "Should this start from a CrazyLoops hosted form submission?",
     );
   }
   if (!destination) {
     missingRequirements.push("destination");
     clarificationQuestions.push(
-      "Should the result be stored inside FlowMind or generated as a PDF?",
+      "Should the result be stored inside CrazyLoops or generated as a PDF?",
     );
   }
 
@@ -281,7 +281,7 @@ export function planWorkflow(prompt: string): WorkflowPlan {
       transformations,
       destination,
       missingRequirements,
-      message: `FlowMind needs ${missingRequirements.join(" and ")} details before building this workflow.`,
+      message: `CrazyLoops needs ${missingRequirements.join(" and ")} details before building this workflow.`,
       clarificationQuestions,
     };
   }
@@ -292,6 +292,6 @@ export function planWorkflow(prompt: string): WorkflowPlan {
     trigger,
     transformations,
     destination,
-    message: "This request matches capabilities that FlowMind can execute.",
+    message: "This request matches capabilities that CrazyLoops can execute.",
   };
 }

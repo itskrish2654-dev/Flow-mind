@@ -39,7 +39,7 @@ export function LoginForm({
     initialNotice === "password_updated"
       ? "Password updated. Log in with your new password."
       : initialNotice === "account_deleted"
-        ? "Your FlowMind account and account-owned data were deleted."
+        ? "Your CrazyLoops account and account-owned data were deleted."
         : null,
   );
 
@@ -110,7 +110,7 @@ export function LoginForm({
       <div className="absolute inset-x-0 top-0 h-1 bg-[#f1c94b]" />
       <div className="flex items-center gap-3">
         <span className="flex size-10 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd] text-[#8a6200]"><Zap className="size-[18px] fill-current" /></span>
-        <div><p className="text-lg font-bold tracking-[-0.03em] text-slate-950">FlowMind</p><p className="text-[11px] text-slate-600">Your private automation workspace</p></div>
+        <div><p className="text-lg font-bold tracking-[-0.03em] text-slate-950">CrazyLoops</p><p className="text-[11px] text-slate-600">Your private automation workspace</p></div>
       </div>
 
       {isSubmitting ? (

@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { LoginForm } from "@/components/login-form";
 
 export const metadata: Metadata = {
-  title: "Log in | FlowMind",
+  title: "Log in",
   robots: { index: false, follow: false },
 };
 
@@ -15,7 +15,7 @@ function safeNextPath(value: string | string[] | undefined) {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string | string[]; error?: string | string[]; notice?: string | string[]; recover?: string | string[] }>;
+  searchParams: Promise<{ next?: string | string[]; error?: string | string[]; notice?: string | string[]; recover?: string | string[]; mode?: string | string[] }>;
 }) {
   const params = await searchParams;
   const nextPath = safeNextPath(params.next);
@@ -29,7 +29,7 @@ export default async function LoginPage({
           turnstileSiteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? null}
           initialMessage={Array.isArray(params.error) ? params.error[0] : params.error}
           notice={Array.isArray(params.notice) ? params.notice[0] : params.notice}
-          initialMode={(Array.isArray(params.recover) ? params.recover[0] : params.recover) === "1" ? "recovery" : "login"}
+          initialMode={(Array.isArray(params.recover) ? params.recover[0] : params.recover) === "1" ? "recovery" : (Array.isArray(params.mode) ? params.mode[0] : params.mode) === "signup" ? "signup" : "login"}
         />
         <nav aria-label="Legal and support" className="mt-5 flex flex-wrap justify-center gap-x-3 gap-y-1 text-[10px] text-slate-500">
           <a href="/privacy" className="hover:text-slate-900">Privacy</a>

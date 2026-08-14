@@ -17,7 +17,7 @@ export async function getGoogleAccessToken(input: { userId: string; connectionId
   }
   const missing = input.requiredScopes.filter((scope) => !result.data!.granted_scopes.includes(scope));
   if (missing.length) {
-    throw new ConnectorError({ category: "authorization", code: "GOOGLE_ADDITIONAL_SCOPE_REQUIRED", message: "FlowMind needs additional Google permission for this workflow.", retryable: false });
+    throw new ConnectorError({ category: "authorization", code: "GOOGLE_ADDITIONAL_SCOPE_REQUIRED", message: "CrazyLoops needs additional Google permission for this workflow.", retryable: false });
   }
   if (!result.data.token_expires_at || Date.parse(result.data.token_expires_at) < Date.now() + 60_000) {
     try {

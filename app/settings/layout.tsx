@@ -5,7 +5,7 @@ import { SettingsShell } from "@/components/settings-shell";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = {
-  title: "Account settings | FlowMind",
+  title: "Account settings",
   robots: { index: false, follow: false },
 };
 
