@@ -16,12 +16,12 @@ Required server configuration:
 
 For the production domain, register these exact redirect URIs:
 
-- `https://crazyloops.com/api/connectors/oauth/google_gmail/callback`
-- `https://crazyloops.com/api/connectors/oauth/google_sheets/callback`
+- `https://www.crazy-loops.com/api/connectors/oauth/google_gmail/callback`
+- `https://www.crazy-loops.com/api/connectors/oauth/google_sheets/callback`
 
 The authenticated Gmail Pub/Sub push endpoint is:
 
-- `https://crazyloops.com/api/connectors/events/google_gmail`
+- `https://www.crazy-loops.com/api/connectors/events/google_gmail`
 
 Set `GOOGLE_PUBSUB_AUDIENCE` to the exact audience configured on the push subscription. Set `GOOGLE_PUBSUB_SERVICE_ACCOUNT` to the exact service-account email whose signed OIDC token Pub/Sub sends. Grant Gmail's push service account permission to publish to `GOOGLE_GMAIL_PUBSUB_TOPIC`. Enable the Gmail API, Google Sheets API, and Pub/Sub API in the matching project.
 

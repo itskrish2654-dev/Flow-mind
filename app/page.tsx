@@ -35,10 +35,10 @@ const description =
 export const metadata: Metadata = {
   title: { absolute: title },
   description,
-  alternates: { canonical: "https://crazyloops.com/" },
+  alternates: { canonical: "https://www.crazy-loops.com/" },
   openGraph: {
     type: "website",
-    url: "https://crazyloops.com/",
+    url: "https://www.crazy-loops.com/",
     siteName: "CrazyLoops",
     title,
     description,
@@ -367,7 +367,7 @@ export default function HomePage() {
 
       <footer className="landing-footer">
         <div className="landing-shell">
-          <div className="landing-footer-brand"><Wordmark /><p>Run the work. Not every task.</p><small>crazyloops.com</small></div>
+          <div className="landing-footer-brand"><Wordmark /><p>Run the work. Not every task.</p><small>crazy-loops.com</small></div>
           <div className="landing-footer-links">
             <nav aria-label="Product links"><p>Product</p><Link href="/login?mode=signup">Start building</Link><a href="#connectors">Connections</a><Link href="/security">Security</Link></nav>
             <nav aria-label="Resource links"><p>Resources</p><Link href="/data-use">Data Use</Link><Link href="/support">Support</Link></nav>

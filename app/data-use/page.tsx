@@ -5,7 +5,7 @@ import { LegalPageShell } from "@/components/legal-page-shell";
 export const metadata: Metadata = {
   title: "AI & Data Use",
   description: "How AI and workflow data are used in CrazyLoops.",
-  alternates: { canonical: "https://crazyloops.com/data-use" },
+  alternates: { canonical: "https://www.crazy-loops.com/data-use" },
 };
 
 export default function DataUsePage() {

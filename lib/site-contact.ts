@@ -1,8 +1,8 @@
 import "server-only";
 
-export const SUPPORT_EMAIL_PLACEHOLDER = "[SUPPORT EMAIL — OWNER MUST CONFIGURE BEFORE PUBLIC LAUNCH]";
+export const DEFAULT_SUPPORT_EMAIL = "contact@crazy-loops.com";
 
-export function getSupportEmail(): string | null {
+export function getSupportEmail(): string {
   const value = process.env.SUPPORT_EMAIL?.trim();
-  return value && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? value : null;
+  return value && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? value : DEFAULT_SUPPORT_EMAIL;
 }

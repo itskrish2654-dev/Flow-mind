@@ -14,7 +14,7 @@
 | Operations | Reconciliation and cleanup | PASS | Supabase ten-minute DB cron plus authorized daily application cleanup |
 | Operations | Alert destinations | OWNER ACTION | Configure Vercel error-log alert thresholds and recipient |
 | Operations | CI and public E2E | PASS | GitHub Actions gates main/PR; CAPTCHA-safe authenticated suite is opt-in |
-| Owner/legal | Support email | OWNER ACTION | Configure `SUPPORT_EMAIL` and remove visible support placeholder |
+| Owner/legal | Support email | PASS | `contact@crazy-loops.com` is the public support, privacy, and security contact |
 | Owner/legal | Legal entity and jurisdiction | LEGAL REVIEW | Replace exact Privacy/Terms placeholders |
 | Owner/legal | Privacy/Terms/retention review | LEGAL REVIEW | Counsel/owner must approve processor, retention, liability, and jurisdiction wording |
 | Limitation | External integrations and user scheduling | KNOWN LIMITATION | Unsupported capabilities are explicitly rejected |

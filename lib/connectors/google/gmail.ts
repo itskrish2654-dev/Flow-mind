@@ -26,7 +26,7 @@ export const gmailSendEmail: ConnectorActionHandler = async (input, context) => 
     const to = addresses(input.to, true); const cc = addresses(input.cc, false); const bcc = addresses(input.bcc, false);
     const subject = safeHeader(input.subject, "Subject"); const body = String(input.body ?? "").trim();
     if (!body) throw new Error("Email body is required.");
-    const stableMessageId = `<${Buffer.from(context.idempotencyKey).toString("base64url").slice(0, 80)}@crazyloops.com>`;
+    const stableMessageId = `<${Buffer.from(context.idempotencyKey).toString("base64url").slice(0, 80)}@crazy-loops.com>`;
     const response = await googleApiFetch({ userId: context.userId, connectionId: context.connectionId, requiredScopes: [GOOGLE_SCOPES.gmailSend], url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/send", method: "POST", body: { raw: buildRawGmailMessage({ to, cc, bcc, subject, body, messageId: stableMessageId }) } });
     const sent = await response.json() as { id?: string; threadId?: string };
     if (!sent.id) throw new Error("Gmail did not acknowledge the sent message.");
@@ -52,7 +52,7 @@ export const gmailReplyToEmail: ConnectorActionHandler = async (input, context) 
     const originalSubject = gmailHeader(headers, "Subject"); const subject = safeHeader(input.subject || (/^re:/i.test(originalSubject) ? originalSubject : `Re: ${originalSubject}`), "Subject");
     const replyBody = String(input.body ?? "").trim(); if (!replyBody) throw new Error("Reply body is required.");
     const references = [gmailHeader(headers, "References"), originalMessageId].filter(Boolean).join(" ");
-    const stableMessageId = `<${Buffer.from(context.idempotencyKey).toString("base64url").slice(0, 80)}@crazyloops.com>`;
+    const stableMessageId = `<${Buffer.from(context.idempotencyKey).toString("base64url").slice(0, 80)}@crazy-loops.com>`;
     const sendResponse = await googleApiFetch({ userId: context.userId, connectionId: context.connectionId, requiredScopes: [GOOGLE_SCOPES.gmailReadonly, GOOGLE_SCOPES.gmailSend], url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/send", method: "POST", body: { threadId, raw: buildRawGmailMessage({ to, subject, body: replyBody, messageId: stableMessageId, inReplyTo: originalMessageId, references }) } });
     const sent = await sendResponse.json() as { id?: string; threadId?: string };
     if (!sent.id || sent.threadId !== threadId) throw new Error("Gmail did not acknowledge the reply in the requested thread.");

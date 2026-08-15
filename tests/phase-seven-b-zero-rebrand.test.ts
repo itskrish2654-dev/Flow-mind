@@ -58,18 +58,18 @@ test("7B-0-6. reliability and security claims remain bounded", () => {
   assert.doesNotMatch(homepage, /SOC 2|ISO 27001|HIPAA|bank-grade|military-grade|100% secure/i);
 });
 
-test("7B-0-7. canonical metadata, manifest, sitemap, and OG identity use crazyloops.com", () => {
-  assert.match(layout, /metadataBase: new URL\("https:\/\/crazyloops\.com"\)/);
-  assert.match(homepage, /https:\/\/crazyloops\.com\//);
+test("7B-0-7. canonical metadata, manifest, sitemap, and OG identity use the production CrazyLoops domain", () => {
+  assert.match(layout, /metadataBase: new URL\("https:\/\/www\.crazy-loops\.com"\)/);
+  assert.match(homepage, /https:\/\/www\.crazy-loops\.com\//);
   assert.match(layout, /siteName: "CrazyLoops"/);
   assert.match(manifest, /name: "CrazyLoops"/);
-  assert.match(sitemap, /https:\/\/crazyloops\.com/);
+  assert.match(sitemap, /https:\/\/www\.crazy-loops\.com/);
   assert.doesNotMatch([layout, homepage, manifest, sitemap].join("\n"), /flow-mind-beta\.vercel\.app/i);
 });
 
 test("7B-0-8. canonical public trust routes are present and branded", () => {
   for (const [index, route] of ["privacy", "terms", "security", "data-use", "support"].entries()) {
-    assert.match(trustPages[index], new RegExp(`https://crazyloops\\.com/${route}`));
+    assert.match(trustPages[index], new RegExp(`https://www\\.crazy-loops\\.com/${route}`));
     assert.match(trustPages[index], /CrazyLoops/);
     assert.doesNotMatch(trustPages[index], /FlowMind|FlowPilot/);
   }

@@ -6,7 +6,7 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://crazyloops.com"),
+  metadataBase: new URL("https://www.crazy-loops.com"),
   title: {
     default: "CrazyLoops — Run the work. Not every task.",
     template: "%s | CrazyLoops",
@@ -17,11 +17,11 @@ export const metadata: Metadata = {
   creator: "CrazyLoops",
   publisher: "CrazyLoops",
   category: "technology",
-  alternates: { canonical: "https://crazyloops.com/" },
+  alternates: { canonical: "https://www.crazy-loops.com/" },
   openGraph: {
     type: "website",
     siteName: "CrazyLoops",
-    url: "https://crazyloops.com/",
+    url: "https://www.crazy-loops.com/",
     title: "CrazyLoops — Run the work. Not every task.",
     description: "Tell CrazyLoops what should happen. It turns the outcome into a reliable workflow and keeps the work moving.",
   },

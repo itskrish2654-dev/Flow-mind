@@ -6,7 +6,7 @@ import { getSupportEmail } from "@/lib/site-contact";
 export const metadata: Metadata = {
   title: "Terms of Service",
   description: "Terms governing use of CrazyLoops.",
-  alternates: { canonical: "https://crazyloops.com/terms" },
+  alternates: { canonical: "https://www.crazy-loops.com/terms" },
 };
 
 export default function TermsPage() {
@@ -23,7 +23,7 @@ export default function TermsPage() {
       <section><h2>Availability, changes, and termination</h2><p className="mt-3">CrazyLoops may change, limit, suspend, or discontinue features. The service is provided without a promise of uninterrupted availability. You may delete your account in Settings. CrazyLoops may suspend or terminate access for material breach, security risk, abuse, or legal necessity.</p></section>
       <section><h2>Intellectual property</h2><p className="mt-3">CrazyLoops’ software, interface, and service materials are owned by the operator or its licensors. These Terms do not transfer ownership. Rights in user content remain subject to the permissions needed to operate the service.</p></section>
       <section><h2>Disclaimers and liability</h2><p className="mt-3"><strong>[OWNER/LEGAL REVIEW REQUIRED]</strong> To the extent permitted by applicable law, CrazyLoops is provided “as is” and “as available,” without warranties that cannot legally be excluded. A final limitation-of-liability amount, excluded damages, mandatory consumer protections, and any jurisdiction-specific language must be selected by qualified counsel and are not invented here.</p></section>
-      <section><h2>Changes and contact</h2><p className="mt-3">Material Terms changes should be posted with an updated date and, where required, additional notice. {supportEmail ? <>Questions may be sent to <a href={`mailto:${supportEmail}`}>{supportEmail}</a>.</> : <>The public support contact still requires owner configuration.</>}</p></section>
+      <section><h2>Changes and contact</h2><p className="mt-3">Material Terms changes should be posted with an updated date and, where required, additional notice. Questions may be sent to <a href={`mailto:${supportEmail}`}>{supportEmail}</a>.</p></section>
     </LegalPageShell>
   );
 }

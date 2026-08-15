@@ -6,7 +6,7 @@ import { getSupportEmail } from "@/lib/site-contact";
 export const metadata: Metadata = {
   title: "Privacy Policy",
   description: "How CrazyLoops handles account, workflow, submission, and execution data.",
-  alternates: { canonical: "https://crazyloops.com/privacy" },
+  alternates: { canonical: "https://www.crazy-loops.com/privacy" },
 };
 
 export default function PrivacyPage() {
@@ -22,7 +22,7 @@ export default function PrivacyPage() {
       <section><h2>Cookies and browser storage</h2><p className="mt-3">Supabase Auth uses cookies to maintain an authenticated session. CrazyLoops may use browser storage for non-secret workflow interface state; historical browser entries are cleared on logout and account deletion. Credentials and elevated service keys are not intentionally stored in browser storage.</p></section>
       <section><h2>Retention, export, and deletion</h2><p className="mt-3">Account data is retained while needed to provide the service or until the account holder removes it. CrazyLoops does not yet promise a fixed retention schedule. Account settings provide a bounded JSON export and self-service deletion. Deletion first disables public forms, then removes account-owned workflow data, credential records, generated documents, usage records, and the Auth identity. Short-lived security records keyed by pseudonymous hashes expire through their operational windows and are not used as account content.</p></section>
       <section><h2>Security and choices</h2><p className="mt-3">CrazyLoops uses account-scoped authorization, row-level database controls where applicable, encrypted credential storage, private document storage, expiring signed links, CAPTCHA, rate limits, and execution safeguards. No online service can promise absolute security. You can export or delete your data in Settings.</p></section>
-      <section><h2>Contact and legal review</h2><p className="mt-3">{supportEmail ? <>For privacy, export, or deletion help, contact <a href={`mailto:${supportEmail}`}>{supportEmail}</a>.</> : <>The public support contact is still being finalized. Owner action is required before Google submission.</>} This draft requires owner/legal review for entity identity, address, jurisdiction, retention commitments, and processor disclosures.</p></section>
+      <section><h2>Contact and legal review</h2><p className="mt-3">For privacy, export, or deletion help, contact <a href={`mailto:${supportEmail}`}>{supportEmail}</a>. This draft requires owner/legal review for entity identity, address, jurisdiction, retention commitments, and processor disclosures.</p></section>
     </LegalPageShell>
   );
 }
