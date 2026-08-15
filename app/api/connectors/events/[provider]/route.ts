@@ -12,10 +12,25 @@ import { getClientIp } from "@/lib/security/request-context";
 import { queueSlackEvent } from "@/lib/connectors/slack/inbound";
 import { queueNotionEvent } from "@/lib/connectors/notion/inbound";
 import { getSlackUrlVerificationChallenge, verifySlackRequest, type SlackEventEnvelope } from "@/lib/connectors/slack/events";
-import { verifyNotionVerificationToken, type NotionWebhookEvent } from "@/lib/connectors/notion/webhooks";
+import { getInitialNotionVerificationToken, type NotionWebhookEvent } from "@/lib/connectors/notion/webhooks";
+import { captureInitialNotionVerificationToken, consumeCapturedNotionVerificationToken } from "@/lib/connectors/notion/verification-capture";
 
 export const maxDuration = 30;
 const MAX_EVENT_BYTES = 64 * 1024;
+
+export async function GET(request: Request, { params }: { params: Promise<{ provider: string }> }) {
+  const { provider } = await params;
+  if (provider !== "notion") return NextResponse.json({ error: "Provider not found." }, { status: 404 });
+  try {
+    const result = await consumeCapturedNotionVerificationToken(request);
+    if (result.status === "disabled") return NextResponse.json({ error: "Not found." }, { status: 404 });
+    if (result.status === "unauthorized") return NextResponse.json({ error: "Unauthorized." }, { status: 401, headers: { "Cache-Control": "no-store" } });
+    if (result.status === "empty") return NextResponse.json({ error: "No unexpired verification token is waiting." }, { status: 404, headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ verification_token: result.token }, { status: 200, headers: { "Cache-Control": "no-store" } });
+  } catch {
+    return NextResponse.json({ error: "Verification token retrieval is temporarily unavailable." }, { status: 503, headers: { "Cache-Control": "no-store" } });
+  }
+}
 
 export async function POST(request: Request, { params }: { params: Promise<{ provider: string }> }) {
   const { provider } = await params;
@@ -55,10 +70,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
   if (provider === "notion") {
     try {
       const notionPayload = payload as NotionWebhookEvent;
-      if (notionPayload.verification_token) {
-        return verifyNotionVerificationToken(notionPayload.verification_token)
-          ? NextResponse.json({ accepted: true }, { status: 200 })
-          : NextResponse.json({ error: "Notion verification token mismatch." }, { status: 401 });
+      const initialVerificationToken = getInitialNotionVerificationToken(payload);
+      if (initialVerificationToken) {
+        const capture = await captureInitialNotionVerificationToken(initialVerificationToken).catch(() => "capture_failed" as const);
+        return NextResponse.json({ accepted: true, verification: capture }, { status: 200, headers: { "Cache-Control": "no-store" } });
       }
       const queued = await queueNotionEvent(request, raw, notionPayload);
       after(() => Promise.allSettled(queued.receiptIds.map((receiptId) => dispatchConnectorReceipt(receiptId))));

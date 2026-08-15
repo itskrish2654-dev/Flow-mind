@@ -156,6 +156,12 @@ export type Database = {
         Update: { status?: "queued" | "processing" | "succeeded" | "failed" | "duplicate"; safe_metadata?: Json; execution_id?: string | null; processed_at?: string | null };
         Relationships: [];
       };
+      connector_provider_setup_secrets: {
+        Row: { provider: string; ciphertext: string; nonce: string; auth_tag: string; encryption_version: number; algorithm: string; created_at: string; expires_at: string };
+        Insert: { provider: string; ciphertext: string; nonce: string; auth_tag: string; encryption_version?: number; algorithm?: string; created_at?: string; expires_at: string };
+        Update: never;
+        Relationships: [];
+      };
       generated_document_records: {
         Row: {
           id: string;

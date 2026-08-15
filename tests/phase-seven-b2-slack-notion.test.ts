@@ -8,7 +8,7 @@ import { assessConnectorPlan } from "../lib/connectors/planning";
 import { getSlackUrlVerificationChallenge, normalizeSlackMessage, verifySlackRequest } from "../lib/connectors/slack/events";
 import { SLACK_SCOPES, slackScopesForOperation } from "../lib/connectors/slack/scopes";
 import { encodeNotionProperty, mapNotionProperties, notionExactMatchFilter } from "../lib/connectors/notion/properties";
-import { verifyNotionWebhook } from "../lib/connectors/notion/webhooks";
+import { getInitialNotionVerificationToken, verifyNotionWebhook } from "../lib/connectors/notion/webhooks";
 import { compileReadyPlan } from "../lib/workflow-compiler";
 import { planWorkflow } from "../lib/workflow-planner";
 
@@ -86,6 +86,31 @@ test("7B2-9. Notion webhook HMAC validates the untouched raw body", () => {
     assert.equal(verifyNotionWebhook(new Request("https://example.com", { headers: { "x-notion-signature": signature } }), raw), true);
     assert.equal(verifyNotionWebhook(new Request("https://example.com", { headers: { "x-notion-signature": "sha256=" + "0".repeat(64) } }), raw), false);
   } finally { if (previous === undefined) delete process.env.FLOWMIND_CONNECTOR_NOTION_WEBHOOK_VERIFICATION_TOKEN; else process.env.FLOWMIND_CONNECTOR_NOTION_WEBHOOK_VERIFICATION_TOKEN = previous; }
+});
+
+test("7B2-9b. initial Notion verification is isolated from normal signed events", async () => {
+  const capture = await readFile("lib/connectors/notion/verification-capture.ts", "utf8");
+  const route = await readFile("app/api/connectors/events/[provider]/route.ts", "utf8");
+  assert.equal(getInitialNotionVerificationToken({ verification_token: "secret_one-time-token" }), "secret_one-time-token");
+  assert.equal(getInitialNotionVerificationToken({ verification_token: "" }), null);
+  assert.equal(getInitialNotionVerificationToken({ verification_token: 123 }), null);
+  assert.equal(getInitialNotionVerificationToken(["secret_not-an-object"]), null);
+  assert.equal(getInitialNotionVerificationToken({ verification_token: " secret_whitespace" }), null);
+  assert.match(capture, /encryptCredential\(token, CAPTURE_CONTEXT\)/);
+  assert.match(capture, /timingSafeEqual/);
+  assert.ok(route.indexOf("getInitialNotionVerificationToken(payload)") < route.indexOf("queueNotionEvent(request, raw, notionPayload)"));
+  assert.match(route, /verification: capture/);
+  assert.match(route, /status: 200/);
+  assert.match(route, /consumeCapturedNotionVerificationToken/);
+  assert.match(route, /"Cache-Control": "no-store"/);
+});
+
+test("7B2-9c. ordinary Notion events still require raw-body HMAC verification", async () => {
+  const inbound = await readFile("lib/connectors/notion/inbound.ts", "utf8");
+  const capture = await readFile("lib/connectors/notion/verification-capture.ts", "utf8");
+  assert.match(inbound, /if \(!verifyNotionWebhook\(request, raw\)\) throw new Error\("NOTION_SIGNATURE_INVALID"\)/);
+  assert.match(capture, /delete\(\)\.eq\("provider", PROVIDER\)[\s\S]*\.select\("ciphertext,nonce,auth_tag,algorithm,encryption_version"\)/);
+  assert.doesNotMatch(capture, /console\.|captureOperationalEvent/);
 });
 
 test("7B2-10. Notion property mapping supports the initial safe type surface and never invents fields", () => {
