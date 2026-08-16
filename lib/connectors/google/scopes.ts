@@ -3,15 +3,17 @@ export const GOOGLE_IDENTITY_SCOPES = ["openid", "email"] as const;
 export const GOOGLE_SCOPES = {
   gmailReadonly: "https://www.googleapis.com/auth/gmail.readonly",
   gmailSend: "https://www.googleapis.com/auth/gmail.send",
-  sheets: "https://www.googleapis.com/auth/spreadsheets",
+  driveFile: "https://www.googleapis.com/auth/drive.file",
 } as const;
+
+export const GOOGLE_LEGACY_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 
 export type GoogleOperationScopeInventory = {
   connector: "Gmail" | "Google Sheets";
   operation: string;
   scope: string;
   why: string;
-  classification: "identity" | "sensitive" | "restricted";
+  classification: "identity" | "non_sensitive" | "sensitive" | "restricted";
   verificationRequired: boolean;
 };
 
@@ -20,7 +22,7 @@ export const GOOGLE_SCOPE_INVENTORY: GoogleOperationScopeInventory[] = [
   { connector: "Gmail", operation: "send_email", scope: GOOGLE_SCOPES.gmailSend, why: "Send an email only when a workflow explicitly contains the Gmail send action.", classification: "sensitive", verificationRequired: true },
   { connector: "Gmail", operation: "reply_to_email", scope: GOOGLE_SCOPES.gmailReadonly, why: "Read the referenced message headers required to preserve its thread.", classification: "restricted", verificationRequired: true },
   { connector: "Gmail", operation: "reply_to_email", scope: GOOGLE_SCOPES.gmailSend, why: "Send the acknowledged reply in the existing Gmail thread.", classification: "sensitive", verificationRequired: true },
-  { connector: "Google Sheets", operation: "add_row / find_row / update_row", scope: GOOGLE_SCOPES.sheets, why: "Read the selected worksheet schema and read or write only the configured spreadsheet.", classification: "sensitive", verificationRequired: true },
+  { connector: "Google Sheets", operation: "add_row / find_row / update_row", scope: GOOGLE_SCOPES.driveFile, why: "Read or write only spreadsheets explicitly selected through Google Picker.", classification: "non_sensitive", verificationRequired: false },
 ];
 
 export function googleScopesForOperation(connectorId: string, operationKey?: string | null): string[] {
@@ -30,7 +32,6 @@ export function googleScopesForOperation(connectorId: string, operationKey?: str
     if (operationKey === "reply_to_email") return [...identity, GOOGLE_SCOPES.gmailReadonly, GOOGLE_SCOPES.gmailSend];
     return [...identity, GOOGLE_SCOPES.gmailReadonly];
   }
-  if (connectorId === "google_sheets") return [...identity, GOOGLE_SCOPES.sheets];
+  if (connectorId === "google_sheets") return [...identity, GOOGLE_SCOPES.driveFile];
   return identity;
 }
-

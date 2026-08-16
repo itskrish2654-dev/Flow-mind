@@ -2,10 +2,8 @@ const SPREADSHEET_ID = /^[A-Za-z0-9_-]{20,100}$/;
 
 export function normalizeSpreadsheetId(value: unknown) {
   const text = String(value ?? "").trim();
-  const fromUrl = text.match(/\/spreadsheets\/d\/([A-Za-z0-9_-]+)/)?.[1];
-  const id = fromUrl ?? text;
-  if (!SPREADSHEET_ID.test(id)) throw new Error("Choose a valid Google spreadsheet.");
-  return id;
+  if (!SPREADSHEET_ID.test(text)) throw new Error("Choose a spreadsheet through Google Picker.");
+  return text;
 }
 
 export function quoteSheetName(value: unknown) {

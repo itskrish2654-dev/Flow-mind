@@ -36,7 +36,6 @@ import {
   getConnectorConnectionOptions,
   getNotionResourceOptions,
   getSlackChannelOptions,
-  inspectGoogleSheet,
   inspectNotionSource,
 } from "@/app/actions/connections";
 import {
@@ -60,6 +59,7 @@ import {
 import { DataTableBuilder } from "@/components/data-table-builder";
 import { AccessibleDialog } from "@/components/accessible-dialog";
 import { FormBuilder } from "@/components/form-builder";
+import { GoogleSpreadsheetPicker } from "@/components/google-spreadsheet-picker";
 import { AiCustomizationBar } from "@/components/ai-customization-bar";
 import { getPublicFormPath, getPublicFormUrl } from "@/lib/public-form";
 import { isSensitiveFieldName } from "@/lib/security/redaction";
@@ -326,7 +326,6 @@ function Inspector({
     title: string;
     worksheets: Array<{ id: number; title: string }>;
   } | null>(null);
-  const [googleSheetBusy, setGoogleSheetBusy] = useState(false);
   const [notionSourceInfo, setNotionSourceInfo] = useState<{ properties: Array<{ id: string; name: string; type: string; supported: boolean }> } | null>(null);
   const [notionSourceBusy, setNotionSourceBusy] = useState(false);
 
@@ -846,6 +845,22 @@ function Inspector({
                               </option>
                             ))}
                           </select>
+                        ) : step.config?.connector?.connectorId === "google_sheets" &&
+                          input.key === "spreadsheetId" &&
+                          workflowId ? (
+                          <GoogleSpreadsheetPicker
+                            key={step.config.connector.connectionId ?? "no-google-connection"}
+                            workflowId={workflowId}
+                            stepId={step.id}
+                            connectionId={step.config.connector.connectionId}
+                            value={value}
+                            onSelected={(spreadsheet) => {
+                              onChange(id, spreadsheet.id);
+                              onChange(inputId(step.id, "worksheet"), "");
+                              setGoogleSheetInfo({ title: spreadsheet.title, worksheets: spreadsheet.worksheets });
+                              setConnectorConnectionMessage(null);
+                            }}
+                          />
                         ) : step.config?.connector?.connectorId ===
                           "google_sheets" &&
                         input.key === "worksheet" &&
@@ -912,38 +927,6 @@ function Inspector({
                           </button>
                         )}
                       </div>
-                      {step.config?.connector?.connectorId ===
-                          "google_sheets" &&
-                        input.key === "spreadsheetId" && (
-                          <button
-                            type="button"
-                            disabled={
-                              !value ||
-                              !step.config.connector.connectionId ||
-                              googleSheetBusy
-                            }
-                            onClick={async () => {
-                              if (!step.config?.connector?.connectionId) return;
-                              setGoogleSheetBusy(true);
-                              setConnectorConnectionMessage(null);
-                              const result = await inspectGoogleSheet(
-                                step.config.connector.connectionId,
-                                value,
-                              );
-                              setGoogleSheetBusy(false);
-                              if (!result.ok) {
-                                setConnectorConnectionMessage(result.error);
-                                return;
-                              }
-                              setGoogleSheetInfo(result.spreadsheet);
-                            }}
-                            className="mt-2 h-8 rounded-lg border border-[#d7aa2f] px-2.5 text-[9px] font-semibold text-[#6f5100] disabled:opacity-40"
-                          >
-                            {googleSheetBusy
-                              ? "Checking…"
-                              : "Load worksheet names"}
-                          </button>
-                        )}
                       {input.type === "secret" && workflowId && (
                         <div className="mt-2 flex items-center gap-2">
                           <button

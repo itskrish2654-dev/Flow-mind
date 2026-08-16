@@ -4,6 +4,12 @@ import { z } from "zod";
 import { revokeConnection } from "@/lib/connectors/connection-vault";
 import { getConnectorOperation } from "@/lib/connectors/registry";
 import { inspectGoogleSpreadsheet } from "@/lib/connectors/google/sheets";
+import {
+  assertSelectedGoogleSpreadsheet,
+  listSelectedGoogleSpreadsheets,
+  registerPickerSelectedSpreadsheet,
+} from "@/lib/connectors/google/selected-spreadsheets";
+import { GOOGLE_LEGACY_SHEETS_SCOPE, GOOGLE_SCOPES } from "@/lib/connectors/google/scopes";
 import { listSlackChannels } from "@/lib/connectors/slack/messages";
 import { inspectNotionDataSource, listNotionResources } from "@/lib/connectors/notion/actions";
 import { CompiledWorkflowSchema } from "@/lib/schemas/workflow";
@@ -53,7 +59,12 @@ export async function configureGoogleWorkflowStep(workflowId: string, stepId: st
   const missing = registered.operation.requiredScopes.filter((scope) => !connection.granted_scopes.includes(scope));
   if (missing.length) return { ok: false as const, error: "CrazyLoops needs additional Google permission for this workflow.", additionalScopes: missing };
   const workflow = structuredClone(parsed.data); workflow.steps[index] = { ...workflow.steps[index], config: { ...workflow.steps[index].config, connector: { ...connector, connectionId: connection.id } } };
-  try { await createImmutableWorkflowVersion(admin, { workflowId: request.data.workflowId, userId: user.id, expectedVersionId: snapshot.versionId, workflow, setupConfig: snapshot.setupConfig, scope: "setup", summary: "Selected Google account for connector step." }); revalidatePath(`/dashboard/projects/${request.data.workflowId}`); return { ok: true as const, workflow }; }
+  const setupConfig = { ...snapshot.setupConfig };
+  if (connector.connectorId === "google_sheets") {
+    delete setupConfig[`${request.data.stepId}-spreadsheetId`];
+    delete setupConfig[`${request.data.stepId}-worksheet`];
+  }
+  try { await createImmutableWorkflowVersion(admin, { workflowId: request.data.workflowId, userId: user.id, expectedVersionId: snapshot.versionId, workflow, setupConfig, scope: "setup", summary: "Selected Google account for connector step." }); revalidatePath(`/dashboard/projects/${request.data.workflowId}`); return { ok: true as const, workflow }; }
   catch { return { ok: false as const, error: "Google account selection could not be saved." }; }
 }
 
@@ -72,7 +83,12 @@ export async function configureConnectorWorkflowStep(workflowId: string, stepId:
   const missing = registered.operation.requiredScopes.filter((scope) => !connection.granted_scopes.includes(scope));
   if (missing.length) return { ok: false as const, error: `CrazyLoops needs additional ${registered.connector.manifest.displayName} permission for this workflow.`, additionalScopes: missing };
   const workflow = structuredClone(parsed.data); workflow.steps[index] = { ...workflow.steps[index], config: { ...workflow.steps[index].config, connector: { ...connector, connectionId: connection.id } } };
-  try { await createImmutableWorkflowVersion(admin, { workflowId: request.data.workflowId, userId: user.id, expectedVersionId: snapshot.versionId, workflow, setupConfig: snapshot.setupConfig, scope: "setup", summary: `Selected ${registered.connector.manifest.displayName} account for connector step.` }); revalidatePath(`/dashboard/projects/${request.data.workflowId}`); return { ok: true as const, workflow }; }
+  const setupConfig = { ...snapshot.setupConfig };
+  if (connector.connectorId === "google_sheets") {
+    delete setupConfig[`${request.data.stepId}-spreadsheetId`];
+    delete setupConfig[`${request.data.stepId}-worksheet`];
+  }
+  try { await createImmutableWorkflowVersion(admin, { workflowId: request.data.workflowId, userId: user.id, expectedVersionId: snapshot.versionId, workflow, setupConfig, scope: "setup", summary: `Selected ${registered.connector.manifest.displayName} account for connector step.` }); revalidatePath(`/dashboard/projects/${request.data.workflowId}`); return { ok: true as const, workflow }; }
   catch { return { ok: false as const, error: "Connected account selection could not be saved." }; }
 }
 
@@ -97,9 +113,90 @@ export async function inspectNotionSource(connectionId: string, dataSourceId: st
   catch (error) { return { ok: false as const, error: error instanceof Error ? error.message : "Notion data source could not be inspected." }; }
 }
 
-export async function inspectGoogleSheet(connectionId: string, spreadsheetId: string) {
-  const parsed = z.object({ connectionId: z.string().uuid(), spreadsheetId: z.string().max(500) }).safeParse({ connectionId, spreadsheetId }); if (!parsed.success) return { ok: false as const, error: "Choose a valid spreadsheet." };
-  const supabase = await createClient(); const { data: { user } } = await supabase.auth.getUser(); if (!user) return { ok: false as const, error: "Unauthorized" };
-  try { return { ok: true as const, spreadsheet: await inspectGoogleSpreadsheet({ userId: user.id, connectionId: parsed.data.connectionId, spreadsheetId: parsed.data.spreadsheetId }) }; }
-  catch (error) { return { ok: false as const, error: error instanceof Error ? error.message : "Spreadsheet could not be inspected." }; }
+export async function getGooglePickerConfiguration(connectionId: string) {
+  const parsed = z.string().uuid().safeParse(connectionId);
+  if (!parsed.success) return { ok: false as const, error: "Choose a valid Google account." };
+  const supabase = await createClient(); const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false as const, error: "Unauthorized" };
+  const { data: connection } = await createAdminClient().from("connector_connections")
+    .select("id,status,external_account_label,granted_scopes")
+    .eq("id", parsed.data).eq("user_id", user.id).eq("provider_family", "google").maybeSingle();
+  if (!connection || connection.status !== "connected" || !connection.granted_scopes.includes(GOOGLE_SCOPES.driveFile) || connection.granted_scopes.includes(GOOGLE_LEGACY_SHEETS_SCOPE)) {
+    return { ok: false as const, error: "Reconnect Google Sheets with per-file access to continue." };
+  }
+  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  const apiKey = process.env.GOOGLE_PICKER_API_KEY;
+  const appId = process.env.GOOGLE_PICKER_APP_ID;
+  if (!clientId || !apiKey || !appId) return { ok: false as const, error: "Google Picker is not configured yet." };
+  return { ok: true as const, config: { clientId, apiKey, appId, accountHint: connection.external_account_label ?? undefined } };
+}
+
+export async function getSelectedGoogleSpreadsheetOptions(connectionId: string) {
+  const parsed = z.string().uuid().safeParse(connectionId);
+  if (!parsed.success) return { ok: false as const, error: "Choose a valid Google account.", spreadsheets: [] };
+  const supabase = await createClient(); const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false as const, error: "Unauthorized", spreadsheets: [] };
+  const { data: connection } = await createAdminClient().from("connector_connections")
+    .select("id,status,granted_scopes").eq("id", parsed.data).eq("user_id", user.id).eq("provider_family", "google").maybeSingle();
+  if (!connection || connection.status !== "connected" || !connection.granted_scopes.includes(GOOGLE_SCOPES.driveFile)) {
+    return { ok: false as const, error: "Reconnect Google Sheets to continue.", spreadsheets: [] };
+  }
+  try { return { ok: true as const, spreadsheets: await listSelectedGoogleSpreadsheets({ userId: user.id, connectionId: parsed.data }) }; }
+  catch (error) { return { ok: false as const, error: error instanceof Error ? error.message : "Selected spreadsheets could not be loaded.", spreadsheets: [] }; }
+}
+
+export async function selectGoogleSpreadsheetForWorkflow(
+  workflowId: string,
+  stepId: string,
+  connectionId: string,
+  spreadsheetId: string,
+  pickerAccessToken?: string,
+) {
+  const request = z.object({
+    workflowId: z.string().uuid(),
+    stepId: z.string().min(1).max(100),
+    connectionId: z.string().uuid(),
+    spreadsheetId: z.string().regex(/^[A-Za-z0-9_-]{20,100}$/),
+    pickerAccessToken: z.string().min(1).max(4_096).optional(),
+  }).safeParse({ workflowId, stepId, connectionId, spreadsheetId, pickerAccessToken });
+  if (!request.success) return { ok: false as const, error: "Choose a valid spreadsheet through Google Picker." };
+  const supabase = await createClient(); const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false as const, error: "Unauthorized" };
+  const admin = createAdminClient();
+  const snapshot = await loadWorkflowSnapshot(admin, request.data.workflowId, user.id);
+  if (!snapshot) return { ok: false as const, error: "Workflow not found." };
+  const workflow = CompiledWorkflowSchema.safeParse(snapshot.workflow);
+  if (!workflow.success) return { ok: false as const, error: "Workflow configuration is invalid." };
+  const step = workflow.data.steps.find((item) => item.id === request.data.stepId);
+  if (step?.config?.connector?.connectorId !== "google_sheets" || step.config.connector.connectionId !== request.data.connectionId) {
+    return { ok: false as const, error: "Choose the Google account for this Sheets step first." };
+  }
+  try {
+    if (request.data.pickerAccessToken) {
+      await registerPickerSelectedSpreadsheet({
+        userId: user.id,
+        connectionId: request.data.connectionId,
+        spreadsheetId: request.data.spreadsheetId,
+        pickerAccessToken: request.data.pickerAccessToken,
+      });
+    } else {
+      await assertSelectedGoogleSpreadsheet({ userId: user.id, connectionId: request.data.connectionId, spreadsheetId: request.data.spreadsheetId });
+    }
+    const spreadsheet = await inspectGoogleSpreadsheet({ userId: user.id, connectionId: request.data.connectionId, spreadsheetId: request.data.spreadsheetId });
+    const setupConfig = { ...snapshot.setupConfig, [`${request.data.stepId}-spreadsheetId`]: request.data.spreadsheetId };
+    delete setupConfig[`${request.data.stepId}-worksheet`];
+    await createImmutableWorkflowVersion(admin, {
+      workflowId: request.data.workflowId,
+      userId: user.id,
+      expectedVersionId: snapshot.versionId,
+      workflow: workflow.data,
+      setupConfig,
+      scope: "setup",
+      summary: "Selected a Google spreadsheet through Google Picker.",
+    });
+    revalidatePath(`/dashboard/projects/${request.data.workflowId}`);
+    return { ok: true as const, spreadsheet };
+  } catch (error) {
+    return { ok: false as const, error: error instanceof Error ? error.message : "Spreadsheet selection could not be saved." };
+  }
 }

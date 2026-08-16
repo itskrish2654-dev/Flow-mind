@@ -1,6 +1,7 @@
 import { googleApiErrorResult, googleApiFetch } from "@/lib/connectors/google/api";
 import { ConnectorError } from "@/lib/connectors/errors";
 import { GOOGLE_SCOPES } from "@/lib/connectors/google/scopes";
+import { assertSelectedGoogleSpreadsheet } from "@/lib/connectors/google/selected-spreadsheets";
 import type { ConnectorActionHandler } from "@/lib/connectors/types";
 import { captureOperationalEvent } from "@/lib/observability";
 import { normalizeSpreadsheetId, quoteSheetName, rowForHeaders, safeSheetValue } from "@/lib/connectors/google/sheets-values";
@@ -18,8 +19,9 @@ function valuesObject(value: unknown) {
 
 async function sheetContext(input: { userId: string; connectionId: string; spreadsheetId: unknown; worksheet: unknown }) {
   const spreadsheetId = normalizeSpreadsheetId(input.spreadsheetId); const sheetName = String(input.worksheet ?? "").trim();
+  await assertSelectedGoogleSpreadsheet({ userId: input.userId, connectionId: input.connectionId, spreadsheetId });
   const range = `${quoteSheetName(sheetName)}!1:1`;
-  const response = await googleApiFetch({ userId: input.userId, connectionId: input.connectionId, requiredScopes: [GOOGLE_SCOPES.sheets], url: `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?majorDimension=ROWS` });
+  const response = await googleApiFetch({ userId: input.userId, connectionId: input.connectionId, requiredScopes: [GOOGLE_SCOPES.driveFile], url: `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?majorDimension=ROWS` });
   const data = await response.json() as { values?: unknown[][] };
   const headers = (data.values?.[0] ?? []).map((value) => String(value).trim()).filter(Boolean).slice(0, 200);
   if (!headers.length) throw new Error("The selected worksheet needs a header row.");
@@ -29,7 +31,8 @@ async function sheetContext(input: { userId: string; connectionId: string; sprea
 
 export async function inspectGoogleSpreadsheet(input: { userId: string; connectionId: string; spreadsheetId: string }) {
   const spreadsheetId = normalizeSpreadsheetId(input.spreadsheetId);
-  const response = await googleApiFetch({ userId: input.userId, connectionId: input.connectionId, requiredScopes: [GOOGLE_SCOPES.sheets], url: `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}?fields=spreadsheetId,properties.title,sheets.properties` });
+  await assertSelectedGoogleSpreadsheet({ userId: input.userId, connectionId: input.connectionId, spreadsheetId });
+  const response = await googleApiFetch({ userId: input.userId, connectionId: input.connectionId, requiredScopes: [GOOGLE_SCOPES.driveFile], url: `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}?fields=spreadsheetId,properties.title,sheets.properties` });
   const data = await response.json() as { properties?: { title?: string }; sheets?: Array<{ properties?: { title?: string; sheetId?: number } }> };
   return { spreadsheetId, title: data.properties?.title ?? "Google spreadsheet", worksheets: (data.sheets ?? []).flatMap((sheet) => sheet.properties?.title ? [{ id: sheet.properties.sheetId ?? 0, title: sheet.properties.title }] : []) };
 }
@@ -40,7 +43,7 @@ export const sheetsAddRow: ConnectorActionHandler = async (input, context) => {
     const sheet = await sheetContext({ userId: context.userId, connectionId: context.connectionId, spreadsheetId: input.spreadsheetId, worksheet: input.worksheet });
     const row = rowForHeaders(sheet.headers, valuesObject(input.values));
     const target = `${quoteSheetName(sheet.sheetName)}!A:A`;
-    const response = await googleApiFetch({ userId: context.userId, connectionId: context.connectionId, requiredScopes: [GOOGLE_SCOPES.sheets], url: `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheet.spreadsheetId)}/values/${encodeURIComponent(target)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, method: "POST", body: { majorDimension: "ROWS", values: [row] } });
+    const response = await googleApiFetch({ userId: context.userId, connectionId: context.connectionId, requiredScopes: [GOOGLE_SCOPES.driveFile], url: `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheet.spreadsheetId)}/values/${encodeURIComponent(target)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, method: "POST", body: { majorDimension: "ROWS", values: [row] } });
     const result = await response.json() as { updates?: { updatedRange?: string; updatedRows?: number } };
     if (!result.updates?.updatedRange || result.updates.updatedRows !== 1) throw new Error("Google Sheets did not acknowledge exactly one inserted row.");
     await captureOperationalEvent({ level: "info", event: "sheets_action_success", userId: context.userId, workflowId: context.workflowId, executionId: context.executionId, stepId: context.stepId, status: "succeeded", metadata: { operation: "add_row" } });
@@ -58,7 +61,7 @@ export const sheetsFindRow: ConnectorActionHandler = async (input, context) => {
     const column = String(input.matchColumn ?? "").trim(); const columnIndex = sheet.headers.indexOf(column);
     if (columnIndex < 0) throw new Error("The lookup column does not exist in the selected worksheet.");
     const range = `${quoteSheetName(sheet.sheetName)}!A2:ZZ`;
-    const response = await googleApiFetch({ userId: context.userId, connectionId: context.connectionId, requiredScopes: [GOOGLE_SCOPES.sheets], url: `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheet.spreadsheetId)}/values/${encodeURIComponent(range)}?majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE` });
+    const response = await googleApiFetch({ userId: context.userId, connectionId: context.connectionId, requiredScopes: [GOOGLE_SCOPES.driveFile], url: `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheet.spreadsheetId)}/values/${encodeURIComponent(range)}?majorDimension=ROWS&valueRenderOption=UNFORMATTED_VALUE` });
     const data = await response.json() as { values?: unknown[][] }; const expected = String(input.matchValue ?? "");
     const matches = (data.values ?? []).map((row, index) => ({ row, rowNumber: index + 2 })).filter(({ row }) => String(row[columnIndex] ?? "") === expected);
     if (matches.length > 1) {
@@ -77,7 +80,7 @@ export const sheetsUpdateRow: ConnectorActionHandler = async (input, context) =>
     const rowNumber = Number(input.rowNumber); if (!Number.isInteger(rowNumber) || rowNumber < 2) throw new Error("A deterministic data row number is required.");
     const sheet = await sheetContext({ userId: context.userId, connectionId: context.connectionId, spreadsheetId: input.spreadsheetId, worksheet: input.worksheet });
     const row = rowForHeaders(sheet.headers, valuesObject(input.values)); const range = `${quoteSheetName(sheet.sheetName)}!A${rowNumber}`;
-    const response = await googleApiFetch({ userId: context.userId, connectionId: context.connectionId, requiredScopes: [GOOGLE_SCOPES.sheets], url: `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheet.spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=RAW`, method: "PUT", body: { majorDimension: "ROWS", values: [row] } });
+    const response = await googleApiFetch({ userId: context.userId, connectionId: context.connectionId, requiredScopes: [GOOGLE_SCOPES.driveFile], url: `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheet.spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=RAW`, method: "PUT", body: { majorDimension: "ROWS", values: [row] } });
     const result = await response.json() as { updatedRange?: string; updatedRows?: number };
     if (!result.updatedRange || result.updatedRows !== 1) throw new Error("Google Sheets did not acknowledge exactly one updated row.");
     await captureOperationalEvent({ level: "info", event: "sheets_action_success", userId: context.userId, workflowId: context.workflowId, executionId: context.executionId, stepId: context.stepId, status: "succeeded", metadata: { operation: "update_row" } });

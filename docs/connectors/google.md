@@ -32,7 +32,16 @@ Set `GOOGLE_PUBSUB_AUDIENCE` to the exact audience configured on the push subscr
 | Gmail | new email / matching search | `gmail.readonly` | Resolve mailbox history and normalize configured messages | Restricted | Required; pending |
 | Gmail | send email | `gmail.send` | Send an explicitly configured message | Sensitive | Required; pending |
 | Gmail | reply | `gmail.readonly` + `gmail.send` | Validate thread headers and send the reply | Restricted + sensitive | Required; pending |
-| Google Sheets | add/find/update row | `spreadsheets` | Inspect the selected sheet and read/write configured rows | Sensitive | Required; pending |
+| Google Sheets | add/find/update row | `drive.file` | Read/write only spreadsheets explicitly selected through Google Picker | Non-sensitive | Do not submit yet |
+
+Google Sheets never accepts a pasted URL as permission. The user must reconnect
+with `drive.file`, choose a spreadsheet through Google Picker, and CrazyLoops
+stores that exact file grant server-side. Every inspect/read/write operation
+revalidates the connection and the selected spreadsheet ID.
+
+Picker configuration also requires `GOOGLE_PICKER_API_KEY` and the numeric
+Google Cloud project number in `GOOGLE_PICKER_APP_ID`. Restrict the API key to
+the Google Picker API and the exact production/preview HTTP referrers.
 
 Identity scopes `openid` and `email` identify the selected Google account. CrazyLoops never requests `https://mail.google.com/`. Scopes are requested per operation, and later capabilities use incremental authorization against the same owner-bound connection.
 

@@ -5,9 +5,10 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto
 import { createAdminClient } from "@/lib/supabase/admin";
 import { activateGmailWatch, stopGmailWatch } from "@/lib/connectors/google/gmail-push";
 import { getConnectorOperation } from "@/lib/connectors/registry";
+import { assertSelectedGoogleSpreadsheet } from "@/lib/connectors/google/selected-spreadsheets";
 import type { Json } from "@/lib/supabase/types";
 
-export async function validateWorkflowConnectorConnections(input: { userId: string; steps: Array<{ config?: { connector?: { connectorId: string; operationKind: "trigger" | "action"; operationKey: string; operationVersion: number; connectionId?: string } } }> }) {
+export async function validateWorkflowConnectorConnections(input: { userId: string; setupConfig?: Record<string, string>; steps: Array<{ id?: string; config?: { connector?: { connectorId: string; operationKind: "trigger" | "action"; operationKey: string; operationVersion: number; connectionId?: string } } }> }) {
   const admin = createAdminClient();
   for (const step of input.steps) {
     const config = step.config?.connector;
@@ -19,6 +20,15 @@ export async function validateWorkflowConnectorConnections(input: { userId: stri
     const { data } = await admin.from("connector_connections").select("id,status,provider_family,granted_scopes").eq("id", config.connectionId).eq("user_id", input.userId).eq("provider_family", registered.connector.manifest.providerFamily).maybeSingle();
     if (!data || data.status !== "connected") return `Reconnect ${registered.connector.manifest.displayName} to continue.`;
     if (registered.operation.requiredScopes.some((scope) => !data.granted_scopes.includes(scope))) return `CrazyLoops needs additional ${registered.connector.manifest.displayName} permission for this workflow.`;
+    if (config.connectorId === "google_sheets") {
+      const spreadsheetId = input.setupConfig?.[`${step.id ?? ""}-spreadsheetId`];
+      if (!spreadsheetId) return "Choose a spreadsheet through Google Picker.";
+      try {
+        await assertSelectedGoogleSpreadsheet({ userId: input.userId, connectionId: data.id, spreadsheetId });
+      } catch {
+        return "Choose this spreadsheet through Google Picker before publishing.";
+      }
+    }
   }
   return null;
 }

@@ -253,7 +253,7 @@ export const CAPABILITY_REGISTRY = {
     category: "destination",
     supported: true,
     executionImplementation: "connector:google_sheets/add_row@1",
-    requiredSetupFields: [{ key: "spreadsheetId", label: "Spreadsheet", type: "text" }, { key: "worksheet", label: "Worksheet", type: "text" }],
+    requiredSetupFields: [{ key: "spreadsheetId", label: "Picker-selected spreadsheet", type: "text" }, { key: "worksheet", label: "Worksheet", type: "text" }],
     credentialsRequired: true,
     availableInTest: true,
     availableInProduction: true,
@@ -262,12 +262,12 @@ export const CAPABILITY_REGISTRY = {
   }),
   google_sheets_find_row: defineCapability({
     id: "google_sheets_find_row", displayName: "Find row in Google Sheets", category: "transformation", supported: true,
-    executionImplementation: "connector:google_sheets/find_row@1", requiredSetupFields: [{ key: "spreadsheetId", label: "Spreadsheet", type: "text" }, { key: "worksheet", label: "Worksheet", type: "text" }, { key: "matchColumn", label: "Lookup column", type: "text" }], credentialsRequired: true,
+    executionImplementation: "connector:google_sheets/find_row@1", requiredSetupFields: [{ key: "spreadsheetId", label: "Picker-selected spreadsheet", type: "text" }, { key: "worksheet", label: "Worksheet", type: "text" }, { key: "matchColumn", label: "Lookup column", type: "text" }], credentialsRequired: true,
     availableInTest: true, availableInProduction: true, limitations: ["Exact matches only; multiple matches fail clearly."], aliases: ["find row in google sheets", "lookup in google sheets"],
   }),
   google_sheets_update_row: defineCapability({
     id: "google_sheets_update_row", displayName: "Update row in Google Sheets", category: "destination", supported: true,
-    executionImplementation: "connector:google_sheets/update_row@1", requiredSetupFields: [{ key: "spreadsheetId", label: "Spreadsheet", type: "text" }, { key: "worksheet", label: "Worksheet", type: "text" }], credentialsRequired: true,
+    executionImplementation: "connector:google_sheets/update_row@1", requiredSetupFields: [{ key: "spreadsheetId", label: "Picker-selected spreadsheet", type: "text" }, { key: "worksheet", label: "Worksheet", type: "text" }], credentialsRequired: true,
     availableInTest: true, availableInProduction: true, limitations: ["Requires an explicit unique row reference."], aliases: ["update row in google sheets"],
   }),
   google_calendar: defineCapability({

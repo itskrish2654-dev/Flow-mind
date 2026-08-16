@@ -5,6 +5,7 @@ import { z } from "zod";
 import { executeAiText } from "@/lib/ai-execution";
 import { getAuthenticatedContext } from "@/lib/auth";
 import { assessWorkflowCapabilities } from "@/lib/capability-registry";
+import { validateWorkflowConnectorConnections } from "@/lib/connectors/subscriptions";
 import { uploadGeneratedDocument } from "@/lib/document-storage";
 import {
   completeDurableExecution,
@@ -108,6 +109,12 @@ export async function runTestWorkflow(
       request.data.inputValues,
     );
     if (validationError) return { ok: false, error: validationError };
+    const connectorReadiness = await validateWorkflowConnectorConnections({
+      userId: auth.user.id,
+      setupConfig: request.data.inputValues,
+      steps: savedWorkflow.data.steps,
+    });
+    if (connectorReadiness) return { ok: false, error: connectorReadiness };
   }
 
   const authoritativeSetup = sanitizeSetupConfig(request.data.inputValues, isSensitiveFieldName);

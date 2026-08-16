@@ -3,6 +3,7 @@ import { buildAuthorizationUrl } from "@/lib/connectors/oauth-exchange";
 import { createOAuthAuthorization, safeOAuthReturnPath } from "@/lib/connectors/oauth";
 import { getConnector } from "@/lib/connectors/registry";
 import { googleScopesForOperation } from "@/lib/connectors/google/scopes";
+import { prepareGoogleConnectionForDriveFileReconnect } from "@/lib/connectors/google/selected-spreadsheets";
 import { slackScopesForOperation } from "@/lib/connectors/slack/scopes";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -21,6 +22,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ conn
       const { data } = await createAdminClient().from("connector_connections").select("id,external_account_label,provider_family").eq("id", connectionId).eq("user_id", user.id).eq("provider_family", connector.manifest.providerFamily).maybeSingle();
       if (!data) throw new Error("Connection not found.");
       loginHint = data.external_account_label;
+      if (connector.manifest.providerFamily === "google") {
+        await prepareGoogleConnectionForDriveFileReconnect({ userId: user.id, connectionId: data.id });
+      }
     }
     const scopes = connector.manifest.providerFamily === "google"
       ? googleScopesForOperation(connectorId, operation?.key)

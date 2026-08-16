@@ -19,6 +19,8 @@ No secret value belongs in source control, browser storage, HTML, RSC payloads, 
 | `FLOWMIND_AI_MAX_INPUT_CHARS` | Server config | Optional | Recommended | Recommended | Optional | AI input bound |
 | `FLOWMIND_AI_MAX_OUTPUT_TOKENS` | Server config | Optional | Recommended | Recommended | Optional | AI output bound |
 | `SUPPORT_EMAIL` | Server config | Configured | Yes | Recommended | Optional | Public support/privacy contact; defaults to `contact@crazy-loops.com` |
+| `GOOGLE_PICKER_API_KEY` | Browser-restricted public credential | Yes for Sheets | Yes | Yes if Sheets is tested | Yes | Google Picker API key; returned only to authenticated users and restricted by HTTP referrer/API |
+| `GOOGLE_PICKER_APP_ID` | Public config | Yes for Sheets | Yes | Yes if Sheets is tested | Yes | Numeric Google Cloud project number used by Google Picker |
 | `FLOWMIND_RELEASE` | Server config | Optional | No on Vercel | Optional | Optional | Release label when Git SHA is unavailable |
 
 Forbidden legacy names: `NEXT_PUBLIC_SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`. Preview should use a separate Supabase project and separate secrets. If it intentionally shares Production resources, treat Preview deployments as production-trust code and document the risk.

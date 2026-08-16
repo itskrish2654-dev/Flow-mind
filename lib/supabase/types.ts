@@ -132,6 +132,12 @@ export type Database = {
         Update: { external_account_label?: string | null; status?: "connected" | "expired" | "revoked" | "error"; granted_scopes?: string[]; token_expires_at?: string | null; last_refreshed_at?: string | null; last_error_category?: string | null; safe_metadata?: Json; updated_at?: string };
         Relationships: [];
       };
+      google_selected_spreadsheets: {
+        Row: { id: string; user_id: string; connection_id: string; spreadsheet_id: string; display_name: string; mime_type: string; selected_at: string; last_validated_at: string };
+        Insert: { id?: string; user_id: string; connection_id: string; spreadsheet_id: string; display_name: string; mime_type?: string; selected_at?: string; last_validated_at?: string };
+        Update: { display_name?: string; mime_type?: string; selected_at?: string; last_validated_at?: string };
+        Relationships: [];
+      };
       connector_connection_credentials: {
         Row: { id: string; connection_id: string; user_id: string; credential_key: string; credential_type: string; ciphertext: string; nonce: string; auth_tag: string; encryption_version: number; algorithm: string; created_at: string; updated_at: string };
         Insert: { id?: string; connection_id: string; user_id: string; credential_key: string; credential_type: string; ciphertext: string; nonce: string; auth_tag: string; encryption_version?: number; algorithm?: string; created_at?: string; updated_at?: string };

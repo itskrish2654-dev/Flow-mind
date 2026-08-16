@@ -705,7 +705,7 @@ export async function setWorkflowPublication(
     publicationSetupConfig = snapshot?.setupConfig ?? {};
     const incomplete = validateRequiredSetupInputs(workflow.data.steps, publicationSetupConfig);
     if (incomplete) return { ok: false, error: incomplete };
-    const connectorReadiness = await validateWorkflowConnectorConnections({ userId: auth.user.id, steps: workflow.data.steps });
+    const connectorReadiness = await validateWorkflowConnectorConnections({ userId: auth.user.id, setupConfig: publicationSetupConfig, steps: workflow.data.steps });
     if (connectorReadiness) return { ok: false, error: connectorReadiness };
   }
   const { error: updateError } = await admin

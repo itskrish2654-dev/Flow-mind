@@ -13,12 +13,12 @@ const supabaseWebSocketOrigin = supabaseOrigin.replace(/^https:/, "wss:");
 const developmentScripts = process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : "";
 const contentSecurityPolicy = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${developmentScripts} https://challenges.cloudflare.com`,
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
+  `script-src 'self' 'unsafe-inline'${developmentScripts} https://challenges.cloudflare.com https://apis.google.com https://accounts.google.com`,
+  "style-src 'self' 'unsafe-inline' https://accounts.google.com",
+  "img-src 'self' data: blob: https://*.googleusercontent.com https://ssl.gstatic.com https://www.gstatic.com",
   "font-src 'self' data:",
-  `connect-src 'self' ${supabaseOrigin} ${supabaseWebSocketOrigin} https://challenges.cloudflare.com`.replace(/\s+/g, " ").trim(),
-  "frame-src https://challenges.cloudflare.com",
+  `connect-src 'self' ${supabaseOrigin} ${supabaseWebSocketOrigin} https://challenges.cloudflare.com https://accounts.google.com https://apis.google.com https://www.googleapis.com https://oauth2.googleapis.com`.replace(/\s+/g, " ").trim(),
+  "frame-src https://challenges.cloudflare.com https://accounts.google.com https://docs.google.com https://drive.google.com",
   "worker-src 'self' blob:",
   "object-src 'none'",
   "base-uri 'self'",

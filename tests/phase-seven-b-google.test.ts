@@ -10,6 +10,7 @@ import {
   normalizeGmailMessage,
 } from "../lib/connectors/google/gmail-message";
 import {
+  GOOGLE_LEGACY_SHEETS_SCOPE,
   GOOGLE_SCOPES,
   googleScopesForOperation,
 } from "../lib/connectors/google/scopes";
@@ -49,9 +50,10 @@ test("7B-3. OAuth scopes are incremental and connector-specific", () => {
   const sheets = googleScopesForOperation("google_sheets", "add_row");
   const gmailRead = googleScopesForOperation("google_gmail", "new_email");
   const gmailSend = googleScopesForOperation("google_gmail", "send_email");
-  assert.ok(sheets.includes(GOOGLE_SCOPES.sheets));
+  assert.ok(sheets.includes(GOOGLE_SCOPES.driveFile));
+  assert.ok(!sheets.includes(GOOGLE_LEGACY_SHEETS_SCOPE));
   assert.ok(!sheets.includes(GOOGLE_SCOPES.gmailReadonly));
-  assert.ok(!gmailRead.includes(GOOGLE_SCOPES.sheets));
+  assert.ok(!gmailRead.includes(GOOGLE_SCOPES.driveFile));
   assert.ok(gmailRead.includes(GOOGLE_SCOPES.gmailReadonly));
   assert.ok(gmailSend.includes(GOOGLE_SCOPES.gmailSend));
   assert.ok(!gmailSend.includes(GOOGLE_SCOPES.gmailReadonly));
@@ -175,10 +177,10 @@ test("7B-17. Disconnect stops watches, revokes a refresh token, and removes vaul
   assert.match(vault, /connector_connection_credentials"\)\.delete/);
 });
 
-test("7B-18. Spreadsheet selection accepts a real ID or URL and rejects invalid input", () => {
+test("7B-18. Spreadsheet selection accepts only a Picker file ID", () => {
   const id = "1AbCdEfGhIjKlMnOpQrStUvWxYz123456789";
   assert.equal(normalizeSpreadsheetId(id), id);
-  assert.equal(normalizeSpreadsheetId(`https://docs.google.com/spreadsheets/d/${id}/edit#gid=0`), id);
+  assert.throws(() => normalizeSpreadsheetId(`https://docs.google.com/spreadsheets/d/${id}/edit#gid=0`));
   assert.throws(() => normalizeSpreadsheetId("not a spreadsheet"));
   assert.equal(quoteSheetName("Sales' Leads"), "'Sales'' Leads'");
 });
@@ -195,6 +197,7 @@ test("7B-20. Sheets schema helper lists worksheets after owner-bound access", as
   const actions = await readFile("app/actions/connections.ts", "utf8");
   assert.match(sheets, /sheets\.properties/);
   assert.match(sheets, /worksheets/);
+  assert.match(sheets, /assertSelectedGoogleSpreadsheet/);
   assert.match(actions, /inspectGoogleSpreadsheet\(\{ userId: user\.id/);
 });
 
@@ -289,4 +292,72 @@ test("7B-30. privacy-safe telemetry names are present without content fields", a
   const combined = sources.join("\n");
   for (const event of ["google_connection_success", "google_connection_failure", "google_reconnect_required", "gmail_watch_created", "gmail_watch_renewed", "gmail_event_received", "gmail_history_error", "gmail_action_success", "gmail_action_failure", "sheets_action_success", "sheets_action_failure", "sheets_rate_limited"]) assert.match(combined, new RegExp(event));
   assert.doesNotMatch(combined, /metadata:\s*\{[^}]*emailBody|metadata:\s*\{[^}]*cellValue/);
+});
+
+test("7B-31. Sheets uses recommended drive.file and never compiles the broad scope", async () => {
+  const sources = await Promise.all([
+    "lib/connectors/google/scopes.ts",
+    "lib/connectors/registry.ts",
+    "lib/connectors/google/sheets.ts",
+    "lib/workflow-compiler.ts",
+  ].map((file) => readFile(file, "utf8")));
+  const active = sources.join("\n");
+  assert.match(active, /auth\/drive\.file/);
+  assert.doesNotMatch(active.replace(/export const GOOGLE_LEGACY_SHEETS_SCOPE[^\n]+/, ""), /auth\/spreadsheets/);
+  assert.match(active, /Choose a spreadsheet through Google Picker/);
+});
+
+test("7B-32. Picker filters to spreadsheets and prevents accumulated browser scopes", async () => {
+  const picker = await readFile("components/google-spreadsheet-picker.tsx", "utf8");
+  assert.match(picker, /ViewId\.SPREADSHEETS/);
+  assert.match(picker, /application\/vnd\.google-apps\.spreadsheet/);
+  assert.match(picker, /include_granted_scopes: false/);
+  assert.match(picker, /selectGoogleSpreadsheetForWorkflow/);
+  assert.doesNotMatch(picker, /localStorage|sessionStorage/);
+});
+
+test("7B-33. Picker selection is verified and persisted server-side", async () => {
+  const selected = await readFile("lib/connectors/google/selected-spreadsheets.ts", "utf8");
+  const actions = await readFile("app/actions/connections.ts", "utf8");
+  assert.match(selected, /token\.aud !== expectedAudience/);
+  assert.match(selected, /connection\.external_account_id !== token\.sub/);
+  assert.match(selected, /tokenScopes\.has\(GOOGLE_SCOPES\.driveFile\)/);
+  assert.match(selected, /file\.mimeType !== GOOGLE_SPREADSHEET_MIME_TYPE/);
+  assert.match(selected, /google_selected_spreadsheets/);
+  assert.match(actions, /loadWorkflowSnapshot\(admin, request\.data\.workflowId, user\.id\)/);
+  assert.match(actions, /step\.config\.connector\.connectionId !== request\.data\.connectionId/);
+});
+
+test("7B-34. every Sheets runtime and publication path revalidates the selected file", async () => {
+  const sheets = await readFile("lib/connectors/google/sheets.ts", "utf8");
+  const subscriptions = await readFile("lib/connectors/subscriptions.ts", "utf8");
+  const execution = await readFile("app/actions/execute.ts", "utf8");
+  assert.match(sheets, /async function sheetContext[\s\S]*assertSelectedGoogleSpreadsheet/);
+  assert.match(sheets, /inspectGoogleSpreadsheet[\s\S]*assertSelectedGoogleSpreadsheet/);
+  assert.match(subscriptions, /config\.connectorId === "google_sheets"[\s\S]*assertSelectedGoogleSpreadsheet/);
+  assert.match(execution, /validateWorkflowConnectorConnections/);
+});
+
+test("7B-35. existing Google grants expire and broad scope reconnect fails closed", async () => {
+  const migration = await readFile("supabase/migrations/20260816000300_google_sheets_drive_file_picker.sql", "utf8");
+  const start = await readFile("app/api/connectors/oauth/[connectorId]/start/route.ts", "utf8");
+  const callback = await readFile("app/api/connectors/oauth/[connectorId]/callback/route.ts", "utf8");
+  const selected = await readFile("lib/connectors/google/selected-spreadsheets.ts", "utf8");
+  assert.match(migration, /where provider_family = 'google' and status <> 'revoked'/);
+  assert.match(migration, /status = 'expired'/);
+  assert.match(start, /prepareGoogleConnectionForDriveFileReconnect/);
+  assert.match(selected, /revokeGoogleToken/);
+  assert.match(selected, /granted_scopes: \[\]/);
+  assert.match(callback, /tokens\.scopes\.includes\(GOOGLE_LEGACY_SHEETS_SCOPE\)/);
+  assert.match(callback, /revokeGoogleToken/);
+});
+
+test("7B-36. selected file metadata is service-only and owner-bound", async () => {
+  const migration = await readFile("supabase/migrations/20260816000300_google_sheets_drive_file_picker.sql", "utf8");
+  const selected = await readFile("lib/connectors/google/selected-spreadsheets.ts", "utf8");
+  assert.match(migration, /force row level security/);
+  assert.match(migration, /revoke all on public\.google_selected_spreadsheets from public, anon, authenticated/);
+  assert.match(migration, /grant all on public\.google_selected_spreadsheets to service_role/);
+  assert.match(selected, /\.eq\("user_id", input\.userId\)/);
+  assert.match(selected, /\.eq\("connection_id", input\.connectionId\)/);
 });
