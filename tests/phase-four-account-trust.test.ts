@@ -177,11 +177,11 @@ test("29. quota errors are human-readable and show usage", () => {
   assert.doesNotMatch(limits, /quota backend failed[^\n]*QUOTA_EXCEEDED/);
 });
 
-test("30. legal pages contain no false certification claims", () => {
+test("30. legal pages contain no false certification claims or owner placeholders", () => {
   const joined = legal.join("\n");
   assert.doesNotMatch(joined, /SOC 2 certified|ISO 27001 certified|HIPAA compliant|100% secure|unhackable/i);
   assert.match(joined, /does not currently claim SOC 2/);
-  assert.match(joined, /OWNER REVIEW REQUIRED/);
+  assert.doesNotMatch(joined, /OWNER REVIEW REQUIRED|LEGAL ENTITY NAME|LEGAL REVIEW REQUIRED/);
 });
 
 test("31. private account and recovery routes are noindex", () => {

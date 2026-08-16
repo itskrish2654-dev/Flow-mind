@@ -7,7 +7,7 @@ export function LegalPageShell({
   eyebrow,
   title,
   description,
-  updated = "August 12, 2026",
+  updated = "August 16, 2026",
   children,
 }: {
   eyebrow: string;
