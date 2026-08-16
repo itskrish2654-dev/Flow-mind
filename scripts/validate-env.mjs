@@ -33,6 +33,7 @@ const required = [
   "NEXT_PUBLIC_TURNSTILE_SITE_KEY",
   "TURNSTILE_SECRET_KEY",
   "CRON_SECRET",
+  "SCHEDULE_DISPATCH_SECRET",
 ];
 for (const name of required) if (!names.has(name)) throw new Error(`Missing environment inventory item: ${name}`);
 for (const obsolete of ["NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"]) {

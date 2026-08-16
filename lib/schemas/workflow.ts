@@ -134,6 +134,7 @@ export const WorkflowStepSchema = z.object({
     "filter_condition",
     "connector_trigger",
     "connector_action",
+    "scheduled_trigger",
   ]),
   capabilityId: z.string().min(1).max(80).optional(),
   capabilityStatus: z.enum(["supported", "test_only", "unsupported"]).optional(),
@@ -147,6 +148,51 @@ export const WorkflowStepSchema = z.object({
       method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional(),
       transformPrompt: z.string().optional(),
       documentTemplate: z.string().max(50_000).optional(),
+      schedule: z
+        .object({
+          kind: z.enum([
+            "hourly",
+            "interval_hours",
+            "daily",
+            "weekday",
+            "weekly",
+            "monthly",
+            "once",
+          ]),
+          timezone: z.string().min(1).max(100),
+          localTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
+          intervalHours: z.number().int().min(2).max(168).optional(),
+          weekday: z.number().int().min(1).max(7).optional(),
+          dayOfMonth: z.number().int().min(1).max(28).optional(),
+          runAt: z.string().datetime({ offset: true }).optional(),
+          humanLabel: z.string().min(1).max(160),
+        })
+        .optional(),
+      condition: z
+        .object({
+          sourcePath: z.string().min(1).max(160),
+          operator: z.enum([
+            "equals",
+            "not_equals",
+            "contains",
+            "not_contains",
+            "exists",
+            "not_exists",
+            "greater_than",
+            "less_than",
+            "is_true",
+            "is_false",
+          ]),
+          expectedValue: z.union([z.string().max(500), z.number(), z.boolean()]).optional(),
+          humanLabel: z.string().min(1).max(240),
+        })
+        .optional(),
+      branch: z
+        .object({
+          conditionStepId: z.string().min(1).max(100),
+          when: z.enum(["true", "false"]),
+        })
+        .optional(),
       connector: z
         .object({
           connectorId: z.string().regex(/^[a-z][a-z0-9_]{2,79}$/),

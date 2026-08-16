@@ -196,6 +196,11 @@ function StatusBadge({ value }: { value: Json }) {
   );
 }
 
+function ExecutionModeBadge({ triggerType }: { triggerType: string }) {
+  const test = triggerType === "manual_test";
+  return <span className={`inline-flex rounded-full px-2 py-0.5 text-[9px] font-bold tracking-[0.08em] ${test ? "bg-sky-50 text-sky-700" : "bg-emerald-50 text-emerald-700"}`}>{test ? "TEST" : "LIVE"}</span>;
+}
+
 function executionDocuments(value: Json): Array<{ id: string; filename: string }> {
   const output = asJsonObject(value);
   const documents: Array<{ id: string; filename: string }> = [];
@@ -316,6 +321,7 @@ function ExecutionDetailsDrawer({
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge value={execution.outputData} />
+            <ExecutionModeBadge triggerType={execution.triggerType} />
             {delivered !== null && (
               <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[9px] font-semibold ${delivered ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
                 <CheckCircle2 className="size-3" />
@@ -550,7 +556,7 @@ export function ExecutionsDataTable({
                         <Clock3 className="size-3 shrink-0" />
                         {executionDateFormatter.format(new Date(execution.createdAt))}
                       </p>
-                      <div className="mt-2"><StatusBadge value={execution.outputData} /></div>
+                      <div className="mt-2 flex items-center gap-2"><StatusBadge value={execution.outputData} /><ExecutionModeBadge triggerType={execution.triggerType} /></div>
                     </div>
                     <button
                       type="button"
@@ -598,7 +604,8 @@ export function ExecutionsDataTable({
                   {executions.map((execution) => (
                     <tr key={execution.id} className="border-b border-slate-100 align-middle last:border-0">
                       <td className="px-4 py-4 text-[10px] text-slate-500">
-                        {executionDateFormatter.format(new Date(execution.createdAt))}
+                        <div>{executionDateFormatter.format(new Date(execution.createdAt))}</div>
+                        <div className="mt-1"><ExecutionModeBadge triggerType={execution.triggerType} /></div>
                       </td>
                       {columns.map((column) => (
                         <td key={`${column.source}-${column.key}`} className="px-4 py-4">

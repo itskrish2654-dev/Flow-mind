@@ -13,6 +13,7 @@ export type WorkflowExecutionRecord = {
   id: string;
   workflowId: string;
   workflowVersionId: string | null;
+  triggerType: string;
   status: "queued" | "running" | "succeeded" | "partially_failed" | "failed" | "cancelled";
   inputData: Json;
   outputData: Json;
@@ -29,12 +30,13 @@ export type ListWorkflowExecutionsResult =
 function toRecord(row: {
   id: string; workflow_id: string; workflow_version_id: string | null; status: WorkflowExecutionRecord["status"];
   input_data: Json; output_data: Json; created_at: string; started_at: string | null;
-  completed_at: string | null; failure_category: string | null;
+  completed_at: string | null; failure_category: string | null; trigger_type: string;
 }): WorkflowExecutionRecord {
   return {
     id: row.id,
     workflowId: row.workflow_id,
     workflowVersionId: row.workflow_version_id,
+    triggerType: row.trigger_type,
     status: row.status,
     inputData: row.input_data,
     outputData: row.output_data,
@@ -66,7 +68,7 @@ export async function listWorkflowExecutions(
   if (!auth) return { ok: false, error: "Unauthorized" };
 
   let query = auth.supabase.from("workflow_executions")
-    .select("id, workflow_id, workflow_version_id, status, input_data, output_data, created_at, started_at, completed_at, failure_category")
+    .select("id, workflow_id, workflow_version_id, trigger_type, status, input_data, output_data, created_at, started_at, completed_at, failure_category")
     .eq("workflow_id", parsed.data.workflowId)
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
@@ -114,7 +116,7 @@ export async function exportAllWorkflowExecutions(workflowId: string): Promise<
   let cursor: string | null = null;
   while (rows.length < MAX_EXPORT_ROWS + 1) {
     let query = auth.supabase.from("workflow_executions")
-      .select("id, workflow_id, workflow_version_id, status, input_data, output_data, created_at, started_at, completed_at, failure_category")
+      .select("id, workflow_id, workflow_version_id, trigger_type, status, input_data, output_data, created_at, started_at, completed_at, failure_category")
       .eq("workflow_id", id.data)
       .order("created_at", { ascending: false })
       .order("id", { ascending: false })
@@ -134,7 +136,7 @@ export async function exportAllWorkflowExecutions(workflowId: string): Promise<
   const truncated = rows.length > MAX_EXPORT_ROWS;
   const selected = rows.slice(0, MAX_EXPORT_ROWS);
   const records: Array<Record<string, unknown>> = selected.map((row) => ({
-    id: row.id, created_at: row.createdAt, status: row.status,
+    id: row.id, created_at: row.createdAt, execution_mode: row.triggerType === "manual_test" ? "TEST" : "LIVE", trigger_type: row.triggerType, status: row.status,
     workflow_version_id: row.workflowVersionId, ...flatten(row.inputData, "input"), ...flatten(row.outputData, "output"),
   }));
   const headers = Array.from(new Set(records.flatMap((record) => Object.keys(record))));

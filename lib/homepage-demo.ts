@@ -7,7 +7,7 @@ export type HomepageDemoStep = {
   id: string;
   label: string;
   detail: string;
-  category: "trigger" | "ai" | "document" | "storage" | "destination";
+  category: "trigger" | "ai" | "control" | "document" | "storage" | "destination";
 };
 
 export type HomepageDemoResult =
@@ -22,6 +22,7 @@ export type HomepageDemoResult =
       title: "PART OF THIS LOOP ISN'T AVAILABLE YET.";
       message: string;
       plannerStatus: "UNSUPPORTED";
+      requestedCapabilities: Array<{ capabilityId: string; displayName: string }>;
     }
   | {
       status: "clarification";
@@ -57,7 +58,9 @@ function previewSteps(prompt: string, plannedPrompt: string): HomepageDemoStep[]
   const steps: HomepageDemoStep[] = [];
 
   for (const step of workflow.steps) {
-    if (step.type === "public_form_trigger") {
+    if (step.type === "scheduled_trigger") {
+      steps.push({ id: step.id, label: step.config?.schedule?.humanLabel ?? "Schedule", detail: step.config?.schedule?.timezone ?? "Explicit timezone", category: "trigger" });
+    } else if (step.type === "public_form_trigger") {
       steps.push({ id: step.id, label: "Request", detail: "Hosted form submission", category: "trigger" });
     } else if (step.type === "webhook_trigger") {
       steps.push({ id: step.id, label: "Webhook", detail: "Authenticated event received", category: "trigger" });
@@ -65,6 +68,8 @@ function previewSteps(prompt: string, plannedPrompt: string): HomepageDemoStep[]
       steps.push({ id: step.id, label: step.title, detail: "Connected event received", category: "trigger" });
     } else if (step.type === "ai_transform") {
       steps.push({ id: step.id, label: "AI", detail: step.title, category: "ai" });
+    } else if (step.type === "filter_condition") {
+      steps.push({ id: step.id, label: step.config?.condition?.humanLabel ?? "If / Otherwise", detail: "Only the matching branch runs", category: "control" });
     } else if (step.type === "generate_pdf") {
       steps.push({ id: step.id, label: "PDF", detail: "Private document created", category: "document" });
       // PDF generation stores the private file as part of the same supported
@@ -103,6 +108,7 @@ export function planHomepageDemo(
         ? `${subject} isn't supported yet.`
         : `${subject} aren't supported yet.`,
       plannerStatus: "UNSUPPORTED",
+      requestedCapabilities: plan.requestedUnsupportedCapabilities,
     };
   }
 

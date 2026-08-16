@@ -46,6 +46,15 @@ export const PRODUCT_EVENTS = [
   "workflow_configured",
   "workflow_published",
   "workflow_unpublished",
+  "schedule_created",
+  "schedule_triggered",
+  "schedule_disabled",
+  "condition_true",
+  "condition_false",
+  "workflow_test_started",
+  "workflow_test_succeeded",
+  "workflow_test_failed",
+  "connector_requested",
   "execution_started",
   "execution_succeeded",
   "execution_partially_failed",
@@ -77,6 +86,7 @@ const SAFE_ANALYTICS_KEYS = new Set([
   "duration_ms",
   "failure_category",
   "source",
+  "requester_type",
 ]);
 
 function runtimeEnvironment(): string {

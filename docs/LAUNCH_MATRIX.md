@@ -4,6 +4,8 @@
 | --- | --- | --- | --- |
 | Core | Real AI, PDF, public forms | PASS | Truthful execution paths; private PDF records and signed access |
 | Core | Versioning and retries | PASS | Immutable versions, idempotency, partial retry tests |
+| Core | Scheduled triggers and conditional branches | PHASE 8 | Durable occurrence claims, immutable-version pinning, explicit timezone handling, deterministic branches |
+| Core | Test Loop | PHASE 8 | Test executions are visibly labeled and external side effects require an explicit warning confirmation |
 | Security | RLS and A/B isolation | PASS | Owner-scoped policies plus service-role authorization tests |
 | Security | Credential vault, SSRF, private documents | PASS | AES-GCM context binding, pinned outbound target validation, private bucket |
 | Security | Turnstile, rate limits, quotas | PASS | Fail-closed gates and atomic database controls |
@@ -17,7 +19,8 @@
 | Owner/legal | Support email | PASS | `contact@crazy-loops.com` is the public support, privacy, and security contact |
 | Owner/legal | Public MVP information | PASS | Privacy and Terms use the CrazyLoops name and general, truthful wording without unconfirmed company details |
 | Owner/legal | Privacy/Terms/retention review | POST-MVP | Obtain formal legal review before expanding beyond the MVP |
-| Limitation | External integrations and user scheduling | KNOWN LIMITATION | Unsupported capabilities are explicitly rejected |
+| Limitation | Unsupported external integrations | KNOWN LIMITATION | Unsupported capabilities are explicitly rejected and can be requested without storing prompt text |
+| Limitation | Human approval | DEFERRED | Truthfully unsupported; demand may be recorded for later prioritization |
 | Limitation | Arabic/RTL PDF | KNOWN LIMITATION | Explicitly rejected to prevent corrupted output |
 | Limitation | Emoji PDF rendering | KNOWN LIMITATION | Explicit text fallback; graphical emoji not implemented |
 | Operations | Monitoring/analytics retention automation | POST-LAUNCH | Implement only after owner/legal retention decision |

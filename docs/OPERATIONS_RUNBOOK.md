@@ -24,6 +24,10 @@ Configure the public site key in Vercel and the matching secret in Supabase Auth
 
 Supabase Cron calls the overlap-safe database maintenance function every ten minutes. It reconciles executions stale for 15 minutes, removes rate-limit rows whose windows expired more than 24 hours ago, removes expired concurrency leases, and flags interrupted deletion jobs. A daily Vercel call to `/api/operations/maintenance`, authorized with `CRON_SECRET`, repeats the idempotent database maintenance and retries a bounded set of safe failed deletion jobs that need Auth or Storage APIs. Check `operational_maintenance_runs`, `cron.job_run_details`, `operational_events`, and Vercel runtime logs. Never expose the cron authorization value.
 
+## Workflow schedules
+
+Supabase Cron calls `/api/operations/schedules` every minute using the bearer value stored in Supabase Vault by `configure_schedule_dispatch`. The application must have the same value in `SCHEDULE_DISPATCH_SECRET`. Each due occurrence is claimed atomically, pinned to an immutable workflow version, and protected by a unique occurrence key. A delayed dispatcher collapses missed backlog into one current run and records the scheduled and actual start times. Disable a workflow immediately when a schedule repeatedly fails, then inspect `workflow_schedules`, `workflow_schedule_occurrences`, sanitized operational events, and Vercel logs. Rotate the dispatcher value in both Vercel and Vault together; never print it.
+
 ## Investigating failures
 
 Use the user's short error reference to find `operational_events.id` prefix or the structured Vercel event. Correlate by execution/workflow/version/step IDs. Inspect only sanitized execution-step metadata. For repeated AI, PDF, database, credential-vault, public-form, reconciliation, or deletion failures, disable the affected path or unpublish forms before diagnosis if continued execution may cause harm.

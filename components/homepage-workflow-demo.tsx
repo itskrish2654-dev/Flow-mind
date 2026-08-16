@@ -11,8 +11,10 @@ import {
   LoaderCircle,
   MousePointer2,
   Sparkles,
+  GitBranch,
   Webhook,
 } from "lucide-react";
+import { requestConnectorCapability } from "@/app/actions/connector-requests";
 
 import {
   preserveHomepageDemoDraft,
@@ -24,15 +26,16 @@ import type { HomepageDemoResult, HomepageDemoStep } from "@/lib/homepage-demo";
 const DEFAULT_PROMPT = "When a new request comes in, summarize it, create a PDF and save the result.";
 const GUIDE_SESSION_KEY = "crazyloops_demo_guide_seen";
 const EXAMPLES = [
-  "Summarize incoming requests",
-  "Turn form responses into PDFs",
-  "When webhook data arrives, analyze it and store the result",
+  "Every morning at 8 AM Asia/Kolkata, summarize new requests and save them",
+  "If a form request priority equals urgent, notify Slack. Otherwise save it",
+  "Ask me before sending the reply",
 ];
 
 function StepIcon({ step }: { step: HomepageDemoStep }) {
   if (step.category === "ai") return <Sparkles aria-hidden="true" />;
   if (step.category === "document") return <FileText aria-hidden="true" />;
   if (step.category === "storage") return <Database aria-hidden="true" />;
+  if (step.category === "control") return <GitBranch aria-hidden="true" />;
   if (step.label === "Webhook") return <Webhook aria-hidden="true" />;
   return <FormInput aria-hidden="true" />;
 }
@@ -41,6 +44,7 @@ function stepKind(step: HomepageDemoStep): string {
   if (step.category === "trigger") return "Trigger";
   if (step.category === "ai") return "AI";
   if (step.category === "document") return "Create";
+  if (step.category === "control") return "Decision";
   if (step.category === "storage") return "Store";
   return "Send";
 }
@@ -57,6 +61,7 @@ export function HomepageWorkflowDemo() {
   const [isLeaving, setIsLeaving] = useState(false);
   const [hasInteracted, setHasInteracted] = useState(false);
   const [guideVisible, setGuideVisible] = useState(false);
+  const [requestMessage, setRequestMessage] = useState<string | null>(null);
   const demoRef = useRef<HTMLDivElement>(null);
   const timers = useRef<number[]>([]);
   const viewedRef = useRef(false);
@@ -274,6 +279,22 @@ export function HomepageWorkflowDemo() {
             <p className="landing-demo-label">{result.title}</p>
             <h3>{result.message}</h3>
             <p>CrazyLoops will not invent a connector or pretend this loop can run.</p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {result.requestedCapabilities.map((capability) => (
+                <button
+                  key={capability.capabilityId}
+                  type="button"
+                  className="landing-demo-text-button"
+                  onClick={async () => {
+                    const response = await requestConnectorCapability({ capabilityId: capability.capabilityId, source: "homepage_demo" });
+                    setRequestMessage(response.ok ? response.message : response.error);
+                  }}
+                >
+                  Request {capability.displayName}
+                </button>
+              ))}
+            </div>
+            {requestMessage && <p role="status" className="mt-2">{requestMessage}</p>}
             <button type="button" onClick={() => chooseExample(DEFAULT_PROMPT)} className="landing-demo-build">Try a supported example <ArrowRight aria-hidden="true" /></button>
           </div>
         )}

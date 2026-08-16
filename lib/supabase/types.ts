@@ -168,6 +168,24 @@ export type Database = {
         Update: never;
         Relationships: [];
       };
+      workflow_schedules: {
+        Row: { id: string; user_id: string; workflow_id: string; workflow_version_id: string; status: "active" | "disabled" | "completed" | "error"; schedule_definition: Json; human_label: string; timezone: string; anchor_at: string; next_run_at: string | null; last_scheduled_for: string | null; last_dispatched_at: string | null; last_error_category: string | null; created_at: string; updated_at: string };
+        Insert: { id?: string; user_id: string; workflow_id: string; workflow_version_id: string; status?: "active" | "disabled" | "completed" | "error"; schedule_definition: Json; human_label: string; timezone: string; anchor_at?: string; next_run_at?: string | null; last_scheduled_for?: string | null; last_dispatched_at?: string | null; last_error_category?: string | null; created_at?: string; updated_at?: string };
+        Update: { workflow_version_id?: string; status?: "active" | "disabled" | "completed" | "error"; schedule_definition?: Json; human_label?: string; timezone?: string; anchor_at?: string; next_run_at?: string | null; last_scheduled_for?: string | null; last_dispatched_at?: string | null; last_error_category?: string | null; updated_at?: string };
+        Relationships: [];
+      };
+      workflow_schedule_occurrences: {
+        Row: { id: string; schedule_id: string; user_id: string; workflow_id: string; workflow_version_id: string; scheduled_for: string; status: "claimed" | "running" | "succeeded" | "failed" | "missed" | "duplicate"; execution_id: string | null; missed_earlier_count: number; reason: string | null; created_at: string; completed_at: string | null };
+        Insert: { id?: string; schedule_id: string; user_id: string; workflow_id: string; workflow_version_id: string; scheduled_for: string; status: "claimed" | "running" | "succeeded" | "failed" | "missed" | "duplicate"; execution_id?: string | null; missed_earlier_count?: number; reason?: string | null; created_at?: string; completed_at?: string | null };
+        Update: { status?: "claimed" | "running" | "succeeded" | "failed" | "missed" | "duplicate"; execution_id?: string | null; reason?: string | null; completed_at?: string | null };
+        Relationships: [];
+      };
+      connector_capability_requests: {
+        Row: { id: string; requester_hash: string; user_id: string | null; requested_provider: string; requested_capability: string | null; source: "homepage_demo" | "workflow_builder" | "connections_page"; request_count: number; first_requested_at: string; last_requested_at: string };
+        Insert: { id?: string; requester_hash: string; user_id?: string | null; requested_provider: string; requested_capability?: string | null; source: "homepage_demo" | "workflow_builder" | "connections_page"; request_count?: number; first_requested_at?: string; last_requested_at?: string };
+        Update: { request_count?: number; last_requested_at?: string };
+        Relationships: [];
+      };
       generated_document_records: {
         Row: {
           id: string;
@@ -542,6 +560,18 @@ export type Database = {
       claim_execution_retry: {
         Args: { p_execution_id: string; p_user_id: string };
         Returns: boolean;
+      };
+      claim_schedule_occurrence: {
+        Args: { p_schedule_id: string; p_expected_next_run_at: string; p_scheduled_for: string; p_next_run_at: string | null; p_missed_earlier_count: number; p_should_execute: boolean };
+        Returns: Array<{ occurrence_id: string | null; claimed: boolean; user_id: string; workflow_id: string; workflow_version_id: string; schedule_definition: Json; timezone: string }>;
+      };
+      record_connector_capability_request: {
+        Args: { p_requester_hash: string; p_user_id: string | null; p_requested_provider: string; p_requested_capability: string | null; p_source: string };
+        Returns: undefined;
+      };
+      configure_schedule_dispatch: {
+        Args: { p_secret: string };
+        Returns: undefined;
       };
       fail_stale_executions: {
         Args: { p_older_than: string };

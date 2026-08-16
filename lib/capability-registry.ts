@@ -1,6 +1,6 @@
 import type { CompiledWorkflow } from "@/lib/schemas/workflow";
 
-export type CapabilityCategory = "trigger" | "transformation" | "destination";
+export type CapabilityCategory = "trigger" | "transformation" | "control" | "destination";
 export type ExecutionMode = "test" | "production";
 
 export type CapabilityDefinition = {
@@ -137,17 +137,20 @@ export const CAPABILITY_REGISTRY = {
     ],
     aliases: ["webhook", "webhook.site"],
   }),
-  schedule_trigger: defineCapability({
-    id: "schedule_trigger",
+  "schedule.trigger": defineCapability({
+    id: "schedule.trigger",
     displayName: "Scheduled trigger",
     category: "trigger",
-    supported: false,
-    executionImplementation: null,
+    supported: true,
+    executionImplementation: "durable-schedule-dispatch",
     requiredSetupFields: [],
     credentialsRequired: false,
-    availableInTest: false,
-    availableInProduction: false,
-    limitations: ["Scheduling is coming soon and is not currently executed by CrazyLoops."],
+    availableInTest: true,
+    availableInProduction: true,
+    limitations: [
+      "Uses an explicit IANA timezone.",
+      "After an outage, only the most recent occurrence within the 15-minute recovery window runs; older occurrences are recorded as missed.",
+    ],
     aliases: [
       "schedule",
       "scheduled",
@@ -160,6 +163,19 @@ export const CAPABILITY_REGISTRY = {
       "every morning",
       "every evening",
     ],
+  }),
+  "condition.if": defineCapability({
+    id: "condition.if",
+    displayName: "If / Otherwise",
+    category: "control",
+    supported: true,
+    executionImplementation: "structured-condition-runtime",
+    requiredSetupFields: [],
+    credentialsRequired: false,
+    availableInTest: true,
+    availableInProduction: true,
+    limitations: ["Supports one human-readable branch with structured comparisons; complex nested branches are not supported."],
+    aliases: ["if", "otherwise", "only when", "unless"],
   }),
   rss_ingestion: defineCapability({
     id: "rss_ingestion",
@@ -209,6 +225,24 @@ export const CAPABILITY_REGISTRY = {
     availableInProduction: false,
     limitations: ["Salesforce is not currently supported."],
     aliases: ["salesforce"],
+  }),
+  calendly: defineCapability({
+    id: "calendly", displayName: "Calendly", category: "trigger", supported: false,
+    executionImplementation: null, requiredSetupFields: [], credentialsRequired: true,
+    availableInTest: false, availableInProduction: false,
+    limitations: ["Calendly is not currently supported."], aliases: ["calendly"],
+  }),
+  hubspot: defineCapability({
+    id: "hubspot", displayName: "HubSpot", category: "destination", supported: false,
+    executionImplementation: null, requiredSetupFields: [], credentialsRequired: true,
+    availableInTest: false, availableInProduction: false,
+    limitations: ["HubSpot is not currently supported."], aliases: ["hubspot", "hub spot"],
+  }),
+  airtable: defineCapability({
+    id: "airtable", displayName: "Airtable", category: "destination", supported: false,
+    executionImplementation: null, requiredSetupFields: [], credentialsRequired: true,
+    availableInTest: false, availableInProduction: false,
+    limitations: ["Airtable is not currently supported."], aliases: ["airtable", "air table"],
   }),
   tiktok: defineCapability({
     id: "tiktok",
@@ -445,14 +479,14 @@ export function findRequestedUnsupportedCapabilities(prompt: string): Capability
 function legacyIntegrationCapability(step: CompiledWorkflow["steps"][number]): string | null {
   const context = `${step.title} ${step.description} ${step.config?.endpoint ?? ""}`.toLowerCase();
   for (const capability of Object.values(CAPABILITY_REGISTRY)) {
-    if (capability.supported || capability.id === "schedule_trigger" || capability.id === "rss_ingestion") {
+    if (capability.supported || capability.id === "rss_ingestion") {
       continue;
     }
     if (capability.aliases.some((alias) => containsAlias(context, alias))) {
       return capability.id;
     }
   }
-  if (/schedule|every day|daily|weekly|monthly/.test(context)) return "schedule_trigger";
+  if (/schedule|every day|daily|weekly|monthly/.test(context)) return "schedule.trigger";
   if (/\brss\b|\bfeed\b|\btrending topics\b|\bpoll(?:ing)?\b/.test(context)) return "rss_ingestion";
   return null;
 }
@@ -465,6 +499,8 @@ export function resolveStepCapabilityId(
       public_form_submission: ["public_form_trigger", "webhook_trigger"],
       manual_trigger: ["connector_trigger"],
       generic_webhook_trigger: ["webhook_trigger"],
+      "schedule.trigger": ["scheduled_trigger"],
+      "condition.if": ["filter_condition"],
       ai_text_transform: ["ai_transform"],
       flowmind_data_store: ["store_data"],
       generate_pdf: ["generate_pdf"],
@@ -505,6 +541,8 @@ export function resolveStepCapabilityId(
           ? "generic_webhook_trigger"
           : null;
     }
+    case "scheduled_trigger":
+      return "schedule.trigger";
     case "ai_transform":
       return "ai_text_transform";
     case "store_data":
@@ -517,7 +555,7 @@ export function resolveStepCapabilityId(
         ? "generic_http_action"
         : "webhook_post";
     case "filter_condition":
-      return null;
+      return "condition.if";
     case "connector_trigger":
     case "connector_action":
       return step.capabilityId ?? null;

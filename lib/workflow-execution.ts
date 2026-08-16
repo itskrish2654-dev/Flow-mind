@@ -18,6 +18,7 @@ import {
 import type { CompiledWorkflow } from "@/lib/schemas/workflow";
 import { postTrustedWebhook } from "@/lib/security/outbound-webhook";
 import { securityLog } from "@/lib/security/redaction";
+import { evaluateCondition } from "@/lib/workflow-conditions";
 
 export type StepExecutionStatus =
   | "pending"
@@ -69,6 +70,7 @@ export type ExecutionStateHooks = {
       retryable?: boolean;
     },
   ) => Promise<void>;
+  onConditionDecision?: (step: WorkflowStep, matched: boolean) => Promise<void>;
 };
 
 export type WorkflowExecutionResult = {
@@ -218,7 +220,7 @@ export async function executeWorkflowSteps({
   workflowName: string;
   steps: WorkflowStep[];
   inputValues: InputValues;
-  mode: "test" | "public-form";
+  mode: "test" | "public-form" | "scheduled";
   uploadGeneratedDocument?: GeneratedDocumentUpload;
   executeAi?: AiTextExecutor;
   executeWebhook?: TrustedWebhookExecutor;
@@ -228,6 +230,7 @@ export async function executeWorkflowSteps({
   resumeState?: {
     aiResult?: string | null;
     documents?: Array<{ id: string; filename: string }>;
+    conditionDecisions?: Record<string, boolean>;
   };
 }): Promise<WorkflowExecutionResult> {
   const logs: ExecutionLog[] = [];
@@ -252,6 +255,7 @@ export async function executeWorkflowSteps({
   let delivered = false;
   let aiResult: string | null = resumeState?.aiResult ?? null;
   let failureReason: string | null = null;
+  const conditionDecisions: Record<string, boolean> = { ...(resumeState?.conditionDecisions ?? {}) };
   if (aiResult) {
     variables.ai_result = aiResult;
     variables.ai_summary = aiResult;
@@ -265,8 +269,8 @@ export async function executeWorkflowSteps({
 
   const finish = (): WorkflowExecutionResult => {
     const succeeded = records.filter((record) => record.status === "succeeded").length;
-    const failed = records.some((record) =>
-      ["failed", "unsupported", "skipped"].includes(record.status),
+    const failed = failureReason !== null || records.some((record) =>
+      ["failed", "unsupported"].includes(record.status),
     );
     const status = failed ? (succeeded > 0 ? "partial" : "failed") : "succeeded";
     return {
@@ -339,6 +343,26 @@ export async function executeWorkflowSteps({
 
   for (const [index, step] of steps.entries()) {
     const capabilityId = resolveStepCapabilityId(step) ?? "unknown";
+    const branch = step.config?.branch;
+    if (branch) {
+      const decision = conditionDecisions[branch.conditionStepId];
+      if (decision === undefined) {
+        const message = "This branch could not run because its condition decision is unavailable.";
+        failureReason = message;
+        records.push({ stepId: step.id, capabilityId, title: step.title, status: "failed", message });
+        logs.push({ icon: "❌", message, stepId: step.id, status: "failed" });
+        await stateHooks?.onStepFinish?.(step, { status: "failed", message, error: new Error(message), retryable: false });
+        await skipRemaining(index + 1, message);
+        break;
+      }
+      if (decision !== (branch.when === "true")) {
+        const message = "Skipped — condition not matched.";
+        records.push({ stepId: step.id, capabilityId, title: step.title, status: "skipped", message });
+        logs.push({ icon: "⏭", message, stepId: step.id, status: "skipped" });
+        await stateHooks?.onStepFinish?.(step, { status: "skipped", message, retryable: false, metadata: { branchMatched: false } });
+        continue;
+      }
+    }
     if (completedStepIds.has(step.id)) {
       const message = "Already completed in an earlier attempt; this step was not repeated.";
       records.push({ stepId: step.id, capabilityId, title: step.title, status: "succeeded", message });
@@ -363,12 +387,16 @@ export async function executeWorkflowSteps({
       await skipRemaining(index + 1, message);
     };
 
-    if (capabilityId === "public_form_submission" || capabilityId === "generic_webhook_trigger" || capabilityId === "manual_trigger" || step.type === "connector_trigger") {
+    if (capabilityId === "public_form_submission" || capabilityId === "generic_webhook_trigger" || capabilityId === "manual_trigger" || capabilityId === "schedule.trigger" || step.type === "connector_trigger") {
       await succeed(
         capabilityId === "generic_webhook_trigger"
           ? "Received an authenticated webhook event."
           : capabilityId.startsWith("gmail_")
             ? "Received and resolved a new Gmail message."
+          : capabilityId === "schedule.trigger"
+            ? mode === "test"
+              ? "Simulated the configured scheduled occurrence for this live test."
+              : "Started from the configured durable schedule."
           : capabilityId === "manual_trigger"
             ? "Started by an authenticated manual run."
           : mode === "public-form"
@@ -378,12 +406,33 @@ export async function executeWorkflowSteps({
       continue;
     }
 
+    if (capabilityId === "condition.if") {
+      const condition = step.config?.condition;
+      if (!condition) {
+        await fail("This condition is missing its structured rule.");
+        break;
+      }
+      const conditionContext: Record<string, unknown> = {
+        ...triggerContext,
+        ...variables,
+        steps: connectorStepOutputs,
+      };
+      const decision = evaluateCondition(condition, conditionContext);
+      conditionDecisions[step.id] = decision.matched;
+      await stateHooks?.onConditionDecision?.(step, decision.matched);
+      await succeed(
+        `${condition.humanLabel}: ${decision.matched ? "matched" : "did not match"}.`,
+        { conditionMatched: decision.matched },
+      );
+      continue;
+    }
+
     if (step.type === "connector_action") {
       const connectorConfig = step.config?.connector;
       if (!connectorConfig || connectorConfig.operationKind !== "action") { await fail("This connector action is missing its versioned operation configuration."); break; }
       const registered = getConnectorOperation(connectorConfig.connectorId, "action", connectorConfig.operationKey, connectorConfig.operationVersion);
       if (!registered || typeof registered.handler !== "function") { await fail("This connector action is not supported by the current server runtime."); break; }
-      if (mode === "public-form" && !registered.operation.production) { await fail("This connector action is not available in production."); break; }
+      if (mode !== "test" && !registered.operation.production) { await fail("This connector action is not available in production."); break; }
       const direct: Record<string, unknown> = {};
       for (const field of registered.operation.input) {
         const configured = inputValues[`${step.id}-${field.key}`] ?? inputValues[field.key] ?? step.config?.connector?.settings?.[field.key];
@@ -439,7 +488,7 @@ export async function executeWorkflowSteps({
         await fail("This connector action is not supported by the current server runtime.");
         break;
       }
-      if (mode === "public-form" && !registered.operation.production) {
+      if (mode !== "test" && !registered.operation.production) {
         await fail("This connector action is not available in production.");
         break;
       }

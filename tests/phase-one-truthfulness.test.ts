@@ -219,16 +219,12 @@ test("8. an acknowledged destination is marked succeeded and delivered", async (
   });
 });
 
-test("9. schedule requests are explicitly unsupported", () => {
+test("9. schedule requests require explicit timezone and time details", () => {
   const plan = planWorkflow(
     "Every weekday, summarize form submissions and store them in CrazyLoops.",
   );
-  assert.equal(plan.status, "UNSUPPORTED");
-  assert.ok(
-    plan.requestedUnsupportedCapabilities.some(
-      (capability) => capability.capabilityId === "schedule_trigger",
-    ),
-  );
+  assert.equal(plan.status, "NEEDS_CLARIFICATION");
+  assert.match(plan.clarificationQuestions[0] ?? "", /timezone/i);
 });
 
 test("10. an existing legacy workflow with an unsupported connector fails before side effects", async () => {

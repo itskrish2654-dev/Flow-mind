@@ -117,7 +117,27 @@ export async function runTestWorkflow(
     if (connectorReadiness) return { ok: false, error: connectorReadiness };
   }
 
-  const authoritativeSetup = sanitizeSetupConfig(request.data.inputValues, isSensitiveFieldName);
+  const rawTestInput = Object.fromEntries(
+    Object.entries(request.data.inputValues)
+      .filter(([key]) => key.startsWith("test_input:"))
+      .map(([key, value]) => [key.slice("test_input:".length), value]),
+  );
+  let expandedSample: Record<string, string> = {};
+  if (rawTestInput.message) {
+    try {
+      const parsedMessage = JSON.parse(rawTestInput.message) as unknown;
+      if (parsedMessage && typeof parsedMessage === "object" && !Array.isArray(parsedMessage)) {
+        expandedSample = Object.fromEntries(Object.entries(parsedMessage).map(([key, value]) => [key, typeof value === "string" ? value : JSON.stringify(value)]));
+      }
+    } catch {
+      // Plain text is a valid sample message.
+    }
+  }
+  const testInput = { ...rawTestInput, ...expandedSample };
+  const setupInput = Object.fromEntries(Object.entries(request.data.inputValues).filter(([key]) => !key.startsWith("test_input:")));
+  const authoritativeSetup = sanitizeSetupConfig(setupInput, isSensitiveFieldName);
+  const runtimeInputValues = { ...setupInput, ...testInput };
+  const durableInput = { ...authoritativeSetup, ...testInput };
   const normalize = (value: Record<string, string>) => JSON.stringify(
     Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right))),
   );
@@ -147,7 +167,7 @@ export async function runTestWorkflow(
       triggerType: "manual_test",
       triggerMetadata: { mode: "test" },
       idempotencyKey: createManualIdempotencyKey(request.data.idempotencyKey),
-      inputData: authoritativeSetup,
+      inputData: durableInput,
     });
   } catch (error) {
     securityLog("Durable execution creation failed", { error, workflowId });
@@ -172,6 +192,12 @@ export async function runTestWorkflow(
       userId: auth.user.id,
       workflowId: request.data.workflowId,
       properties: { trigger_type: "manual_test", retry: false },
+    }),
+    trackProductEvent({
+      event: "workflow_test_started",
+      userId: auth.user.id,
+      workflowId: request.data.workflowId,
+      properties: { trigger_type: "manual_test" },
     }),
     captureOperationalEvent({
       level: "info",
@@ -209,7 +235,7 @@ export async function runTestWorkflow(
             workflowId: request.data.workflowId,
             workflowName: snapshot.name,
             steps: snapshot.workflow.steps,
-            inputValues: request.data.inputValues,
+            inputValues: runtimeInputValues,
             mode: "test",
             executeAi: async (input) => {
               await enforceRateLimit("ai-execution", [auth.user.id], SECURITY_LIMITS.ai);
@@ -276,6 +302,12 @@ export async function runTestWorkflow(
           failure_category: error instanceof SecurityGateError ? error.code : "execution_error",
         },
       }),
+      trackProductEvent({
+        event: "workflow_test_failed",
+        userId: auth.user.id,
+        workflowId: request.data.workflowId,
+        properties: { failure_category: error instanceof SecurityGateError ? error.code : "execution_error" },
+      }),
       captureOperationalError({
         event: "execution_failed",
         error,
@@ -323,6 +355,12 @@ export async function runTestWorkflow(
           failure_category: "step_failure",
         },
       }),
+      trackProductEvent({
+        event: "workflow_test_failed",
+        userId: auth.user.id,
+        workflowId: request.data.workflowId,
+        properties: { failure_category: "step_failure" },
+      }),
       captureOperationalEvent({
         level: "error",
         event: "execution_completed",
@@ -349,6 +387,12 @@ export async function runTestWorkflow(
       userId: auth.user.id,
       workflowId: request.data.workflowId,
       properties: { trigger_type: "manual_test", duration_ms: Date.now() - executionStartedAt },
+    }),
+    trackProductEvent({
+      event: "workflow_test_succeeded",
+      userId: auth.user.id,
+      workflowId: request.data.workflowId,
+      properties: { duration_ms: Date.now() - executionStartedAt },
     }),
     captureOperationalEvent({
       level: "info",
@@ -401,10 +445,19 @@ export async function retryWorkflowExecution(executionId: string): Promise<TestW
   if (!workflow.success) return { ok: false, error: "The immutable workflow snapshot is unavailable." };
 
   const { data: stepRows } = await admin.from("workflow_execution_steps")
-    .select("workflow_step_id, status")
+    .select("workflow_step_id, status, sanitized_output_metadata")
     .eq("execution_id", existing.id);
   const completedStepIds = new Set(
     (stepRows ?? []).filter((step) => step.status === "succeeded").map((step) => step.workflow_step_id),
+  );
+  const conditionDecisions = Object.fromEntries(
+    (stepRows ?? []).flatMap((step) => {
+      const metadata = step.sanitized_output_metadata;
+      if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return [];
+      return typeof metadata.conditionMatched === "boolean"
+        ? [[step.workflow_step_id, metadata.conditionMatched] as const]
+        : [];
+    }),
   );
   const { data: claimed, error: claimError } = await admin.rpc("claim_execution_retry", {
     p_execution_id: existing.id,
@@ -448,7 +501,7 @@ export async function retryWorkflowExecution(executionId: string): Promise<TestW
           inputValues,
           mode: "test",
           completedStepIds,
-          resumeState: { aiResult: priorAiResult, documents: priorDocuments },
+          resumeState: { aiResult: priorAiResult, documents: priorDocuments, conditionDecisions },
           idempotencyKey: existing.idempotency_key,
           stateHooks: createExecutionStateHooks(admin, existing.id, {
             userId: auth.user.id,

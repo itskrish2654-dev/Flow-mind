@@ -22,3 +22,5 @@ Drop-off and reliability events include `execution_failed`, `execution_partially
 User and anonymous identities are one-way HMAC hashes. Product properties use an explicit allowlist of categories, booleans, counts, and durations. Prompts, submissions, AI output, PDFs, document URLs, email addresses, credentials, authentication data, cookies, tokens, and secret/cipher fields are rejected from metadata. Operational errors are redacted centrally before database or runtime-log persistence.
 
 Analytics is for aggregate product operation, not surveillance. Do not add raw payload properties to the allowlist. Retention duration remains an **OWNER/LEGAL DECISION REQUIRED**; until selected, events are not automatically deleted.
+
+Phase 8 adds `schedule_created`, `schedule_triggered`, `schedule_disabled`, `condition_true`, `condition_false`, `workflow_test_started`, `workflow_test_succeeded`, `workflow_test_failed`, and `connector_requested`. Connector-demand telemetry contains only classified provider/capability identifiers, source, requester class, and aggregate counts. It never stores the originating prompt.

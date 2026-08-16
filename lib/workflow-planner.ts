@@ -4,6 +4,7 @@ import {
   type CapabilityDefinition,
   type CapabilityId,
 } from "@/lib/capability-registry";
+import { parseScheduleLanguage, type ScheduleDefinition } from "@/lib/scheduling";
 
 export const PLANNING_STATUSES = [
   "READY_TO_COMPILE",
@@ -20,12 +21,34 @@ export type PlannedCapability = {
   instruction?: string;
 };
 
+export type PlannedCondition = {
+  capabilityId: "condition.if";
+  sourcePath: string;
+  operator:
+    | "equals"
+    | "not_equals"
+    | "contains"
+    | "not_contains"
+    | "exists"
+    | "not_exists"
+    | "greater_than"
+    | "less_than"
+    | "is_true"
+    | "is_false";
+  expectedValue?: string | number | boolean;
+  humanLabel: string;
+  usesAiClassification: boolean;
+};
+
 export type WorkflowPlan = {
   status: PlanningStatus;
   intent: string;
   trigger: PlannedCapability | null;
   transformations: PlannedCapability[];
   destination: PlannedCapability | null;
+  otherwiseDestination: PlannedCapability | null;
+  condition: PlannedCondition | null;
+  schedule: ScheduleDefinition | null;
   missingRequirements: string[];
   contradictions: string[];
   requestedUnsupportedCapabilities: Array<{
@@ -139,6 +162,79 @@ function detectsPdfDestination(prompt: string): boolean {
   return /\b(pdf|invoice|proposal|document|downloadable report)\b/i.test(prompt);
 }
 
+function normalizeFieldPath(value: string): string {
+  return value.trim().toLowerCase().replace(/\b(the|a|an|this)\b/g, " ").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 80) || "value";
+}
+
+function parseCondition(prompt: string): PlannedCondition | null {
+  const clause = prompt.match(/\bif\s+(.+?)(?=\b(?:then|otherwise|else|notify|send|post|save|store|add|create|update)\b|[.,]|$)/i)?.[1]?.trim();
+  if (!clause) return null;
+  const comparison = clause.match(/^(.+?)\s+(does not contain|doesn't contain|does not equal|is not equal to|is greater than|greater than|is less than|less than|contains|equals|is equal to|exists|does not exist|is true|is false|is)\s*(.*)$/i);
+  const aiClassification = /\b(looks? like|classif(?:y|ies|ied) as|anything is|request is)\b/i.test(clause)
+    && !/\b(amount|price|total|status|priority|email|name|field)\b/i.test(clause);
+  if (!comparison) {
+    if (!aiClassification) return null;
+    const label = clause.replace(/^(?:this|anything|the request)\s+/i, "").trim();
+    const expected = label.replace(/^(?:looks? like|is|classif(?:y|ies|ied) as)\s+/i, "").trim();
+    return { capabilityId: "condition.if", sourcePath: "ai_result", operator: "contains", expectedValue: expected, humanLabel: `If AI classifies this as ${expected}`, usesAiClassification: true };
+  }
+  const [, rawField, rawOperator, rawValue] = comparison;
+  const operatorText = rawOperator.toLowerCase();
+  const operator: PlannedCondition["operator"] = operatorText.includes("does not contain") || operatorText.includes("doesn't contain")
+    ? "not_contains"
+    : operatorText.includes("contain")
+      ? "contains"
+      : operatorText.includes("does not equal") || operatorText.includes("not equal")
+        ? "not_equals"
+        : operatorText.includes("greater")
+          ? "greater_than"
+          : operatorText.includes("less")
+            ? "less_than"
+            : operatorText === "exists"
+              ? "exists"
+              : operatorText === "does not exist"
+                ? "not_exists"
+                : operatorText === "is true"
+                  ? "is_true"
+                  : operatorText === "is false"
+                    ? "is_false"
+                    : "equals";
+  const cleanedValue = rawValue.trim().replace(/^['"]|['"]$/g, "").replace(/^\$/, "").replace(/,/g, "");
+  const expectedValue = ["exists", "not_exists", "is_true", "is_false"].includes(operator)
+    ? undefined
+    : /^(?:-?\d+(?:\.\d+)?)$/.test(cleanedValue)
+      ? Number(cleanedValue)
+      : cleanedValue;
+  const field = normalizeFieldPath(rawField);
+  return {
+    capabilityId: "condition.if",
+    sourcePath: field,
+    operator,
+    ...(expectedValue !== undefined ? { expectedValue } : {}),
+    humanLabel: `If ${rawField.trim()} ${rawOperator.toLowerCase()}${rawValue.trim() ? ` ${rawValue.trim()}` : ""}`,
+    usesAiClassification: false,
+  };
+}
+
+function detectDestination(prompt: string, options: { asksForGmail: boolean; asksForSheets: boolean; asksForSlack: boolean; asksForNotion: boolean; asksForWebhook: boolean; triggerPresent: boolean }): PlannedCapability | null {
+  const asksForGmail = options.asksForGmail || /\bgmail\b/i.test(prompt);
+  const asksForSheets = options.asksForSheets || /\bgoogle sheets?\b|\bsheets?\b/i.test(prompt);
+  const asksForSlack = options.asksForSlack || /\bslack\b|#[a-z0-9_-]+/i.test(prompt);
+  const asksForNotion = options.asksForNotion || /\bnotion\b/i.test(prompt);
+  if (asksForSheets && /\b(add|save|store|update|find|lookup)\b/i.test(prompt)) return plannedCapability(/\bupdate row\b/i.test(prompt) ? "google_sheets_update_row" : /\bfind|lookup\b/i.test(prompt) ? "google_sheets_find_row" : "google_sheets_add_row");
+  if (asksForGmail && /\breply\b/i.test(prompt)) return plannedCapability("gmail_reply_to_email");
+  if (asksForGmail && /\b(send|email it|mail it)\b/i.test(prompt)) return plannedCapability("gmail_send_email");
+  if (asksForSlack && /\b(reply)\b[^.]{0,30}\bthread\b|\bthread\b[^.]{0,30}\breply\b/i.test(prompt)) return plannedCapability("slack_reply_in_thread");
+  if (asksForSlack && /\b(send|post|alert|notify|message)\b/i.test(prompt)) return plannedCapability("slack_send_channel_message");
+  if (asksForNotion && /\bupdate\b/i.test(prompt)) return plannedCapability("notion_update_item");
+  if (asksForNotion && /\bcreate\b[^.]{0,30}\bpage\b|\bpage\b[^.]{0,30}\bcreate\b/i.test(prompt)) return plannedCapability("notion_create_page");
+  if (asksForNotion && /\b(save|add|create|store|notion)\b/i.test(prompt)) return plannedCapability("notion_create_data_source_item");
+  if (detectsHttpDestination(prompt) || (options.asksForWebhook && !detectsWebhookTrigger(prompt))) return plannedCapability("generic_http_action");
+  if (detectsPdfDestination(prompt)) return plannedCapability("generate_pdf");
+  if (detectsInternalDestination(prompt) || options.triggerPresent) return plannedCapability("flowmind_data_store");
+  return null;
+}
+
 export function deriveGmailSearch(prompt: string): string | null {
   const terms: string[] = [];
   const from = prompt.match(/\bfrom\s+(@[A-Za-z0-9.-]+|[^\s,]+@[^\s,]+)/i)?.[1];
@@ -157,6 +253,9 @@ export function planWorkflow(prompt: string): WorkflowPlan {
     trigger: null,
     transformations: [] as PlannedCapability[],
     destination: null,
+    otherwiseDestination: null,
+    condition: null,
+    schedule: null,
     missingRequirements: [] as string[],
     contradictions: [] as string[],
     requestedUnsupportedCapabilities: [] as Array<{
@@ -184,14 +283,6 @@ export function planWorkflow(prompt: string): WorkflowPlan {
   const asksForSlack = /\bslack\b|#[a-z0-9_-]+/i.test(normalizedPrompt);
   const asksForNotion = /\bnotion\b/i.test(normalizedPrompt);
   const unsupported = findRequestedUnsupportedCapabilities(normalizedPrompt).filter((capability) => !(asksForGmail && ["email_ingestion", "email_delivery"].includes(capability.id)));
-  if (
-    /\b(every\s+(?:hour|weekday|day|week|month|morning|evening|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)|on a schedule)\b/i.test(
-      normalizedPrompt,
-    )
-  ) {
-    const scheduling = getCapability("schedule_trigger");
-    if (scheduling) unsupported.push(scheduling);
-  }
   const asksForWebhook = /\bwebhook(?:\.site)?\b/i.test(normalizedPrompt);
   const asksForUnknownExternalConnection =
     /\b(connect(?:\s+to)?|sync\s+(?:to|with)|post\s+(?:it\s+)?to)\b/i.test(
@@ -219,7 +310,18 @@ export function planWorkflow(prompt: string): WorkflowPlan {
     };
   }
 
-  if (!normalizedPrompt || isVaguePrompt(normalizedPrompt)) {
+  const parsedSchedule = parseScheduleLanguage(normalizedPrompt);
+  if (parsedSchedule && !parsedSchedule.ok) {
+    return {
+      ...base,
+      status: "NEEDS_CLARIFICATION",
+      missingRequirements: ["schedule"],
+      message: "CrazyLoops needs one schedule detail before it can build this loop.",
+      clarificationQuestions: parsedSchedule.questions,
+    };
+  }
+
+  if (!normalizedPrompt || (isVaguePrompt(normalizedPrompt) && !parsedSchedule)) {
     return {
       ...base,
       status: "NEEDS_CLARIFICATION",
@@ -238,7 +340,9 @@ export function planWorkflow(prompt: string): WorkflowPlan {
   }
   const slackTrigger = asksForSlack && (/\b(when|whenever)\b[^.]{0,80}\b(someone posts?|new message|message (?:is )?posted)\b/i.test(normalizedPrompt) || /\bnew slack (?:channel )?message\b/i.test(normalizedPrompt));
   const notionTrigger = asksForNotion && !/\b(manual(?:ly)?|when i run|on demand)\b/i.test(normalizedPrompt) && /\b(when|whenever)\b/i.test(normalizedPrompt) && /\b(updated?|changed?|created?|added?)\b/i.test(normalizedPrompt);
-  const trigger = slackTrigger
+  const trigger = parsedSchedule?.ok
+    ? plannedCapability("schedule.trigger", parsedSchedule.schedule.humanLabel)
+    : slackTrigger
     ? plannedCapability("slack_new_channel_message", normalizedPrompt.match(/#[a-z0-9_-]+/i)?.[0])
     : notionTrigger
       ? plannedCapability(/\b(created?|added?|new)\b/i.test(normalizedPrompt) ? "notion_page_created_or_added" : "notion_page_updated")
@@ -252,30 +356,21 @@ export function planWorkflow(prompt: string): WorkflowPlan {
       ? plannedCapability("public_form_submission")
       : null;
   const transformations = detectTransformations(normalizedPrompt);
+  const condition = parseCondition(normalizedPrompt);
+  if (condition?.usesAiClassification && !transformations.some((item) => /classif/i.test(item.instruction ?? ""))) {
+    transformations.push(plannedCapability("ai_text_transform", `Classify whether the input matches this criterion: ${condition.humanLabel.replace(/^If\s+/i, "")}. Return a short, direct classification.`));
+  }
   if (asksForNotion && /\b(find|lookup)\b/i.test(normalizedPrompt) && /\bupdate\b/i.test(normalizedPrompt)) transformations.unshift(plannedCapability("notion_find_item", "Find exactly one matching Notion item."));
-  const destination = asksForSheets
-    ? plannedCapability(/\bupdate row\b/i.test(normalizedPrompt) ? "google_sheets_update_row" : /\bfind|lookup\b/i.test(normalizedPrompt) ? "google_sheets_find_row" : "google_sheets_add_row")
-    : asksForGmail && /\breply\b/i.test(normalizedPrompt)
-      ? plannedCapability("gmail_reply_to_email")
-      : asksForGmail && /\b(send|email it|mail it)\b/i.test(normalizedPrompt)
-        ? plannedCapability("gmail_send_email")
-    : asksForSlack && /\b(reply)\b[^.]{0,30}\bthread\b|\bthread\b[^.]{0,30}\breply\b/i.test(normalizedPrompt)
-      ? plannedCapability("slack_reply_in_thread")
-    : asksForSlack && /\b(send|post|alert|notify|message)\b/i.test(normalizedPrompt) && !(slackTrigger && asksForNotion)
-      ? plannedCapability("slack_send_channel_message")
-    : asksForNotion && /\bupdate\b/i.test(normalizedPrompt) && !notionTrigger
-      ? plannedCapability("notion_update_item")
-    : asksForNotion && /\bcreate\b[^.]{0,30}\bpage\b|\bpage\b[^.]{0,30}\bcreate\b/i.test(normalizedPrompt)
-      ? plannedCapability("notion_create_page")
-    : asksForNotion && /\b(save|add|create|store|notion)\b/i.test(normalizedPrompt) && !notionTrigger
-      ? plannedCapability("notion_create_data_source_item")
-    : detectsHttpDestination(normalizedPrompt) || (asksForWebhook && !detectsWebhookTrigger(normalizedPrompt))
-    ? plannedCapability("generic_http_action")
-    : detectsPdfDestination(normalizedPrompt)
-    ? plannedCapability("generate_pdf")
-    : detectsInternalDestination(normalizedPrompt) || trigger
-      ? plannedCapability("flowmind_data_store")
-      : null;
+  const branchParts = condition ? normalizedPrompt.split(/\botherwise\b|\belse\b/i) : [];
+  const trueBranchText = condition ? (branchParts[0].split(/\bthen\b/i).at(-1) ?? branchParts[0]) : normalizedPrompt;
+  const falseBranchText = condition && branchParts.length > 1 ? branchParts.slice(1).join(" ") : "";
+  const destinationOptions = { asksForGmail: false, asksForSheets: false, asksForSlack: false, asksForNotion: false, asksForWebhook, triggerPresent: Boolean(trigger) };
+  const destination = condition
+    ? detectDestination(trueBranchText, destinationOptions)
+    : detectDestination(normalizedPrompt, { ...destinationOptions, asksForGmail, asksForSheets, asksForSlack, asksForNotion });
+  const otherwiseDestination = condition && falseBranchText
+    ? detectDestination(falseBranchText, destinationOptions)
+    : null;
   const missingRequirements: string[] = [];
   const clarificationQuestions: string[] = [];
 
@@ -299,6 +394,9 @@ export function planWorkflow(prompt: string): WorkflowPlan {
       trigger,
       transformations,
       destination,
+      otherwiseDestination,
+      condition,
+      schedule: parsedSchedule?.ok ? parsedSchedule.schedule : null,
       missingRequirements,
       message: `CrazyLoops needs ${missingRequirements.join(" and ")} details before building this workflow.`,
       clarificationQuestions,
@@ -311,6 +409,9 @@ export function planWorkflow(prompt: string): WorkflowPlan {
     trigger,
     transformations,
     destination,
+    otherwiseDestination,
+    condition,
+    schedule: parsedSchedule?.ok ? parsedSchedule.schedule : null,
     message: "This request matches capabilities that CrazyLoops can execute.",
   };
 }

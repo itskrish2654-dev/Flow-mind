@@ -27,6 +27,7 @@ import {
   loadWorkflowSnapshot,
   type WorkflowChangeScope,
 } from "@/lib/workflow-versioning";
+import { activateWorkflowSchedule, disableWorkflowSchedule, scheduleStep } from "@/lib/workflow-schedules";
 import {
   CompiledWorkflowSchema,
   DataTableDefinitionSchema,
@@ -321,6 +322,11 @@ export async function deleteWorkflow(
     await deactivateWorkflowConnectorSubscriptions(auth.user.id, parsedWorkflowId.data);
   } catch (subscriptionError) {
     securityLog("Archived workflow subscription cleanup failed", { error: subscriptionError, workflowId: parsedWorkflowId.data });
+  }
+  try {
+    await disableWorkflowSchedule(admin, auth.user.id, parsedWorkflowId.data);
+  } catch (scheduleError) {
+    securityLog("Archived workflow schedule cleanup failed", { error: scheduleError, workflowId: parsedWorkflowId.data });
   }
   revalidatePath("/dashboard");
   return { ok: true };
@@ -690,8 +696,9 @@ export async function setWorkflowPublication(
       return { ok: false, error: "This automation needs to be created again." };
     }
     const hasConnectorTrigger = workflow.data.steps.some((step) => step.config?.connector?.operationKind === "trigger");
-    if (!workflow.data.publicForm && !hasConnectorTrigger) {
-      return { ok: false, error: "Add a hosted form before publishing." };
+    const hasSchedule = Boolean(scheduleStep(workflow.data));
+    if (!workflow.data.publicForm && !hasConnectorTrigger && !hasSchedule) {
+      return { ok: false, error: "Add a hosted form, connected trigger, or schedule before activating this loop." };
     }
     const unavailable = assessWorkflowCapabilities(workflow.data.steps, "production")
       .find(({ assessment }) => !assessment.available);
@@ -707,6 +714,12 @@ export async function setWorkflowPublication(
     if (incomplete) return { ok: false, error: incomplete };
     const connectorReadiness = await validateWorkflowConnectorConnections({ userId: auth.user.id, setupConfig: publicationSetupConfig, steps: workflow.data.steps });
     if (connectorReadiness) return { ok: false, error: connectorReadiness };
+    if (hasSchedule && data.current_version_id) {
+      const { count } = await admin.from("workflow_executions").select("id", { count: "exact", head: true })
+        .eq("workflow_id", parsedId.data).eq("workflow_version_id", data.current_version_id)
+        .eq("user_id", auth.user.id).eq("trigger_type", "manual_test").eq("status", "succeeded");
+      if (!count) return { ok: false, error: "Run a successful live test before activating this schedule." };
+    }
   }
   const { error: updateError } = await admin
     .from("workflows")
@@ -725,13 +738,15 @@ export async function setWorkflowPublication(
     if (publish && workflow.success && data.current_version_id) {
       const subscriptions = await activateWorkflowConnectorSubscriptions({ userId: auth.user.id, workflowId: parsedId.data, workflowVersionId: data.current_version_id, setupConfig: publicationSetupConfig, steps: workflow.data.steps });
       connectorEndpoints = subscriptions.map((subscription) => subscription.url);
+      await activateWorkflowSchedule(admin, { userId: auth.user.id, workflowId: parsedId.data, workflowVersionId: data.current_version_id, workflow: workflow.data });
     } else {
       await deactivateWorkflowConnectorSubscriptions(auth.user.id, parsedId.data);
+      await disableWorkflowSchedule(admin, auth.user.id, parsedId.data);
     }
   } catch (subscriptionError) {
     await admin.from("workflows").update({ public_form_enabled: false, published_at: null }).eq("id", parsedId.data).eq("user_id", auth.user.id);
     securityLog("Workflow connector publication failed", { error: subscriptionError, workflowId: parsedId.data });
-    return { ok: false, error: "Connector subscriptions could not be activated safely." };
+    return { ok: false, error: "This loop could not be activated safely." };
   }
   revalidatePath(`/f/${parsedId.data}`);
   revalidatePath(`/dashboard/projects/${parsedId.data}`);

@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 
 import { runTestWorkflow, type TestExecutionLog } from "@/app/actions/execute";
+import { requestConnectorCapability } from "@/app/actions/connector-requests";
 import { clearHomepageDemoDraft } from "@/app/actions/homepage-demo";
 import {
   configureConnectorWorkflowStep,
@@ -111,6 +112,7 @@ const stepVisuals = {
   filter_condition: { label: "Condition", icon: Filter, tone: "amber" },
   connector_trigger: { label: "Connected Trigger", icon: Zap, tone: "emerald" },
   connector_action: { label: "Connected Action", icon: Send, tone: "violet" },
+  scheduled_trigger: { label: "When", icon: Zap, tone: "emerald" },
 } as const;
 
 const toneClasses = {
@@ -131,7 +133,7 @@ function defaultInputValues(
 ): InputValues {
   if (!workflow) return {};
 
-  return Object.fromEntries(
+  const setupValues = Object.fromEntries(
     orderWorkflowSteps(workflow.steps).flatMap((step) =>
       getStepInputs(step, workflowId).map((input) => [
         inputId(step.id, input.key),
@@ -139,6 +141,11 @@ function defaultInputValues(
       ]),
     ),
   );
+  const sampleValues = Object.fromEntries((workflow.publicForm?.fields ?? []).map((field) => {
+    const sample = field.type === "email" ? "test@example.com" : field.type === "number" ? "1000" : field.type === "checkbox" ? "true" : field.type === "date" ? new Date().toISOString().slice(0, 10) : field.type === "url" ? "https://example.com" : field.options?.[0] ?? `Sample ${field.label.toLowerCase()}`;
+    return [`test_input:${field.key}`, sample];
+  }));
+  return { ...setupValues, ...sampleValues };
 }
 
 function cleanLegacySensitiveValues(): void {
@@ -528,6 +535,50 @@ function Inspector({
               )}
             </div>
           )}
+        {step.type === "scheduled_trigger" && step.config?.schedule && (
+          <div className="mb-4 rounded-xl border border-[#e7c75f] bg-[#fff7dc] p-3.5">
+            <p className="text-[10px] font-semibold text-slate-900">{step.config.schedule.humanLabel}</p>
+            <p className="mt-1 text-[9px] leading-4 text-slate-600">{step.config.schedule.timezone}</p>
+            <p className="mt-2 text-[9px] leading-4 text-slate-500">Run a safe manual live test first. Activation starts future occurrences; it never waits for the next occurrence to test.</p>
+            <button type="button" onClick={() => void onPublicationChange(!published)} className="mt-3 flex h-9 w-full items-center justify-center rounded-lg border border-[#d7aa2f] bg-white text-[10px] font-semibold text-[#6f5100]">
+              {published ? "Disable schedule" : "Activate schedule"}
+            </button>
+          </div>
+        )}
+        {step.type === "filter_condition" && step.config?.condition && (
+          <div className="mb-4 rounded-xl border border-[#e7c75f] bg-[#fff7dc] p-3.5">
+            <p className="text-[10px] font-semibold text-slate-900">IF</p>
+            <p className="mt-1 text-[10px] leading-4 text-slate-700">{step.config.condition.humanLabel.replace(/^If\s+/i, "")}</p>
+            <p className="mt-2 text-[9px] leading-4 text-slate-500">Only the matching branch runs. The other branch is recorded as skipped—not failed.</p>
+          </div>
+        )}
+        {step.type === "public_form_trigger" && workflow?.publicForm && (
+          <div className="mb-4 rounded-xl border border-[#ded6ca] bg-white p-3.5">
+            <p className="text-[10px] font-semibold text-slate-900">Safe sample input</p>
+            <p className="mt-1 text-[9px] leading-4 text-slate-500">Used only for Live Test. It does not publish or submit the hosted form.</p>
+            <div className="mt-3 grid gap-3">
+              {workflow.publicForm.fields.map((field) => {
+                const key = `test_input:${field.key}`;
+                return <label key={field.key} className="grid gap-1 text-[9px] font-semibold text-slate-600">
+                  {field.label}
+                  {field.type === "textarea" ? (
+                    <textarea value={values[key] ?? ""} onChange={(event) => onChange(key, event.target.value)} rows={3} className="rounded-lg border border-[#ded6ca] bg-[#fffdfa] px-3 py-2 text-[10px] font-normal text-slate-800 outline-none focus:border-slate-400" />
+                  ) : (
+                    <input type={field.type === "email" || field.type === "number" || field.type === "date" || field.type === "url" ? field.type : "text"} value={values[key] ?? ""} onChange={(event) => onChange(key, event.target.value)} className="h-9 rounded-lg border border-[#ded6ca] bg-[#fffdfa] px-3 text-[10px] font-normal text-slate-800 outline-none focus:border-slate-400" />
+                  )}
+                </label>;
+              })}
+            </div>
+          </div>
+        )}
+        {["webhook_trigger", "connector_trigger"].includes(step.type) && (
+          <div className="mb-4 rounded-xl border border-[#ded6ca] bg-white p-3.5">
+            <label className="grid gap-1 text-[9px] font-semibold text-slate-600">
+              Safe sample event
+              <textarea value={values["test_input:message"] ?? ""} onChange={(event) => onChange("test_input:message", event.target.value)} rows={4} placeholder='{"text":"Sample message","priority":"urgent"}' className="rounded-lg border border-[#ded6ca] bg-[#fffdfa] px-3 py-2 font-mono text-[10px] font-normal text-slate-800 outline-none focus:border-slate-400" />
+            </label>
+          </div>
+        )}
         {step.type === "public_form_trigger" && publicFormPath && (
           <div className="mb-4 rounded-xl border border-[#e7c75f] bg-[#fff7dc] p-3.5">
             <p className="flex items-center gap-2 text-[10px] font-semibold text-slate-900">
@@ -1083,6 +1134,7 @@ export function AutomationWorkspace({
   const [delivered, setDelivered] = useState<boolean | null>(null);
   const [testSucceeded, setTestSucceeded] = useState<boolean | null>(null);
   const [planning, setPlanning] = useState<WorkflowPlan | null>(null);
+  const [connectorRequestMessage, setConnectorRequestMessage] = useState<string | null>(null);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
   const buildRequestInFlight = useRef(false);
 
@@ -1136,6 +1188,7 @@ export function AutomationWorkspace({
 
   function stepIsReady(step: Step) {
     if (step.capabilityStatus === "unsupported") return false;
+    if (step.config?.connector && !step.config.connector.connectorId.startsWith("flowmind_") && !step.config.connector.connectionId) return false;
     if (["webhook_post", "http_request"].includes(step.type)) {
       return Boolean(step.config?.endpoint?.trim());
     }
@@ -1173,8 +1226,9 @@ export function AutomationWorkspace({
     const restoreTimer = window.setTimeout(() => {
       cleanLegacySensitiveValues();
       const ordered = orderWorkflowSteps(initialWorkflow.steps);
-      setValues(
-        Object.fromEntries(
+      setValues({
+        ...defaultInputValues(initialWorkflow, initialWorkflowId),
+        ...Object.fromEntries(
           ordered.flatMap((step) =>
             getStepInputs(step, initialWorkflowId).map((input) => {
               const id = inputId(step.id, input.key);
@@ -1187,7 +1241,7 @@ export function AutomationWorkspace({
             }),
           ),
         ),
-      );
+      });
       window.dispatchEvent(
         new CustomEvent("flowmind:active-workflow", {
           detail: initialWorkflowId,
@@ -1249,14 +1303,7 @@ export function AutomationWorkspace({
         return;
       }
       const ordered = orderWorkflowSteps(result.workflow.steps);
-      const initialValues = Object.fromEntries(
-        ordered.flatMap((step) =>
-          getStepInputs(step, result.id).map((input) => [
-            inputId(step.id, input.key),
-            input.value ?? "",
-          ]),
-        ),
-      );
+      const initialValues = defaultInputValues(result.workflow, result.id);
       setWorkflow(result.workflow);
       setWorkflowId(result.id);
       setPublished(false);
@@ -1288,6 +1335,12 @@ export function AutomationWorkspace({
       setError("Complete the required details before running a test.");
       return;
     }
+    const sideEffects = steps.flatMap((step) => {
+      if (step.type === "connector_action") return [`This live test will run “${toPlainEnglish(step.title)}” in the connected app.`];
+      if (["webhook_post", "http_request"].includes(step.type)) return ["This live test will send data to the configured external destination."];
+      return [];
+    });
+    if (sideEffects.length > 0 && !window.confirm(`${sideEffects.join("\n")}\n\nContinue with the live test?`)) return;
     setIsTesting(true);
     setError(null);
     setLogs([]);
@@ -1483,6 +1536,7 @@ export function AutomationWorkspace({
               <Zap className="size-4 fill-current" />
             </span>
             <span className="font-bold text-[#272536]">CrazyLoops</span>
+            <span className="rounded-full bg-[#fff2bd] px-2 py-0.5 text-[8px] font-bold uppercase tracking-[0.1em] text-[#765600]">Early Access</span>
           </div>
           <div className="hidden min-w-0 items-center gap-2 lg:flex">
             <Workflow className="size-4 shrink-0 text-[#b18410]" />
@@ -1515,7 +1569,7 @@ export function AutomationWorkspace({
               ) : (
                 <Play className="size-3 fill-current text-[#b18410]" />
               )}{" "}
-              Test Run
+              Test this loop
             </button>
           </div>
         </header>
@@ -1524,27 +1578,32 @@ export function AutomationWorkspace({
           {!workflow ? (
             <EmptyCanvas draftReady={initialDraftReady} />
           ) : (
-            <div className="h-full overflow-x-auto px-6">
-              <div className="flex h-full min-w-max items-center justify-center">
+            <div className="h-full overflow-y-auto px-4 pb-14 pt-5 sm:px-6">
+              <div className="mx-auto flex w-full max-w-2xl flex-col items-stretch">
                 {steps.map((step, index) => (
-                  <div key={step.id} className="flex items-center">
+                  <div key={step.id} className="flex flex-col items-stretch">
                     {index > 0 && (
-                      <div className="relative w-12 shrink-0">
-                        <div className="h-0.5 bg-[#d7aa2f]" />
-                        <span className="absolute right-0 top-1/2 size-1.5 -translate-y-1/2 rotate-45 border-r-2 border-t-2 border-[#d7aa2f]" />
+                      <div className="flex h-8 items-center gap-3 pl-5" aria-hidden="true">
+                        <div className="h-full w-px bg-[#d7aa2f]" />
+                        {step.config?.branch && (
+                          <span className="rounded-full bg-[#fff2bd] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-[#765600]">
+                            {step.config.branch.when === "true" ? "Then" : "Otherwise"}
+                          </span>
+                        )}
                       </div>
                     )}
-                    <WorkflowNode
-                      step={step}
-                      index={index}
-                      selected={selectedStep?.id === step.id}
-                      ready={stepIsReady(step)}
-                      onSelect={() => {
-                        setSelectedStepId(step.id);
-                        if (window.innerWidth < 1280)
-                          setMobileInspectorOpen(true);
-                      }}
-                    />
+                    <div className={step.config?.branch ? "pl-6 sm:pl-10" : ""}>
+                      <WorkflowNode
+                        step={step}
+                        index={index}
+                        selected={selectedStep?.id === step.id}
+                        ready={stepIsReady(step)}
+                        onSelect={() => {
+                          setSelectedStepId(step.id);
+                          if (window.innerWidth < 1280) setMobileInspectorOpen(true);
+                        }}
+                      />
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1651,21 +1710,34 @@ export function AutomationWorkspace({
                   </p>
                 ))}
                 {planning.requestedUnsupportedCapabilities.map((capability) => (
-                  <p key={capability.capabilityId} className="mt-1.5">
-                    {capability.displayName}: not currently supported.
-                  </p>
+                  <div key={capability.capabilityId} className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                    <p>{capability.displayName} isn’t available yet.</p>
+                    <button
+                      type="button"
+                      className="rounded-lg border border-[#d7aa2f] bg-white px-3 py-1.5 font-semibold text-[#6f5100]"
+                      onClick={async () => {
+                        const response = await requestConnectorCapability({ capabilityId: capability.capabilityId, source: "workflow_builder" });
+                        setConnectorRequestMessage(response.ok ? response.message : response.error);
+                      }}
+                    >
+                      Request {capability.displayName}
+                    </button>
+                  </div>
                 ))}
+                {connectorRequestMessage && <p role="status" className="mt-2 font-medium text-emerald-700">{connectorRequestMessage}</p>}
               </div>
             )}
             {logs.length > 0 && (
               <div
+                role="status"
+                aria-live="polite"
                 className={`mt-4 rounded-xl border p-3 ${testSucceeded ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}
               >
                 <p className="flex items-center gap-2 text-[11px] font-semibold text-slate-900">
                   <CirclePlay
                     className={`size-3.5 ${testSucceeded ? "text-emerald-500" : "text-rose-500"}`}
                   />
-                  Test results
+                  {testSucceeded ? "YOUR LOOP WORKS." : "Live test needs attention"}
                   {testSucceeded && delivered
                     ? " · external delivery acknowledged"
                     : ""}
@@ -1680,6 +1752,11 @@ export function AutomationWorkspace({
                     </p>
                   ))}
                 </div>
+                {testSucceeded && !published && (
+                  <button type="button" onClick={() => void changePublication(true)} className="mt-3 inline-flex min-h-10 items-center rounded-lg border border-emerald-300 bg-white px-4 text-[10px] font-semibold text-emerald-700">
+                    Activate →
+                  </button>
+                )}
               </div>
             )}
           </div>

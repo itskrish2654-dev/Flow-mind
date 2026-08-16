@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { annotateWorkflowCapabilities } from "@/lib/capability-registry";
 import { CompiledWorkflowSchema, type CompiledWorkflow } from "@/lib/schemas/workflow";
 import type { Database, Json } from "@/lib/supabase/types";
+import { pinFutureScheduleToVersion } from "@/lib/workflow-schedules";
 
 export type WorkflowChangeScope =
   | "presentation"
@@ -110,5 +111,11 @@ export async function createImmutableWorkflowVersion(
     }
     throw new Error(`Workflow version could not be saved: ${error?.message ?? "unknown error"}`);
   }
+  await pinFutureScheduleToVersion(admin, {
+    userId: input.userId,
+    workflowId: input.workflowId,
+    workflowVersionId: version.version_id,
+    workflow: definition,
+  });
   return { versionId: version.version_id, versionNumber: version.version_number };
 }

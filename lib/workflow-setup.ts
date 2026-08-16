@@ -69,6 +69,7 @@ function defaultInputs(step: WorkflowStep): StepInput[] {
   switch (step.type) {
     case "public_form_trigger":
     case "webhook_trigger":
+    case "scheduled_trigger":
     case "store_data":
     case "ai_transform":
       return [];

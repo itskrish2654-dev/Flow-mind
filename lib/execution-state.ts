@@ -64,6 +64,17 @@ export function createExecutionStateHooks(
 ) {
   const stepStartedAt = new Map<string, number>();
   return {
+    onConditionDecision: async (
+      step: CompiledWorkflow["steps"][number],
+      matched: boolean,
+    ) => {
+      await trackProductEvent({
+        event: matched ? "condition_true" : "condition_false",
+        userId: context?.userId,
+        workflowId: context?.workflowId,
+        properties: { capability: resolveStepCapabilityId(step) ?? "condition.if" },
+      });
+    },
     onStepStart: async (step: CompiledWorkflow["steps"][number]) => {
       stepStartedAt.set(step.id, Date.now());
       const { error } = await admin
