@@ -32,6 +32,8 @@ test("connection rows expose real labels, health, multiple accounts, and focused
     readFile("lib/connectors/connection-view.ts", "utf8"),
   ]);
   assert.match(loader, /external_account_label/);
+  assert.match(loader, /safeAccountLabel/);
+  assert.match(loader, /\^T\[A-Z0-9\]/);
   assert.match(loader, /last_refreshed_at/);
   assert.match(loader, /usedByWorkflows/);
   assert.match(component, /Healthy/);

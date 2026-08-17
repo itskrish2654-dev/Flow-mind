@@ -44,6 +44,16 @@ function providerFrom(value: string): ConnectionProvider | null {
     : null;
 }
 
+function safeAccountLabel(provider: ConnectionProvider, value: string | null): string {
+  const details = providerDetails[provider];
+  const label = value?.trim();
+  if (!label) return details.fallbackLabel;
+  if (provider === "slack" && /^T[A-Z0-9]{8,}$/i.test(label)) return details.fallbackLabel;
+  if (provider === "notion" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(label)) return details.fallbackLabel;
+  if (provider === "google" && !label.includes("@")) return details.fallbackLabel;
+  return label;
+}
+
 function collectConnectionIds(value: unknown, result: Set<string>): void {
   if (!value || typeof value !== "object") return;
   if (Array.isArray(value)) {
@@ -104,7 +114,7 @@ export async function listConnectionViews(userId: string): Promise<ConnectionVie
       id: row.id,
       provider,
       providerName: details.name,
-      accountLabel: row.external_account_label?.trim() || details.fallbackLabel,
+      accountLabel: safeAccountLabel(provider, row.external_account_label),
       status,
       lastCheckedAt: row.last_refreshed_at ?? row.updated_at,
       usedByWorkflows: workflowCounts.get(row.id) ?? 0,
