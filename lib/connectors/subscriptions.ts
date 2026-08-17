@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { activateGmailWatch, stopGmailWatch } from "@/lib/connectors/google/gmail-push";
 import { getConnectorOperation } from "@/lib/connectors/registry";
 import { assertSelectedGoogleSpreadsheet } from "@/lib/connectors/google/selected-spreadsheets";
+import { getSiteOrigin } from "@/lib/site-origin";
 import type { Json } from "@/lib/supabase/types";
 
 export async function validateWorkflowConnectorConnections(input: { userId: string; setupConfig?: Record<string, string>; steps: Array<{ id?: string; config?: { connector?: { connectorId: string; operationKind: "trigger" | "action"; operationKey: string; operationVersion: number; connectionId?: string } } }> }) {
@@ -49,14 +50,12 @@ export function verifyConnectorEndpointToken(subscriptionId: string, provided: s
 }
 
 export function connectorWebhookUrl(subscriptionId: string) {
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "");
-  if (!siteUrl) throw new Error("NEXT_PUBLIC_SITE_URL is not configured.");
+  const siteUrl = getSiteOrigin();
   return `${siteUrl}/api/connectors/events/flowmind_webhook?subscription=${encodeURIComponent(subscriptionId)}&token=${encodeURIComponent(connectorEndpointToken(subscriptionId))}`;
 }
 
 function providerWebhookUrl(provider: "google_gmail" | "slack" | "notion") {
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "");
-  if (!siteUrl) throw new Error("NEXT_PUBLIC_SITE_URL is not configured.");
+  const siteUrl = getSiteOrigin();
   return `${siteUrl}/api/connectors/events/${provider}`;
 }
 

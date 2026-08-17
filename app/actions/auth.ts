@@ -6,6 +6,7 @@ import { SECURITY_LIMITS, SecurityGateError, enforceRateLimit } from "@/lib/secu
 import { getClientIp } from "@/lib/security/request-context";
 import { createClient } from "@/lib/supabase/server";
 import { trackProductEvent } from "@/lib/observability";
+import { getSiteOrigin } from "@/lib/site-origin";
 
 const EmailSchema = z.string().trim().email().max(320);
 const CaptchaTokenSchema = z.string().min(1).max(4_096);
@@ -84,10 +85,7 @@ export async function authenticateWithPassword(input: {
     return { ok: true, sessionCreated: true };
   }
 
-  const siteUrl = (
-    process.env.NEXT_PUBLIC_SITE_URL ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "")
-  ).replace(/\/$/, "");
+  const siteUrl = getSiteOrigin();
   if (parsed.data.mode === "recovery") {
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       captchaToken: parsed.data.captchaToken,

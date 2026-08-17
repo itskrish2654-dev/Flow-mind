@@ -3,6 +3,7 @@ import type {
   PublicFormDefinition,
   PublicFormField,
 } from "@/lib/schemas/workflow";
+import { resolveSiteOrigin } from "@/lib/site-origin";
 
 function uniqueFields(fields: PublicFormField[]): PublicFormField[] {
   const seen = new Set<string>();
@@ -106,10 +107,10 @@ export function getPublicFormPath(workflowId: string): string {
 }
 
 export function getPublicFormUrl(workflowId: string, fallbackOrigin = ""): string {
-  const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL ?? fallbackOrigin).replace(
-    /\/$/,
-    "",
-  );
+  const siteUrl = resolveSiteOrigin({
+    siteUrl: process.env.NEXT_PUBLIC_SITE_URL,
+    fallbackOrigin,
+  });
   return `${siteUrl}${getPublicFormPath(workflowId)}`;
 }
 

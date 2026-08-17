@@ -6,7 +6,7 @@ No secret value belongs in source control, browser storage, HTML, RSC payloads, 
 | --- | --- | --- | --- | --- | --- | --- |
 | `NEXT_PUBLIC_SUPABASE_URL` | Public | Yes | Yes | Yes | Yes | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Public | Yes | Yes | Yes | Yes | Modern browser-safe Supabase key |
-| `NEXT_PUBLIC_SITE_URL` | Public config | Yes in production | Yes | Optional; `VERCEL_URL` fallback | Yes | Canonical application origin |
+| `NEXT_PUBLIC_SITE_URL` | Public config | Yes in production | `https://www.crazy-loops.com` | Optional; `VERCEL_URL` fallback | Yes | Canonical application origin used for OAuth, auth email/recovery, webhooks, and public-form links |
 | `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | Public | Yes | Yes | Yes | Yes | Cloudflare Turnstile widget site key |
 | `SUPABASE_SECRET_KEY` | Server secret | Yes | Yes | Yes | Yes | Modern privileged backend key; bypasses RLS |
 | `GROQ_API_KEY` | Server secret | Yes | Yes | Yes | Yes | Server-side AI provider authentication |

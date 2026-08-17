@@ -7,10 +7,11 @@ import { prepareGoogleConnectionForDriveFileReconnect } from "@/lib/connectors/g
 import { slackScopesForOperation } from "@/lib/connectors/slack/scopes";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { getSiteOrigin, getSiteUrl } from "@/lib/site-origin";
 
 export async function GET(request: Request, { params }: { params: Promise<{ connectorId: string }> }) {
   const { connectorId } = await params; const supabase = await createClient(); const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.redirect(new URL("/login?next=/settings/connections", request.url));
+  if (!user) return NextResponse.redirect(getSiteUrl("/login?next=/settings/connections", new URL(request.url).origin));
   const connector = getConnector(connectorId);
   if (!connector || connector.manifest.auth.type !== "oauth2" || connector.manifest.status === "COMING_SOON" || (connector.manifest.status === "INTERNAL" && process.env.NODE_ENV === "production")) return NextResponse.json({ error: "Connector not found." }, { status: 404 });
   try {
@@ -32,9 +33,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ conn
         ? slackScopesForOperation(operation?.key)
         : operation?.requiredScopes;
     const auth = await createOAuthAuthorization({ userId: user.id, connectorId, scopes, returnPath: safeOAuthReturnPath(requestUrl.searchParams.get("return")), ...(connectionId ? { connectionId } : {}), ...(operation?.key ? { operationKey: operation.key } : {}) });
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL; if (!siteUrl) throw new Error("Site URL is missing.");
-    const redirectUri = new URL(`/api/connectors/oauth/${connectorId}/callback`, siteUrl).toString();
+    const redirectUri = new URL(`/api/connectors/oauth/${connectorId}/callback`, getSiteOrigin(new URL(request.url).origin)).toString();
     return NextResponse.redirect(buildAuthorizationUrl({ connectorId, redirectUri, state: auth.state, codeChallenge: auth.codeChallenge, scopes: auth.scopes, loginHint, selectAccount: requestUrl.searchParams.get("account") === "add" }));
   }
-  catch { return NextResponse.redirect(new URL("/settings/connections?error=oauth_start_failed", request.url)); }
+  catch { return NextResponse.redirect(getSiteUrl("/settings/connections?error=oauth_start_failed", new URL(request.url).origin)); }
 }
