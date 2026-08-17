@@ -15,7 +15,7 @@ export function createPkcePair() {
 }
 
 export function safeOAuthReturnPath(value: string | null | undefined): string {
-  if (!value || !/^\/[A-Za-z0-9/_?=&.%-]*$/.test(value) || value.startsWith("//")) return "/settings/connections";
+  if (!value || !/^\/[A-Za-z0-9/_?=&.%-]*$/.test(value) || value.startsWith("//")) return "/connections";
   return value;
 }
 

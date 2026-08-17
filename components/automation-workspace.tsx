@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowRight,
   ArrowUp,
   Bot,
   Check,
@@ -21,6 +23,7 @@ import {
   LockKeyhole,
   Network,
   Play,
+  PlugZap,
   RotateCcw,
   Send,
   SlidersHorizontal,
@@ -93,6 +96,13 @@ type AutomationWorkspaceProps = {
   initialDraftReady?: boolean;
   initialPublished?: boolean;
   initialSetupConfig?: InputValues;
+  initialConnections?: Array<{
+    id: string;
+    provider: "google" | "slack" | "notion";
+    providerName: string;
+    accountLabel: string;
+    status: "connected" | "expired" | "error";
+  }>;
 };
 
 const examples = [
@@ -241,6 +251,55 @@ function EmptyCanvas({ draftReady = false }: { draftReady?: boolean }) {
         </p>
       </div>
     </div>
+  );
+}
+
+function DashboardConnections({
+  connections,
+}: {
+  connections: NonNullable<AutomationWorkspaceProps["initialConnections"]>;
+}) {
+  const visible = connections
+    .filter((connection) => connection.status !== "connected")
+    .concat(connections.filter((connection) => connection.status === "connected"))
+    .slice(0, 3);
+
+  if (connections.length === 0) {
+    return (
+      <section aria-labelledby="dashboard-connections-title" className="mt-4 max-w-2xl rounded-2xl border border-[#ded6ca] bg-[#fffdfa] p-4 shadow-sm">
+        <div className="flex items-start gap-3">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-[#ead89e] bg-[#fff7dc] text-[#8a6200]"><PlugZap className="size-4" aria-hidden="true" /></span>
+          <div className="min-w-0 flex-1">
+            <h2 id="dashboard-connections-title" className="text-[12px] font-semibold text-slate-900">Connect the tools you already use.</h2>
+            <p className="mt-1 text-[10px] leading-5 text-slate-500">CrazyLoops can build better loops once it knows where work should happen.</p>
+            <Link href="/connections" className="mt-2 inline-flex min-h-10 items-center text-[10px] font-semibold text-[#765600] hover:text-[#9a7007]">Connect an app <ArrowRight className="ml-1 size-3" aria-hidden="true" /></Link>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section aria-labelledby="dashboard-connections-title" className="mt-4 max-w-2xl rounded-2xl border border-[#ded6ca] bg-[#fffdfa] p-4 shadow-sm">
+      <div className="flex items-center justify-between gap-3">
+        <h2 id="dashboard-connections-title" className="text-[9px] font-bold uppercase tracking-[0.14em] text-slate-400">Connected apps</h2>
+        <Link href="/connections" className="inline-flex min-h-8 items-center text-[9px] font-semibold text-[#765600] hover:text-[#9a7007]">Manage connections <ArrowRight className="ml-1 size-3" aria-hidden="true" /></Link>
+      </div>
+      <div className="mt-2 divide-y divide-[#eee8de]">
+        {visible.map((connection) => (
+          <div key={connection.id} className="flex min-w-0 items-center gap-3 py-2 first:pt-1 last:pb-0">
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[#f8f4ec] text-[10px] font-bold text-slate-700" aria-hidden="true">{connection.providerName.slice(0, 1)}</span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[10px] font-semibold text-slate-800">{connection.providerName}</span>
+              <span className="block truncate text-[9px] text-slate-500">{connection.accountLabel}</span>
+            </span>
+            <span className={`shrink-0 text-[9px] font-semibold ${connection.status === "connected" ? "text-emerald-700" : "text-amber-700"}`}>
+              {connection.status === "connected" ? "● Connected" : "● Reconnect required"}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -509,16 +568,25 @@ function Inspector({
                   ))}
                 </select>
               ) : (
-                <a
-                  href={`/api/connectors/oauth/${step.config.connector.connectorId}/start?operation=${step.config.connector.operationKey}&return=${encodeURIComponent(`/dashboard/projects/${workflowId}`)}`}
-                  className="mt-3 flex h-10 items-center justify-center rounded-lg border border-[#d7aa2f] bg-white text-[10px] font-semibold text-[#6f5100]"
-                >
-                  Connect {step.config.connector.connectorId.startsWith("google_")
-                    ? "Google"
-                    : step.config.connector.connectorId === "slack"
-                      ? "Slack"
-                      : "Notion"}
-                </a>
+                <div className="mt-3">
+                  <p className="text-[10px] font-semibold text-slate-800">
+                    {step.config.connector.connectorId.startsWith("google_")
+                      ? "Google"
+                      : step.config.connector.connectorId === "slack"
+                        ? "Slack"
+                        : "Notion"} needs to be connected.
+                  </p>
+                  <a
+                    href={`/api/connectors/oauth/${step.config.connector.connectorId}/start?operation=${step.config.connector.operationKey}&return=${encodeURIComponent(`/dashboard/projects/${workflowId}`)}`}
+                    className="mt-2 flex min-h-11 items-center justify-center rounded-lg border border-[#d7aa2f] bg-white text-[10px] font-semibold text-[#6f5100] hover:bg-[#fffaf0]"
+                  >
+                    Connect {step.config.connector.connectorId.startsWith("google_")
+                      ? "Google"
+                      : step.config.connector.connectorId === "slack"
+                        ? "Slack"
+                        : "Notion"} <ArrowRight className="ml-1.5 size-3" aria-hidden="true" />
+                  </a>
+                </div>
               )}
               {connectorConnectionMessage && (
                 <>
@@ -1104,6 +1172,7 @@ export function AutomationWorkspace({
   initialDraftReady = false,
   initialPublished = false,
   initialSetupConfig = {},
+  initialConnections = [],
 }: AutomationWorkspaceProps) {
   const router = useRouter();
   const initialSteps = initialWorkflow
@@ -1635,7 +1704,8 @@ export function AutomationWorkspace({
         <section className="flex min-h-0 flex-1 flex-col bg-[#f8f5ef]">
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-6">
             {!workflow && !isBuilding && !error && (
-              <div className="flex items-start gap-3">
+              <div>
+                <div className="flex items-start gap-3">
                 <span className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd]">
                   <Bot className="size-4 text-[#8a6200]" />
                 </span>
@@ -1643,6 +1713,8 @@ export function AutomationWorkspace({
                   Describe an outcome below and I’ll turn it into connected,
                   configurable steps.
                 </div>
+                </div>
+                <DashboardConnections connections={initialConnections} />
               </div>
             )}
             {workflow && (

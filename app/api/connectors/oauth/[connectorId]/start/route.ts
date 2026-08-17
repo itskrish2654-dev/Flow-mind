@@ -11,7 +11,7 @@ import { getSiteOrigin, getSiteUrl } from "@/lib/site-origin";
 
 export async function GET(request: Request, { params }: { params: Promise<{ connectorId: string }> }) {
   const { connectorId } = await params; const supabase = await createClient(); const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.redirect(getSiteUrl("/login?next=/settings/connections", new URL(request.url).origin));
+  if (!user) return NextResponse.redirect(getSiteUrl("/login?next=/connections", new URL(request.url).origin));
   const connector = getConnector(connectorId);
   if (!connector || connector.manifest.auth.type !== "oauth2" || connector.manifest.status === "COMING_SOON" || (connector.manifest.status === "INTERNAL" && process.env.NODE_ENV === "production")) return NextResponse.json({ error: "Connector not found." }, { status: 404 });
   try {
@@ -36,5 +36,5 @@ export async function GET(request: Request, { params }: { params: Promise<{ conn
     const redirectUri = new URL(`/api/connectors/oauth/${connectorId}/callback`, getSiteOrigin(new URL(request.url).origin)).toString();
     return NextResponse.redirect(buildAuthorizationUrl({ connectorId, redirectUri, state: auth.state, codeChallenge: auth.codeChallenge, scopes: auth.scopes, loginHint, selectAccount: requestUrl.searchParams.get("account") === "add" }));
   }
-  catch { return NextResponse.redirect(getSiteUrl("/settings/connections?error=oauth_start_failed", new URL(request.url).origin)); }
+  catch { return NextResponse.redirect(getSiteUrl("/connections?error=oauth_start_failed", new URL(request.url).origin)); }
 }

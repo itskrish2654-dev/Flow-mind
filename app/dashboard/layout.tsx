@@ -12,7 +12,9 @@ import {
   Plus,
   Gauge,
   LifeBuoy,
+  LayoutDashboard,
   Settings,
+  PlugZap,
   Trash2,
   Workflow,
   X,
@@ -217,6 +219,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="border-b border-[#e4ddd2] px-4 pb-4">
             <p className="text-lg font-bold text-[#272536]">CrazyLoops</p>
             <button type="button" onClick={newAutomation} className="mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#d7aa2f] bg-[#fff7dc] px-4 text-sm font-semibold text-[#272536]"><Plus className="size-4" />Create workflow</button>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <Link href="/dashboard" onClick={() => setMobileNavOpen(false)} className="flex min-h-11 items-center justify-center gap-2 rounded-xl text-sm font-semibold text-slate-700 hover:bg-[#f8f4ec]"><LayoutDashboard className="size-4" />Dashboard</Link>
+              <Link href="/connections" onClick={() => setMobileNavOpen(false)} className="flex min-h-11 items-center justify-center gap-2 rounded-xl text-sm font-semibold text-slate-700 hover:bg-[#fff7dc]"><PlugZap className="size-4 text-[#8a6200]" />Connections</Link>
+            </div>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
             <p className="px-2 pb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">My automations</p>
@@ -246,6 +252,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <button type="button" onClick={newAutomation} className="group flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-[#dcd4c8] bg-transparent text-[13px] font-semibold text-[#272536] transition hover:border-[#d7aa2f] hover:bg-[#fff8e3]">
             <span className="flex size-5 items-center justify-center rounded-md bg-[#fff0b9] text-[#8a6200] transition group-hover:bg-[#f1c94b] group-hover:text-[#272536]"><Plus className="size-3.5" /></span> New Automation
           </button>
+          <nav aria-label="Workspace" className="mt-3 grid grid-cols-2 gap-1">
+            <Link href="/dashboard" className={`flex h-9 items-center justify-center gap-1.5 rounded-lg text-[10px] font-semibold transition ${pathname === "/dashboard" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-500 hover:bg-[#f8f4ec] hover:text-slate-800"}`}>
+              <LayoutDashboard className="size-3.5" />Dashboard
+            </Link>
+            <Link href="/connections" className="flex h-9 items-center justify-center gap-1.5 rounded-lg text-[10px] font-semibold text-slate-500 transition hover:bg-[#fff7dc] hover:text-[#725300]">
+              <PlugZap className="size-3.5" />Connections
+            </Link>
+          </nav>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">

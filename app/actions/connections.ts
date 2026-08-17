@@ -22,8 +22,14 @@ export async function disconnectConnector(connectionId: string) {
   if (!parsed.success) return { ok: false as const, error: "Connection not found." };
   const supabase = await createClient(); const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { ok: false as const, error: "Unauthorized" };
-  try { await revokeConnection(user.id, parsed.data); revalidatePath("/settings/connections"); return { ok: true as const }; }
-  catch (error) { return { ok: false as const, error: error instanceof Error ? error.message : "Connection could not be disconnected." }; }
+  try {
+    await revokeConnection(user.id, parsed.data);
+    revalidatePath("/connections");
+    revalidatePath("/dashboard");
+    return { ok: true as const };
+  } catch {
+    return { ok: false as const, error: "Connection could not be disconnected." };
+  }
 }
 
 export async function getGoogleConnectionOptions() {
