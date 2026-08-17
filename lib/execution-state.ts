@@ -3,6 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { getSafeAiProviderDiagnostics } from "@/lib/ai-execution-core";
 import { resolveStepCapabilityId } from "@/lib/capability-registry";
 import { classifyExecutionError } from "@/lib/execution-reliability";
 import { captureOperationalEvent, trackProductEvent } from "@/lib/observability";
@@ -115,6 +116,7 @@ export function createExecutionStateHooks(
       },
     ) => {
       const classification = result.error ? classifyExecutionError(result.error) : null;
+      const aiDiagnostics = getSafeAiProviderDiagnostics(result.error);
       const { error } = await admin
         .from("workflow_execution_steps")
         .update({
@@ -124,8 +126,9 @@ export function createExecutionStateHooks(
             message: result.message,
             capabilityId: resolveStepCapabilityId(step) ?? "unknown",
             ...(result.metadata ?? {}),
+            ...(aiDiagnostics ? { aiProvider: aiDiagnostics } : {}),
           } as Json,
-          provider_reference_id: result.providerReferenceId ?? null,
+          provider_reference_id: result.providerReferenceId ?? aiDiagnostics?.requestId ?? null,
           error_category: classification?.category ?? null,
           retryable: result.status !== "succeeded" ? (result.retryable ?? classification?.retryable ?? false) : false,
           updated_at: new Date().toISOString(),
@@ -148,11 +151,14 @@ export function createExecutionStateHooks(
           durationMs: Math.max(0, Date.now() - (stepStartedAt.get(step.id) ?? Date.now())),
           status: result.status,
           errorCategory: classification?.category ?? null,
-          metadata: { retryable: result.retryable ?? classification?.retryable ?? false },
+          metadata: {
+            retryable: result.retryable ?? classification?.retryable ?? false,
+            ...(aiDiagnostics ? { aiProvider: aiDiagnostics as unknown as Json } : {}),
+          },
         }),
-        ...(failed && (capability === "ai_transform" || capability === "generate_pdf")
+        ...(failed && (capability === "ai_text_transform" || capability === "generate_pdf")
           ? [trackProductEvent({
-              event: capability === "ai_transform" ? "ai_failed" : "pdf_failed",
+              event: capability === "ai_text_transform" ? "ai_failed" : "pdf_failed",
               userId: context?.userId,
               workflowId: context?.workflowId,
               properties: { capability, failure_category: classification?.category ?? "step_failure" },

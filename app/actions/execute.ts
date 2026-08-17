@@ -245,7 +245,7 @@ export async function runTestWorkflow(
                 "ai_input_chars",
                 input.instruction.length + input.content.length,
               );
-              const result = await withBoundedRetry(() => executeAiText(input), { maxAttempts: 2 });
+              const result = await executeAiText(input);
               await enforceUsageQuota(
                 auth.user.id,
                 "ai_output_tokens",
@@ -428,7 +428,7 @@ export async function retryWorkflowExecution(executionId: string): Promise<TestW
 
   const { data: existing, error: existingError } = await admin
     .from("workflow_executions")
-    .select("id, workflow_id, workflow_version_id, idempotency_key, input_data, output_data, status")
+    .select("id, workflow_id, workflow_version_id, idempotency_key, input_data, output_data, status, trigger_type")
     .eq("id", parsedId.data)
     .eq("user_id", auth.user.id)
     .maybeSingle();
@@ -445,8 +445,21 @@ export async function retryWorkflowExecution(executionId: string): Promise<TestW
   if (!workflow.success) return { ok: false, error: "The immutable workflow snapshot is unavailable." };
 
   const { data: stepRows } = await admin.from("workflow_execution_steps")
-    .select("workflow_step_id, status, sanitized_output_metadata")
+    .select("workflow_step_id, status, retryable, completed_at, sanitized_output_metadata")
     .eq("execution_id", existing.id);
+  const retryNotBefore = (stepRows ?? []).reduce((latest, step) => {
+    if (step.status !== "failed" || step.retryable !== true || !step.completed_at) return latest;
+    const metadata = step.sanitized_output_metadata;
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return latest;
+    const aiProvider = metadata.aiProvider;
+    if (!aiProvider || typeof aiProvider !== "object" || Array.isArray(aiProvider)) return latest;
+    const delayMs = typeof aiProvider.retryAfterMs === "number" ? aiProvider.retryAfterMs : 0;
+    return Math.max(latest, Date.parse(step.completed_at) + Math.max(0, delayMs));
+  }, 0);
+  if (retryNotBefore > Date.now()) {
+    const seconds = Math.max(1, Math.ceil((retryNotBefore - Date.now()) / 1_000));
+    return { ok: false, error: `AI is temporarily busy. Retry this step in ${seconds} seconds.` };
+  }
   const completedStepIds = new Set(
     (stepRows ?? []).filter((step) => step.status === "succeeded").map((step) => step.workflow_step_id),
   );
@@ -499,7 +512,11 @@ export async function retryWorkflowExecution(executionId: string): Promise<TestW
           workflowName: identity.name,
           steps: workflow.data.steps,
           inputValues,
-          mode: "test",
+          mode: existing.trigger_type === "manual_test"
+            ? "test"
+            : existing.trigger_type === "scheduled"
+              ? "scheduled"
+              : "public-form",
           completedStepIds,
           resumeState: { aiResult: priorAiResult, documents: priorDocuments, conditionDecisions },
           idempotencyKey: existing.idempotency_key,
@@ -511,7 +528,7 @@ export async function retryWorkflowExecution(executionId: string): Promise<TestW
           executeAi: async (input) => {
             await enforceRateLimit("ai-execution", [auth.user.id], SECURITY_LIMITS.ai);
             await enforceUsageQuota(auth.user.id, "ai_generations");
-            const result = await withBoundedRetry(() => executeAiText(input), { maxAttempts: 2 });
+            const result = await executeAiText(input);
             await enforceUsageQuota(auth.user.id, "ai_input_chars", input.instruction.length + input.content.length);
             await enforceUsageQuota(auth.user.id, "ai_output_tokens", result.metadata.outputTokens ?? Math.max(1, Math.ceil(result.text.length / 4)));
             return result;

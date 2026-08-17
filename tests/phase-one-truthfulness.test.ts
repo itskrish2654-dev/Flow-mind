@@ -122,7 +122,7 @@ test("3. AI execution enforces a timeout", async () => {
   await assert.rejects(
     () => executor({ instruction: "Summarize", content: "Input" }),
     (error: unknown) =>
-      error instanceof AiExecutionError && error.code === "AI_TIMEOUT",
+      error instanceof AiExecutionError && error.code === "AI_PROVIDER_TIMEOUT",
   );
 });
 

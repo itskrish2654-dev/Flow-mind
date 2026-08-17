@@ -15,7 +15,7 @@ No secret value belongs in source control, browser storage, HTML, RSC payloads, 
 | `FLOWMIND_RATE_LIMIT_SECRET` | Server secret | Yes | Yes | Yes | Yes | HMAC identities for rate limits and telemetry |
 | `CRON_SECRET` | Server secret | Yes | Yes | Yes if cron enabled | Yes | Authorizes maintenance cron |
 | `SCHEDULE_DISPATCH_SECRET` | Server secret | Yes for scheduled workflows | Yes | Yes if schedules are tested | Yes | Authorizes the Supabase Cron schedule dispatcher; the same value is stored in Supabase Vault |
-| `FLOWMIND_AI_EXECUTION_MODEL` | Server config | Optional | Recommended | Recommended | Optional | Explicit Groq model; documented default applies |
+| `FLOWMIND_AI_EXECUTION_MODEL` | Server config | Optional | Recommended | Recommended | Optional | Explicit Groq model; defaults to `openai/gpt-oss-20b` |
 | `FLOWMIND_AI_EXECUTION_TIMEOUT_MS` | Server config | Optional | Recommended | Recommended | Optional | AI request timeout |
 | `FLOWMIND_AI_MAX_INPUT_CHARS` | Server config | Optional | Recommended | Recommended | Optional | AI input bound |
 | `FLOWMIND_AI_MAX_OUTPUT_TOKENS` | Server config | Optional | Recommended | Recommended | Optional | AI output bound |

@@ -8,6 +8,7 @@ import {
   saveDocumentTemplate,
   saveWorkflowCustomization,
 } from "@/app/actions/workflow";
+import { AI_EXECUTION_MODEL } from "@/lib/ai-execution";
 import { getAuthenticatedContext } from "@/lib/auth";
 import {
   SECURITY_LIMITS,
@@ -198,7 +199,7 @@ export async function customizeFormWithAi(
       request.data.workflowId,
       request.data.instruction.length + JSON.stringify(workflow.publicForm).length,
       () => generateText({
-      model: groq("llama-3.3-70b-versatile"),
+      model: groq(AI_EXECUTION_MODEL),
       output: Output.object({
         name: "customized_form",
         description: "The complete updated hosted form configuration.",
@@ -258,7 +259,7 @@ export async function customizeDataTableWithAi(
       request.data.workflowId,
       request.data.instruction.length + JSON.stringify(available).length,
       () => generateText({
-      model: groq("llama-3.3-70b-versatile"),
+      model: groq(AI_EXECUTION_MODEL),
       output: Output.object({
         name: "customized_data_table",
         description: "The selected and renamed execution data columns.",
@@ -338,7 +339,7 @@ export async function customizeDocumentWithAi(
       request.data.workflowId,
       request.data.instruction.length + currentTemplate.length,
       () => generateText({
-      model: groq("llama-3.3-70b-versatile"),
+      model: groq(AI_EXECUTION_MODEL),
       system: `Create or revise a polished Markdown document template from a plain-language request.
 Return only the complete Markdown template, with no code fence and no explanation.
 You may use only the provided placeholders. Insert placeholders where real submission

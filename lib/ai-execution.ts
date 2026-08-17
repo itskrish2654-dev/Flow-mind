@@ -6,8 +6,11 @@ import { generateText } from "ai";
 import {
   AiExecutionError,
   createAiTextExecutor,
+  getSafeAiProviderDiagnostics,
   type AiTextExecutor,
 } from "@/lib/ai-execution-core";
+import { withBoundedRetry } from "@/lib/execution-reliability";
+import { securityLog } from "@/lib/security/redaction";
 
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
@@ -16,7 +19,7 @@ function positiveInteger(value: string | undefined, fallback: number): number {
 
 export const AI_EXECUTION_PROVIDER = "groq";
 export const AI_EXECUTION_MODEL =
-  process.env.FLOWMIND_AI_EXECUTION_MODEL ?? "llama-3.3-70b-versatile";
+  process.env.FLOWMIND_AI_EXECUTION_MODEL ?? "openai/gpt-oss-20b";
 export const AI_EXECUTION_TIMEOUT_MS = positiveInteger(
   process.env.FLOWMIND_AI_EXECUTION_TIMEOUT_MS,
   20_000,
@@ -39,8 +42,8 @@ const configuredExecutor = createAiTextExecutor({
   runModel: async ({ instruction, content, signal, maxOutputTokens }) => {
     if (!process.env.GROQ_API_KEY) {
       throw new AiExecutionError(
-        "AI execution is not configured on the server.",
-        "AI_NOT_CONFIGURED",
+        "The AI service needs attention from CrazyLoops. Your workflow has been stopped safely.",
+        "AI_AUTHENTICATION_FAILED",
       );
     }
 
@@ -71,9 +74,25 @@ const configuredExecutor = createAiTextExecutor({
 export const executeAiText: AiTextExecutor = async (input) => {
   if (!process.env.GROQ_API_KEY) {
     throw new AiExecutionError(
-      "AI execution is not configured on the server.",
-      "AI_NOT_CONFIGURED",
+      "The AI service needs attention from CrazyLoops. Your workflow has been stopped safely.",
+      "AI_AUTHENTICATION_FAILED",
     );
   }
-  return configuredExecutor(input);
+  try {
+    return await withBoundedRetry(() => configuredExecutor(input), {
+      maxAttempts: 2,
+      baseDelayMs: 250,
+      maxDelayMs: 5_000,
+    });
+  } catch (error) {
+    const diagnostics = getSafeAiProviderDiagnostics(error);
+    securityLog("AI provider request failed", {
+      diagnostics: diagnostics ?? {
+        provider: AI_EXECUTION_PROVIDER,
+        model: AI_EXECUTION_MODEL,
+        category: error instanceof AiExecutionError ? error.code : "AI_PROVIDER_FAILED",
+      },
+    });
+    throw error;
+  }
 };

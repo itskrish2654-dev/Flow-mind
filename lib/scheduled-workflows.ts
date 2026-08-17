@@ -83,7 +83,7 @@ async function executeClaimedSchedule(input: {
           await enforceRateLimit("ai-execution", [input.userId], SECURITY_LIMITS.ai);
           await enforceUsageQuota(input.userId, "ai_generations");
           await enforceUsageQuota(input.userId, "ai_input_chars", request.instruction.length + request.content.length);
-          const ai = await withBoundedRetry(() => executeAiText(request), { maxAttempts: 2 });
+          const ai = await executeAiText(request);
           await enforceUsageQuota(input.userId, "ai_output_tokens", ai.metadata.outputTokens ?? Math.max(1, Math.ceil(ai.text.length / 4)));
           return ai;
         },

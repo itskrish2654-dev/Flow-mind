@@ -1,3 +1,5 @@
+import { AiExecutionError } from "@/lib/ai-execution-core";
+
 export type ExecutionErrorCategory =
   | "timeout"
   | "provider_rate_limit"
@@ -11,15 +13,35 @@ export type ExecutionErrorCategory =
   | "invalid_input"
   | "invalid_destination"
   | "ambiguous_external_result"
+  | "AI_AUTHENTICATION_FAILED"
+  | "AI_PERMISSION_DENIED"
+  | "AI_INVALID_REQUEST"
+  | "AI_INPUT_TOO_LARGE"
+  | "AI_RATE_LIMITED"
+  | "AI_CAPACITY_EXCEEDED"
+  | "AI_PROVIDER_UNAVAILABLE"
+  | "AI_PROVIDER_TIMEOUT"
+  | "AI_PROVIDER_FAILED"
   | "unknown";
 
 export type ClassifiedExecutionError = {
   category: ExecutionErrorCategory;
   retryable: boolean;
   safeMessage: string;
+  retryAfterMs?: number;
 };
 
 export function classifyExecutionError(error: unknown): ClassifiedExecutionError {
+  if (error instanceof AiExecutionError) {
+    return {
+      category: error.code,
+      retryable: error.retryable,
+      safeMessage: error.message,
+      ...(error.diagnostics?.retryAfterMs !== null && error.diagnostics?.retryAfterMs !== undefined
+        ? { retryAfterMs: error.diagnostics.retryAfterMs }
+        : {}),
+    };
+  }
   const message = error instanceof Error ? error.message : String(error);
   const normalized = message.toLowerCase();
 
@@ -59,10 +81,16 @@ export function classifyExecutionError(error: unknown): ClassifiedExecutionError
 
 export async function withBoundedRetry<T>(
   operation: () => Promise<T>,
-  options: { maxAttempts?: number; baseDelayMs?: number; classify?: typeof classifyExecutionError } = {},
+  options: {
+    maxAttempts?: number;
+    baseDelayMs?: number;
+    maxDelayMs?: number;
+    classify?: typeof classifyExecutionError;
+  } = {},
 ): Promise<T> {
   const maxAttempts = Math.max(1, Math.min(options.maxAttempts ?? 2, 3));
   const baseDelayMs = Math.max(0, Math.min(options.baseDelayMs ?? 150, 2_000));
+  const maxDelayMs = Math.max(0, Math.min(options.maxDelayMs ?? 5_000, 10_000));
   const classify = options.classify ?? classifyExecutionError;
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -70,8 +98,16 @@ export async function withBoundedRetry<T>(
       return await operation();
     } catch (error) {
       lastError = error;
-      if (!classify(error).retryable || attempt === maxAttempts) throw error;
-      await new Promise((resolve) => setTimeout(resolve, baseDelayMs * 2 ** (attempt - 1)));
+      const classification = classify(error);
+      if (!classification.retryable || attempt === maxAttempts) throw error;
+      const delayMs = Math.max(
+        baseDelayMs * 2 ** (attempt - 1),
+        classification.retryAfterMs ?? 0,
+      );
+      // A long provider cooldown should be honored by a later durable retry,
+      // not by keeping a serverless request open or retrying too soon.
+      if (delayMs > maxDelayMs) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
   throw lastError;
