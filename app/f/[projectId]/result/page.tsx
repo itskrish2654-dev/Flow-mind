@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { CheckCircle2, CircleAlert, RotateCcw, Zap } from "lucide-react";
+import { CheckCircle2, CircleAlert, House, RotateCcw, Zap } from "lucide-react";
+
+import { ResultNavigation } from "./result-navigation";
 
 export const metadata: Metadata = {
   title: "Submission Result",
@@ -89,6 +91,7 @@ export default async function PublicFormResultPage({
   const [{ projectId }, query] = await Promise.all([params, searchParams]);
   const outcome = outcomes[query.outcome ?? ""] ?? outcomes.workflow_failed;
   const Icon = outcome.success ? CheckCircle2 : CircleAlert;
+  const formHref = `/f/${encodeURIComponent(projectId)}`;
 
   return (
     <main className="dashboard-theme relative h-dvh overflow-y-auto bg-[#f7f4ee] px-4 py-8 sm:px-6 sm:py-12">
@@ -112,14 +115,23 @@ export default async function PublicFormResultPage({
             {outcome.message}
           </p>
           {outcome.success ? (
-            <p className="mt-8 text-[11px] text-slate-500">You can safely close this page.</p>
+            <ResultNavigation formHref={formHref} />
           ) : (
-            <Link
-              href={`/f/${encodeURIComponent(projectId)}`}
-              className="mx-auto mt-8 inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-[#d8cfae] bg-[#fff8dc] px-4 text-sm font-semibold text-[#725300] transition hover:bg-[#fff2bd]"
-            >
-              <RotateCcw className="size-4" /> Try again
-            </Link>
+            <div className="mt-8 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
+              <Link
+                href={formHref}
+                replace
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#d8cfae] bg-[#fff8dc] px-4 text-sm font-semibold text-[#725300] transition hover:bg-[#fff2bd] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9a7300]"
+              >
+                <RotateCcw className="size-4" /> Try again
+              </Link>
+              <Link
+                href="/"
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#ddd5c9] bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-[#f8f4ec] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500"
+              >
+                <House className="size-4" /> CrazyLoops home
+              </Link>
+            </div>
           )}
         </section>
       </div>
