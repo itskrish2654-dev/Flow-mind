@@ -181,7 +181,8 @@ test("8A.1 TEST and LIVE share one provider executor and the retired model is go
   }
   assert.match(customize, /AI_EXECUTION_MODEL/);
   assert.match(envExample, /FLOWMIND_AI_EXECUTION_MODEL=openai\/gpt-oss-20b/);
-  assert.doesNotMatch([ai, customize, envExample].join("\n"), /llama-3\.3-70b-versatile/);
+  assert.match(ai, /configuredAiExecutionModel === "llama-3\.3-70b-versatile"[\s\S]*DEFAULT_AI_EXECUTION_MODEL/);
+  assert.doesNotMatch([customize, envExample].join("\n"), /llama-3\.3-70b-versatile/);
 });
 
 test("8A.1 retry persists safe diagnostics and preserves completed steps", async () => {

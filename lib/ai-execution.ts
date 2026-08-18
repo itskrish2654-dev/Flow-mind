@@ -18,8 +18,12 @@ function positiveInteger(value: string | undefined, fallback: number): number {
 }
 
 export const AI_EXECUTION_PROVIDER = "groq";
+const DEFAULT_AI_EXECUTION_MODEL = "openai/gpt-oss-20b";
+const configuredAiExecutionModel = process.env.FLOWMIND_AI_EXECUTION_MODEL?.trim();
 export const AI_EXECUTION_MODEL =
-  process.env.FLOWMIND_AI_EXECUTION_MODEL ?? "openai/gpt-oss-20b";
+  !configuredAiExecutionModel || configuredAiExecutionModel === "llama-3.3-70b-versatile"
+    ? DEFAULT_AI_EXECUTION_MODEL
+    : configuredAiExecutionModel;
 export const AI_EXECUTION_TIMEOUT_MS = positiveInteger(
   process.env.FLOWMIND_AI_EXECUTION_TIMEOUT_MS,
   20_000,
