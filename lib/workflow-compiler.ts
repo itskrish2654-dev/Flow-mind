@@ -29,7 +29,7 @@ function formatterTitle(transformation: PlannedCapability): string {
     trim: "Trim", uppercase: "Make uppercase", lowercase: "Make lowercase", title_case: "Use title case",
     replace: "Replace text in", split: "Split", join: "Join", prepend: "Prepend to", append: "Append to",
     add: "Add to", subtract: "Subtract from", multiply: "Multiply", divide: "Divide", round: "Round",
-    format_date: "Format date", add_duration: "Add duration to", subtract_duration: "Subtract duration from",
+    format_date: "Format", add_duration: "Add duration to", subtract_duration: "Subtract duration from",
     convert_timezone: "Convert timezone for", default_value: "Use fallback for", first_non_empty: "Choose first available",
   };
   return `${label[formatter.operation]} ${source}`.replace(/\s+/g, " ");

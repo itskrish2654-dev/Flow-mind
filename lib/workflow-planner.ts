@@ -247,6 +247,14 @@ function normalizeFieldPath(value: string): string {
 }
 
 function parseCondition(prompt: string): PlannedCondition | null {
+  const firstIf = prompt.search(/\bif\b/i);
+  if (
+    firstIf >= 0 &&
+    /^if\s+(?:the\s+)?[a-z][a-z0-9 _-]{0,40}?\s+(?:(?:is\s+)?empty|is\s+missing),?\s+use\s+(?:["'][^"']{0,100}["']|Unknown\b|N\/A\b|None\b|true\b|false\b|0\b|(?:the\s+)?[a-z][a-z0-9 _-]{0,30}?(?:\s+instead)?)(?=[.,;]|$)/i.test(prompt.slice(firstIf))
+  ) {
+    // This is a deterministic Formatter fallback, not a conditional branch.
+    return null;
+  }
   const clause = prompt.match(/\bif\s+(.+?)(?=\b(?:then|otherwise|else|notify|send|post|save|store|add|create|update)\b|[.,]|$)/i)?.[1]?.trim();
   if (!clause) return null;
   const comparison = clause.match(/^(.+?)\s+(does not contain|doesn't contain|does not equal|is not equal to|is greater than|greater than|is less than|less than|contains|equals|is equal to|exists|does not exist|is true|is false|is)\s*(.*)$/i);

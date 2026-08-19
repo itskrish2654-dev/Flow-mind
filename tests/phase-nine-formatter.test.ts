@@ -122,6 +122,22 @@ test("9B-8a. sequential operations on one field consume the prior formatter outp
   assert.equal(formatterSteps[1].config?.formatter?.source.stepId, formatterSteps[0].id);
 });
 
+test("9B-8b. fallback language remains a formatter and the requested internal destination", () => {
+  const prompt = "When an incoming webhook arrives, trim the name then make the name title case, round the amount to 2 decimal places, format the date as DD/MM/YYYY, if company is empty, use Unknown, and store it in CrazyLoops.";
+  const plan = planWorkflow(prompt);
+  assert.equal(plan.status, "READY_TO_COMPILE");
+  if (plan.status !== "READY_TO_COMPILE") return;
+  assert.equal(plan.condition, null);
+  assert.equal(plan.destination?.capabilityId, "flowmind_data_store");
+  assert.equal(plan.transformations.filter((item) => item.capabilityId === "formatter.transform").length, 5);
+  const workflow = compileReadyPlan(prompt, plan);
+  assert.deepEqual(
+    workflow.steps.map((step) => step.capabilityId),
+    ["generic_webhook_trigger", "formatter.transform", "formatter.transform", "formatter.transform", "formatter.transform", "formatter.transform", "flowmind_data_store"],
+  );
+  assert.equal(workflow.steps[4]?.title, "Format date");
+});
+
 function runtimeSteps(): CompiledWorkflow["steps"] {
   return [
     { id: "trigger", type: "webhook_trigger", capabilityId: "generic_webhook_trigger", title: "Incoming webhook", description: "Receives JSON", config: { connector: { connectorId: "flowmind_webhook", operationKind: "trigger", operationKey: "event_received", operationVersion: 1, mappings: [] } } },
