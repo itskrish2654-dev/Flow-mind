@@ -110,6 +110,13 @@ a {
   outline-offset: 3px;
 }
 
+/* The workflow composer exposes focus on its rounded container. */
+.workflow-composer textarea:focus-visible {
+  outline: none;
+  outline-offset: 0;
+  box-shadow: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

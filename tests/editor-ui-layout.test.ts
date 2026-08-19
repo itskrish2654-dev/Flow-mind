@@ -12,6 +12,7 @@ test("workflow composer has one outer focus boundary", async () => {
 
   assert.match(source, /focus-within:border-\[#d7aa2f\]/);
   assert.match(source, /focus-within:shadow-\[0_0_0_3px_rgba\(215,170,47,\.14\)\]/);
+  assert.match(source, /workflow-composer flex items-center/);
   assert.match(source, /appearance-none border-0 bg-transparent/);
   assert.match(source, /focus:border-0 focus:outline-none focus:ring-0/);
   assert.match(source, /focus-visible:outline-none focus-visible:ring-0/);

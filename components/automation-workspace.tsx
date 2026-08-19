@@ -1783,7 +1783,7 @@ export function AutomationWorkspace({
           </div>
 
           <div className="shrink-0 border-t border-[#eee8de] bg-[#fffdfa]/95 px-4 pb-4 pt-3 sm:px-5">
-            <div className="flex items-center gap-3 rounded-2xl border border-[#ded6ca] bg-white px-3.5 py-2.5 shadow-[0_8px_30px_rgba(39,37,54,.05)] transition-[border-color,box-shadow] focus-within:border-[#d7aa2f] focus-within:shadow-[0_0_0_3px_rgba(215,170,47,.14)]">
+            <div className="workflow-composer flex items-center gap-3 rounded-2xl border border-[#ded6ca] bg-white px-3.5 py-2.5 shadow-[0_8px_30px_rgba(39,37,54,.05)] transition-[border-color,box-shadow] focus-within:border-[#d7aa2f] focus-within:shadow-[0_0_0_3px_rgba(215,170,47,.14)]">
               <textarea
                 value={prompt}
                 onChange={(event) => {
