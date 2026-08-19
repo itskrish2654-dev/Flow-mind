@@ -195,7 +195,7 @@ function WorkflowNode({
     <button
       type="button"
       onClick={onSelect}
-      className={`w-[185px] shrink-0 rounded-xl border bg-[#fffdfa] p-3.5 text-left shadow-[0_14px_34px_rgba(39,37,54,.08)] transition hover:-translate-y-0.5 hover:border-[#d7aa2f] ${selected ? "border-[#d7aa2f] ring-4 ring-[#f4e5ad]" : "border-[#e4ddd2]"}`}
+      className={`w-full max-w-[360px] shrink-0 rounded-xl border bg-[#fffdfa] p-3.5 text-left shadow-[0_14px_34px_rgba(39,37,54,.08)] transition hover:-translate-y-0.5 hover:border-[#d7aa2f] ${selected ? "border-[#d7aa2f] ring-2 ring-[#f4e5ad]" : "border-[#e4ddd2]"}`}
     >
       <span className="flex items-center gap-2.5">
         <span
@@ -320,7 +320,7 @@ function Inspector({
   connectorEndpoint,
   onPublicationChange,
   onSaveWebhook,
-  className = "hidden w-[292px] shrink-0 flex-col border-l border-[#e4ddd2] bg-[#fffdfa] xl:flex",
+  className = "hidden w-[288px] shrink-0 flex-col border-l border-[#e4ddd2] bg-[#fffdfa] xl:flex 2xl:w-[320px]",
 }: {
   workflow: CompiledWorkflow | null;
   step: Step | null;
@@ -1643,198 +1643,147 @@ export function AutomationWorkspace({
           </div>
         </header>
 
-        <section className="workflow-canvas relative h-[44%] min-h-[260px] shrink-0 overflow-hidden border-b border-[#e4ddd2]">
-          {!workflow ? (
-            <EmptyCanvas draftReady={initialDraftReady} />
-          ) : (
-            <div className="h-full overflow-y-auto px-4 pb-14 pt-5 sm:px-6">
-              <div className="mx-auto flex w-full max-w-2xl flex-col items-stretch">
-                {steps.map((step, index) => (
-                  <div key={step.id} className="flex flex-col items-stretch">
-                    {index > 0 && (
-                      <div className="flex h-8 items-center gap-3 pl-5" aria-hidden="true">
-                        <div className="h-full w-px bg-[#d7aa2f]" />
-                        {step.config?.branch && (
-                          <span className="rounded-full bg-[#fff2bd] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-[#765600]">
-                            {step.config.branch.when === "true" ? "Then" : "Otherwise"}
-                          </span>
-                        )}
+        <section className="flex min-h-0 flex-1 flex-col bg-[#fffdfa]">
+          <div className="workflow-canvas relative min-h-0 flex-1 overflow-y-auto">
+            {!workflow ? (
+              <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col px-5 py-5 sm:px-7">
+                <div className="min-h-[220px] flex-1">
+                  <EmptyCanvas draftReady={initialDraftReady} />
+                </div>
+                {!isBuilding && !error && (
+                  <div className="mx-auto w-full max-w-2xl pb-2">
+                    <div className="flex items-start gap-3">
+                      <span className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd]">
+                        <Bot className="size-4 text-[#8a6200]" />
+                      </span>
+                      <div className="rounded-2xl rounded-tl-sm border border-[#e4ddd2] bg-[#fffdfa] px-4 py-3 text-[11px] leading-5 text-slate-600 shadow-sm">
+                        Describe an outcome below and I’ll turn it into connected,
+                        configurable steps.
                       </div>
-                    )}
-                    <div className={step.config?.branch ? "pl-6 sm:pl-10" : ""}>
-                      <WorkflowNode
-                        step={step}
-                        index={index}
-                        selected={selectedStep?.id === step.id}
-                        ready={stepIsReady(step)}
-                        onSelect={() => {
-                          setSelectedStepId(step.id);
-                          if (window.innerWidth < 1280) setMobileInspectorOpen(true);
-                        }}
-                      />
                     </div>
+                    <DashboardConnections connections={initialConnections} />
                   </div>
-                ))}
+                )}
               </div>
-            </div>
-          )}
-          {workflow && (
-            <div className="absolute inset-x-3 bottom-3 flex items-center justify-between gap-3 text-xs text-slate-600">
-              <span className="flex items-center gap-2">
-                <span className="flex items-center gap-1">
-                  <Network className="size-3" />
-                  {steps.length} steps
-                </span>
-                <span>
-                  {readySteps}/{steps.length} ready
-                </span>
-              </span>
-              <button
-                type="button"
-                onClick={() => setMobileInspectorOpen(true)}
-                className="flex min-h-11 items-center gap-2 rounded-xl border border-[#d7aa2f] bg-[#fffdfa] px-3 font-semibold text-[#6f5100] shadow-sm xl:hidden"
-              >
-                <SlidersHorizontal className="size-4" />
-                Configure step
-              </button>
-            </div>
-          )}
-        </section>
-
-        <section className="flex min-h-0 flex-1 flex-col bg-[#f8f5ef]">
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-6">
-            {!workflow && !isBuilding && !error && (
-              <div>
-                <div className="flex items-start gap-3">
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd]">
-                  <Bot className="size-4 text-[#8a6200]" />
-                </span>
-                <div className="max-w-xl rounded-2xl rounded-tl-sm border border-[#e4ddd2] bg-[#fffdfa] px-4 py-3 text-[11px] leading-5 text-slate-600 shadow-sm">
-                  Describe an outcome below and I’ll turn it into connected,
-                  configurable steps.
-                </div>
-                </div>
-                <DashboardConnections connections={initialConnections} />
-              </div>
-            )}
-            {workflow && (
-              <div className="flex items-start gap-3">
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd]">
-                  <Sparkles className="size-4 text-[#8a6200]" />
-                </span>
-                <div className="max-w-2xl rounded-2xl rounded-tl-sm border border-[#e4ddd2] bg-[#fffdfa] px-4 py-3 shadow-sm">
-                  <p className="text-[11px] font-semibold text-slate-900">
-                    {toPlainEnglish(workflow.workflowName)}
-                  </p>
-                  <p className="mt-1 text-[11px] leading-5 text-slate-500">
-                    {toPlainEnglish(workflow.summary)}
-                  </p>
-                  <p className="mt-3 text-[9px] font-bold uppercase tracking-[0.12em] text-[#805b00]">
-                    What will happen
-                  </p>
-                  <div className="mt-2 grid gap-1.5">
+            ) : (
+              <div className="mx-auto grid min-h-full w-full max-w-5xl gap-6 px-5 py-6 sm:px-7 md:grid-cols-[minmax(280px,1fr)_minmax(250px,.9fr)] md:items-center">
+                <div className="flex min-h-[420px] min-w-0 flex-col items-center justify-center py-2">
+                  <div className="flex w-full max-w-[420px] flex-col items-stretch">
                     {steps.map((step, index) => (
-                      <p
-                        key={step.id}
-                        className="text-[10px] leading-4 text-slate-600"
-                      >
-                        <span className="font-semibold text-slate-800">
-                          {index + 1}. {stepVisuals[step.type].label}:
-                        </span>{" "}
-                        {toPlainEnglish(step.title)}
-                      </p>
+                      <div key={step.id} className="flex w-full flex-col items-center">
+                        {index > 0 && (
+                          <div className="relative flex h-10 w-full items-center justify-center" aria-hidden="true">
+                            <div className="h-full w-px bg-[#d7aa2f]" />
+                            {step.config?.branch && (
+                              <span className="absolute left-1/2 ml-3 rounded-full bg-[#fff2bd] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-[#765600]">
+                                {step.config.branch.when === "true" ? "Then" : "Otherwise"}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        <WorkflowNode
+                          step={step}
+                          index={index}
+                          selected={selectedStep?.id === step.id}
+                          ready={stepIsReady(step)}
+                          onSelect={() => {
+                            setSelectedStepId(step.id);
+                            if (window.innerWidth < 1280) setMobileInspectorOpen(true);
+                          }}
+                        />
+                      </div>
                     ))}
                   </div>
+                  <div className="mt-5 flex w-full max-w-[360px] items-center justify-between gap-3 text-[10px] text-slate-500">
+                    <span className="flex items-center gap-3">
+                      <span className="flex items-center gap-1.5"><Network className="size-3" />{steps.length} steps</span>
+                      <span>{readySteps}/{steps.length} ready</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setMobileInspectorOpen(true)}
+                      className="flex min-h-10 items-center gap-2 rounded-xl border border-[#d7aa2f] bg-[#fffdfa] px-3 font-semibold text-[#6f5100] shadow-sm xl:hidden"
+                    >
+                      <SlidersHorizontal className="size-4" />
+                      Configure step
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex min-w-0 flex-col justify-center gap-3 pb-2 md:pb-0">
+                  <div className="rounded-2xl border border-[#e4ddd2] bg-[#fffdfa]/95 px-4 py-4 shadow-[0_10px_30px_rgba(39,37,54,.06)]">
+                    <div className="flex items-start gap-3">
+                      <span className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd]">
+                        <Sparkles className="size-4 text-[#8a6200]" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-semibold text-slate-900">{toPlainEnglish(workflow.workflowName)}</p>
+                        <p className="mt-1 text-[10px] leading-5 text-slate-500">{toPlainEnglish(workflow.summary)}</p>
+                      </div>
+                    </div>
+                    <p className="mt-4 text-[9px] font-bold uppercase tracking-[0.12em] text-[#805b00]">What will happen</p>
+                    <div className="mt-2 grid gap-1.5">
+                      {steps.map((step, index) => (
+                        <p key={step.id} className="text-[10px] leading-4 text-slate-600">
+                          <span className="font-semibold text-slate-800">{index + 1}. {stepVisuals[step.type].label}:</span>{" "}
+                          {toPlainEnglish(step.title)}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+
+                  {planning && planning.status !== "READY_TO_COMPILE" && (
+                    <div className="rounded-xl border border-[#e7c75f] bg-[#fff7dc] px-4 py-3 text-[10px] leading-4 text-slate-700">
+                      <p className="font-semibold text-slate-900">
+                        {planning.status === "NEEDS_CLARIFICATION" ? "A little more detail is needed" : planning.status === "UNSUPPORTED" ? "Not supported yet" : "Requirements conflict"}
+                      </p>
+                      {planning.clarificationQuestions.map((question) => <p key={question} className="mt-1.5">{question}</p>)}
+                      {planning.requestedUnsupportedCapabilities.map((capability) => (
+                        <div key={capability.capabilityId} className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                          <p>{capability.displayName} isn’t available yet.</p>
+                          <button type="button" className="rounded-lg border border-[#d7aa2f] bg-white px-3 py-1.5 font-semibold text-[#6f5100]" onClick={async () => {
+                            const response = await requestConnectorCapability({ capabilityId: capability.capabilityId, source: "workflow_builder" });
+                            setConnectorRequestMessage(response.ok ? response.message : response.error);
+                          }}>Request {capability.displayName}</button>
+                        </div>
+                      ))}
+                      {connectorRequestMessage && <p role="status" className="mt-2 font-medium text-emerald-700">{connectorRequestMessage}</p>}
+                    </div>
+                  )}
+
+                  {logs.length > 0 && (
+                    <div role="status" aria-live="polite" className={`rounded-xl border p-3 ${testSucceeded ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>
+                      <p className="flex items-center gap-2 text-[11px] font-semibold text-slate-900">
+                        <CirclePlay className={`size-3.5 ${testSucceeded ? "text-emerald-500" : "text-rose-500"}`} />
+                        {testSucceeded ? "YOUR LOOP WORKS." : "Live test needs attention"}
+                        {testSucceeded && delivered ? " · external delivery acknowledged" : ""}
+                      </p>
+                      <div className="mt-2 space-y-1.5">
+                        {logs.map((log, index) => <p key={`${log.message}-${index}`} className="text-[10px] leading-4 text-slate-600">{log.icon} {log.message}</p>)}
+                      </div>
+                      {testSucceeded && !published && (
+                        <button type="button" onClick={() => void changePublication(true)} className="mt-3 inline-flex min-h-10 items-center rounded-lg border border-emerald-300 bg-white px-4 text-[10px] font-semibold text-emerald-700">Activate →</button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
+
             {isBuilding && (
-              <div className="flex items-center gap-3">
-                <span className="flex size-8 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd]">
-                  <Bot className="size-4 text-[#8a6200]" />
-                </span>
-                <span className="flex items-center gap-2 rounded-2xl rounded-tl-sm border border-[#e4ddd2] bg-[#fffdfa] px-4 py-3 text-[11px] text-slate-500 shadow-sm">
-                  <LoaderCircle className="size-3.5 animate-spin text-[#b18410]" />
-                  Building your workflow…
+              <div className="absolute inset-x-5 bottom-4 flex items-center justify-center gap-3">
+                <span className="flex items-center gap-2 rounded-2xl border border-[#e4ddd2] bg-[#fffdfa] px-4 py-3 text-[11px] text-slate-500 shadow-sm">
+                  <LoaderCircle className="size-3.5 animate-spin text-[#b18410]" />Building your workflow…
                 </span>
               </div>
             )}
             {error && (
-              <div
-                role="alert"
-                className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[11px] text-rose-700"
-              >
-                {error}
-              </div>
-            )}
-            {planning && planning.status !== "READY_TO_COMPILE" && (
-              <div className="mt-3 rounded-xl border border-[#e7c75f] bg-[#fff7dc] px-4 py-3 text-[10px] leading-4 text-slate-700">
-                <p className="font-semibold text-slate-900">
-                  {planning.status === "NEEDS_CLARIFICATION"
-                    ? "A little more detail is needed"
-                    : planning.status === "UNSUPPORTED"
-                      ? "Not supported yet"
-                      : "Requirements conflict"}
-                </p>
-                {planning.clarificationQuestions.map((question) => (
-                  <p key={question} className="mt-1.5">
-                    {question}
-                  </p>
-                ))}
-                {planning.requestedUnsupportedCapabilities.map((capability) => (
-                  <div key={capability.capabilityId} className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                    <p>{capability.displayName} isn’t available yet.</p>
-                    <button
-                      type="button"
-                      className="rounded-lg border border-[#d7aa2f] bg-white px-3 py-1.5 font-semibold text-[#6f5100]"
-                      onClick={async () => {
-                        const response = await requestConnectorCapability({ capabilityId: capability.capabilityId, source: "workflow_builder" });
-                        setConnectorRequestMessage(response.ok ? response.message : response.error);
-                      }}
-                    >
-                      Request {capability.displayName}
-                    </button>
-                  </div>
-                ))}
-                {connectorRequestMessage && <p role="status" className="mt-2 font-medium text-emerald-700">{connectorRequestMessage}</p>}
-              </div>
-            )}
-            {logs.length > 0 && (
-              <div
-                role="status"
-                aria-live="polite"
-                className={`mt-4 rounded-xl border p-3 ${testSucceeded ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}
-              >
-                <p className="flex items-center gap-2 text-[11px] font-semibold text-slate-900">
-                  <CirclePlay
-                    className={`size-3.5 ${testSucceeded ? "text-emerald-500" : "text-rose-500"}`}
-                  />
-                  {testSucceeded ? "YOUR LOOP WORKS." : "Live test needs attention"}
-                  {testSucceeded && delivered
-                    ? " · external delivery acknowledged"
-                    : ""}
-                </p>
-                <div className="mt-2 space-y-1.5">
-                  {logs.map((log, index) => (
-                    <p
-                      key={`${log.message}-${index}`}
-                      className="text-[10px] leading-4 text-slate-600"
-                    >
-                      {log.icon} {log.message}
-                    </p>
-                  ))}
-                </div>
-                {testSucceeded && !published && (
-                  <button type="button" onClick={() => void changePublication(true)} className="mt-3 inline-flex min-h-10 items-center rounded-lg border border-emerald-300 bg-white px-4 text-[10px] font-semibold text-emerald-700">
-                    Activate →
-                  </button>
-                )}
-              </div>
+              <div role="alert" className="mx-5 mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[11px] text-rose-700">{error}</div>
             )}
           </div>
 
-          <div className="shrink-0 border-t border-[#e4ddd2] bg-[#fffdfa] px-4 pb-4 pt-3 sm:px-5">
-            <div className="flex items-end gap-2 rounded-2xl border-[1.5px] border-[#ded6ca] bg-white px-3 py-2.5 shadow-[0_8px_30px_rgba(39,37,54,.06)] transition focus-within:border-[#d7aa2f] focus-within:ring-4 focus-within:ring-[#f4e5ad]">
+          <div className="shrink-0 border-t border-[#eee8de] bg-[#fffdfa]/95 px-4 pb-4 pt-3 sm:px-5">
+            <div className="flex items-center gap-3 rounded-2xl border border-[#ded6ca] bg-white px-3.5 py-2.5 shadow-[0_8px_30px_rgba(39,37,54,.05)] transition-[border-color,box-shadow] focus-within:border-[#d7aa2f] focus-within:shadow-[0_0_0_3px_rgba(215,170,47,.14)]">
               <textarea
                 value={prompt}
                 onChange={(event) => {
@@ -1855,7 +1804,7 @@ export function AutomationWorkspace({
                     ? "Describe a different automation to replace this one…"
                     : "Describe the automation you want to build…"
                 }
-                className="max-h-28 min-h-8 flex-1 resize-none bg-transparent py-1 text-[12px] leading-5 text-slate-800 outline-none placeholder:text-slate-400"
+                className="max-h-28 min-h-9 flex-1 resize-none appearance-none border-0 bg-transparent px-0 py-1.5 text-[12px] leading-5 text-slate-800 outline-none ring-0 shadow-none [field-sizing:content] placeholder:text-slate-400 focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
               />
               <button
                 type="button"
@@ -1864,7 +1813,7 @@ export function AutomationWorkspace({
                 aria-label={
                   isBuilding ? "Generating workflow" : "Generate workflow"
                 }
-                className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-[#dfbd4c] bg-[#fff2bd] text-[#725300] transition hover:bg-[#f1c94b] hover:text-[#272536] disabled:cursor-not-allowed disabled:opacity-35"
+                className="flex size-9 shrink-0 items-center justify-center self-center rounded-full border border-[#dfbd4c] bg-[#fff2bd] text-[#725300] transition hover:bg-[#f1c94b] hover:text-[#272536] disabled:cursor-not-allowed disabled:opacity-35"
               >
                 {isBuilding ? (
                   <LoaderCircle className="size-4 animate-spin" />
