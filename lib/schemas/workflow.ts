@@ -121,12 +121,43 @@ export const DataTableDefinitionSchema = z
     }
   });
 
+const FormatterSourceSchema = z.object({
+  kind: z.enum(["trigger", "step", "literal", "ai"]),
+  path: z.string().max(200).optional(),
+  stepId: z.string().max(100).optional(),
+  value: z.unknown().optional(),
+});
+
+export const FormatterConfigSchema = z.object({
+  version: z.literal(1),
+  operation: z.enum([
+    "trim", "uppercase", "lowercase", "title_case", "replace", "split", "join",
+    "prepend", "append", "add", "subtract", "multiply", "divide", "round",
+    "format_date", "add_duration", "subtract_duration", "convert_timezone",
+    "default_value", "first_non_empty",
+  ]),
+  source: FormatterSourceSchema,
+  sources: z.array(FormatterSourceSchema).max(10).optional(),
+  outputKey: z.string().regex(/^[a-z][a-z0-9_]{0,79}$/),
+  find: z.string().max(500).optional(),
+  replacement: z.string().max(500).optional(),
+  separator: z.string().max(100).optional(),
+  value: z.unknown().optional(),
+  operand: z.number().finite().optional(),
+  decimalPlaces: z.number().int().min(0).max(12).optional(),
+  dateFormat: z.string().min(1).max(40).optional(),
+  timezone: z.string().min(1).max(100).optional(),
+  durationAmount: z.number().int().min(-5_256_000).max(5_256_000).optional(),
+  durationUnit: z.enum(["minutes", "hours", "days"]).optional(),
+});
+
 export const WorkflowStepSchema = z.object({
   id: z.string(),
   type: z.enum([
     "public_form_trigger",
     "webhook_trigger",
     "ai_transform",
+    "formatter_transform",
     "store_data",
     "webhook_post",
     "http_request",
@@ -147,6 +178,7 @@ export const WorkflowStepSchema = z.object({
       endpoint: z.string().optional(),
       method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional(),
       transformPrompt: z.string().optional(),
+      formatter: FormatterConfigSchema.optional(),
       documentTemplate: z.string().max(50_000).optional(),
       schedule: z
         .object({

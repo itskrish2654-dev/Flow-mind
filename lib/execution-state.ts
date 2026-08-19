@@ -138,6 +138,7 @@ export function createExecutionStateHooks(
       if (error) throw new Error(`Step result could not be persisted: ${error.message}`);
       const capability = resolveStepCapabilityId(step) ?? "unknown";
       const failed = result.status === "failed";
+      const durationMs = Math.max(0, Date.now() - (stepStartedAt.get(step.id) ?? Date.now()));
       await Promise.all([
         captureOperationalEvent({
           level: failed ? "error" : "info",
@@ -148,7 +149,7 @@ export function createExecutionStateHooks(
           executionId,
           stepId: step.id,
           capability,
-          durationMs: Math.max(0, Date.now() - (stepStartedAt.get(step.id) ?? Date.now())),
+          durationMs,
           status: result.status,
           errorCategory: classification?.category ?? null,
           metadata: {
@@ -162,6 +163,19 @@ export function createExecutionStateHooks(
               userId: context?.userId,
               workflowId: context?.workflowId,
               properties: { capability, failure_category: classification?.category ?? "step_failure" },
+            })]
+          : []),
+        ...(capability === "formatter.transform" && result.status !== "skipped"
+          ? [trackProductEvent({
+              event: failed ? "formatter_execution_failed" : "formatter_execution_succeeded",
+              userId: context?.userId,
+              workflowId: context?.workflowId,
+              properties: {
+                capability,
+                operation: typeof result.metadata?.formatterOperation === "string" ? result.metadata.formatterOperation : "unknown",
+                duration_ms: durationMs,
+                ...(failed ? { failure_category: classification?.category ?? "step_failure" } : {}),
+              },
             })]
           : []),
       ]);

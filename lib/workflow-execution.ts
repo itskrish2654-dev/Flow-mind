@@ -8,7 +8,8 @@ import {
 } from "@/lib/capability-registry";
 import { getConnectorOperation } from "@/lib/connectors/registry";
 import { ConnectorError } from "@/lib/connectors/errors";
-import { applyFieldMappings, type FieldMapping } from "@/lib/connectors/mapping";
+import { applyFieldMappings, resolveMappingSource, type FieldMapping, type MappingSource } from "@/lib/connectors/mapping";
+import { executeFormatter, FormatterError, type FormatterSource } from "@/lib/formatter";
 import {
   generatePdfBuffer,
   PdfRenderError,
@@ -84,6 +85,7 @@ export type WorkflowExecutionResult = {
     summary: string;
     ai_result: string | null;
     ai_metadata: Array<AiExecutionMetadata & { stepId: string }>;
+    formatter_results: Record<string, { operation: string; outputKey: string; value: unknown }>;
     steps: StepExecutionRecord[];
     logs: ExecutionLog[];
     delivered: boolean;
@@ -200,6 +202,12 @@ function executionVariables(
   return variables;
 }
 
+function formatterValuePreview(value: unknown): string {
+  const serialized = typeof value === "string" ? value : JSON.stringify(value);
+  const compact = (serialized ?? "").replace(/\s+/g, " ").trim();
+  return compact.length > 160 ? `${compact.slice(0, 157)}…` : compact;
+}
+
 export async function executeWorkflowSteps({
   userId = "runtime-owner",
   workflowId,
@@ -231,6 +239,7 @@ export async function executeWorkflowSteps({
     aiResult?: string | null;
     documents?: Array<{ id: string; filename: string }>;
     conditionDecisions?: Record<string, boolean>;
+    stepOutputs?: Record<string, Record<string, unknown>>;
   };
 }): Promise<WorkflowExecutionResult> {
   const logs: ExecutionLog[] = [];
@@ -251,11 +260,26 @@ export async function executeWorkflowSteps({
     try { return JSON.parse(trimmed); } catch { return value; }
   };
   const triggerContext = Object.fromEntries(Object.entries(inputData).map(([key, value]) => [key, parseInputValue(value)]));
-  const connectorStepOutputs: Record<string, Record<string, unknown>> = {};
+  const connectorStepOutputs: Record<string, Record<string, unknown>> = { ...(resumeState?.stepOutputs ?? {}) };
+  const formatterResults: Record<string, { operation: string; outputKey: string; value: unknown }> = {};
   let delivered = false;
   let aiResult: string | null = resumeState?.aiResult ?? null;
   let failureReason: string | null = null;
   const conditionDecisions: Record<string, boolean> = { ...(resumeState?.conditionDecisions ?? {}) };
+  for (const [stepId, output] of Object.entries(connectorStepOutputs)) {
+    variables[stepId] = output;
+    for (const [key, value] of Object.entries(output)) {
+      if (key !== "value") variables[key] = value;
+    }
+    const formatterStep = steps.find((step) => step.id === stepId && step.type === "formatter_transform");
+    if (formatterStep?.config?.formatter) {
+      formatterResults[stepId] = {
+        operation: formatterStep.config.formatter.operation,
+        outputKey: formatterStep.config.formatter.outputKey,
+        value: output.value,
+      };
+    }
+  }
   if (aiResult) {
     variables.ai_result = aiResult;
     variables.ai_summary = aiResult;
@@ -286,6 +310,7 @@ export async function executeWorkflowSteps({
           : `${workflowName} completed ${records.length} step${records.length === 1 ? "" : "s"}.`,
         ai_result: aiResult,
         ai_metadata: aiMetadata,
+        formatter_results: formatterResults,
         steps: records,
         logs,
         delivered,
@@ -424,6 +449,45 @@ export async function executeWorkflowSteps({
         `${condition.humanLabel}: ${decision.matched ? "matched" : "did not match"}.`,
         { conditionMatched: decision.matched },
       );
+      continue;
+    }
+
+    if (capabilityId === "formatter.transform") {
+      const formatter = step.config?.formatter;
+      if (!formatter) {
+        await fail("This formatter step is missing its structured configuration.", "failed", new FormatterError("FORMATTER_INVALID_INPUT", "This formatter step is missing its structured configuration."));
+        break;
+      }
+      const mappingContext = { trigger: triggerContext, steps: connectorStepOutputs };
+      const toMappingSource = (source: FormatterSource): MappingSource => {
+        if (source.kind === "literal") return { kind: "literal", value: source.value };
+        if (source.kind === "trigger") return { kind: "trigger", path: source.path ?? "" };
+        if (!source.stepId) throw new FormatterError("FORMATTER_INVALID_INPUT", "A prior step reference is required.");
+        if (source.kind === "ai") return { kind: "ai", stepId: source.stepId, path: source.path };
+        return { kind: "step", stepId: source.stepId, path: source.path ?? "" };
+      };
+      try {
+        const input = resolveMappingSource(toMappingSource(formatter.source), mappingContext);
+        const fallbackInputs = (formatter.sources ?? []).map((source) => resolveMappingSource(toMappingSource(source), mappingContext));
+        const value = executeFormatter(formatter, input, fallbackInputs);
+        const output = { value, [formatter.outputKey]: value };
+        connectorStepOutputs[step.id] = output;
+        variables[step.id] = output;
+        variables[formatter.outputKey] = value;
+        formatterResults[step.id] = { operation: formatter.operation, outputKey: formatter.outputKey, value };
+        await succeed(
+          mode === "test"
+            ? `${step.title} completed. Output: ${formatterValuePreview(value) || "(empty)"}`
+            : `${step.title} completed deterministically.`,
+          {
+            formatterOperation: formatter.operation,
+            formatterOutput: JSON.stringify({ outputKey: formatter.outputKey, value }),
+          },
+        );
+      } catch (error) {
+        await fail(error instanceof FormatterError ? error.message : "The formatter could not complete this operation.", "failed", error);
+        break;
+      }
       continue;
     }
 

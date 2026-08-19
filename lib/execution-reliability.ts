@@ -1,4 +1,5 @@
 import { AiExecutionError } from "@/lib/ai-execution-core";
+import { FormatterError } from "@/lib/formatter";
 
 export type ExecutionErrorCategory =
   | "timeout"
@@ -22,6 +23,12 @@ export type ExecutionErrorCategory =
   | "AI_PROVIDER_UNAVAILABLE"
   | "AI_PROVIDER_TIMEOUT"
   | "AI_PROVIDER_FAILED"
+  | "FORMATTER_INVALID_INPUT"
+  | "FORMATTER_INVALID_NUMBER"
+  | "FORMATTER_DIVISION_BY_ZERO"
+  | "FORMATTER_INVALID_DATE"
+  | "FORMATTER_TIMEZONE_REQUIRED"
+  | "FORMATTER_OUTPUT_TOO_LARGE"
   | "unknown";
 
 export type ClassifiedExecutionError = {
@@ -40,6 +47,13 @@ export function classifyExecutionError(error: unknown): ClassifiedExecutionError
       ...(error.diagnostics?.retryAfterMs !== null && error.diagnostics?.retryAfterMs !== undefined
         ? { retryAfterMs: error.diagnostics.retryAfterMs }
         : {}),
+    };
+  }
+  if (error instanceof FormatterError) {
+    return {
+      category: error.code,
+      retryable: false,
+      safeMessage: error.message,
     };
   }
   const message = error instanceof Error ? error.message : String(error);

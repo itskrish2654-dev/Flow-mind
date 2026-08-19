@@ -92,6 +92,22 @@ export const CAPABILITY_REGISTRY = {
     ],
     aliases: ["ai", "summarize", "classify", "sentiment", "analyze", "draft"],
   }),
+  "formatter.transform": defineCapability({
+    id: "formatter.transform",
+    displayName: "Formatter",
+    category: "transformation",
+    supported: true,
+    executionImplementation: "deterministic-formatter-v1",
+    requiredSetupFields: [],
+    credentialsRequired: false,
+    availableInTest: true,
+    availableInProduction: true,
+    limitations: [
+      "Supports only the documented bounded text, number, date/time, and fallback operations.",
+      "Date/time inputs must be ISO dates or timestamps with an explicit offset; unqualified formatting uses UTC.",
+    ],
+    aliases: ["trim", "uppercase", "lowercase", "title case", "replace text", "split", "join", "prepend", "append", "multiply", "divide", "round", "format date", "timezone", "default value", "first non-empty"],
+  }),
   flowmind_data_store: defineCapability({
     id: "flowmind_data_store",
     displayName: "Store inside CrazyLoops",
@@ -426,6 +442,45 @@ export const CAPABILITY_REGISTRY = {
     limitations: ["Approval gates are not currently supported."],
     aliases: ["ask me before", "approval", "approve before", "review before"],
   }),
+  "wait.delay": defineCapability({
+    id: "wait.delay",
+    displayName: "Wait / Delay",
+    category: "control",
+    supported: false,
+    executionImplementation: null,
+    requiredSetupFields: [],
+    credentialsRequired: false,
+    availableInTest: false,
+    availableInProduction: false,
+    limitations: ["Wait / Delay is not currently supported."],
+    aliases: ["wait", "delay", "pause for", "sleep for"],
+  }),
+  "for_each": defineCapability({
+    id: "for_each",
+    displayName: "For Each",
+    category: "control",
+    supported: false,
+    executionImplementation: null,
+    requiredSetupFields: [],
+    credentialsRequired: false,
+    availableInTest: false,
+    availableInProduction: false,
+    limitations: ["For Each is not currently supported."],
+    aliases: ["for each", "every item", "each item", "loop over"],
+  }),
+  "formatter.scripting": defineCapability({
+    id: "formatter.scripting",
+    displayName: "Custom formatter scripts",
+    category: "transformation",
+    supported: false,
+    executionImplementation: null,
+    requiredSetupFields: [],
+    credentialsRequired: false,
+    availableInTest: false,
+    availableInProduction: false,
+    limitations: ["Custom code, formulas, and regular expressions are not supported by Formatter."],
+    aliases: ["regular expression", "regex", "javascript formatter", "custom script", "arbitrary formula"],
+  }),
   external_integration: defineCapability({
     id: "external_integration",
     displayName: "External app integration",
@@ -502,6 +557,7 @@ export function resolveStepCapabilityId(
       "schedule.trigger": ["scheduled_trigger"],
       "condition.if": ["filter_condition"],
       ai_text_transform: ["ai_transform"],
+      "formatter.transform": ["formatter_transform"],
       flowmind_data_store: ["store_data"],
       generate_pdf: ["generate_pdf"],
       webhook_post: ["webhook_post", "http_request"],
@@ -545,6 +601,8 @@ export function resolveStepCapabilityId(
       return "schedule.trigger";
     case "ai_transform":
       return "ai_text_transform";
+    case "formatter_transform":
+      return "formatter.transform";
     case "store_data":
       return "flowmind_data_store";
     case "generate_pdf":

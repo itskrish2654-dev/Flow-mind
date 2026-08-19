@@ -115,6 +115,7 @@ const stepVisuals = {
   public_form_trigger: { label: "Trigger", icon: Zap, tone: "emerald" },
   webhook_trigger: { label: "Trigger", icon: Zap, tone: "emerald" },
   ai_transform: { label: "AI Process", icon: Sparkles, tone: "indigo" },
+  formatter_transform: { label: "Formatter", icon: SlidersHorizontal, tone: "amber" },
   store_data: { label: "CrazyLoops Storage", icon: Database, tone: "violet" },
   webhook_post: { label: "Test Webhook", icon: Send, tone: "violet" },
   http_request: { label: "Destination", icon: Send, tone: "violet" },
@@ -618,6 +619,56 @@ function Inspector({
             <p className="text-[10px] font-semibold text-slate-900">IF</p>
             <p className="mt-1 text-[10px] leading-4 text-slate-700">{step.config.condition.humanLabel.replace(/^If\s+/i, "")}</p>
             <p className="mt-2 text-[9px] leading-4 text-slate-500">Only the matching branch runs. The other branch is recorded as skipped—not failed.</p>
+          </div>
+        )}
+        {step.type === "formatter_transform" && step.config?.formatter && (
+          <div className="mb-4 rounded-xl border border-[#e7c75f] bg-[#fff7dc] p-3.5">
+            <p className="flex items-center gap-2 text-[10px] font-semibold text-slate-900">
+              <SlidersHorizontal className="size-3.5 text-[#9a7007]" />
+              Deterministic Formatter
+            </p>
+            <dl className="mt-3 grid gap-2 text-[9px]">
+              <div className="flex items-start justify-between gap-3">
+                <dt className="text-slate-500">Operation</dt>
+                <dd className="text-right font-semibold text-slate-800">{step.config.formatter.operation.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase())}</dd>
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <dt className="text-slate-500">Input</dt>
+                <dd className="text-right font-semibold text-slate-800">{(step.config.formatter.source.path || "Previous value").replaceAll("_", " ")}</dd>
+              </div>
+              <div className="flex items-start justify-between gap-3">
+                <dt className="text-slate-500">Save as</dt>
+                <dd className="text-right font-semibold text-slate-800">{step.config.formatter.outputKey.replaceAll("_", " ")}</dd>
+              </div>
+              {step.config.formatter.operand !== undefined && (
+                <div className="flex items-start justify-between gap-3"><dt className="text-slate-500">Number</dt><dd className="font-semibold text-slate-800">{step.config.formatter.operand}</dd></div>
+              )}
+              {step.config.formatter.decimalPlaces !== undefined && (
+                <div className="flex items-start justify-between gap-3"><dt className="text-slate-500">Decimal places</dt><dd className="font-semibold text-slate-800">{step.config.formatter.decimalPlaces}</dd></div>
+              )}
+              {step.config.formatter.dateFormat && (
+                <div className="flex items-start justify-between gap-3"><dt className="text-slate-500">Date format</dt><dd className="font-semibold text-slate-800">{step.config.formatter.dateFormat}</dd></div>
+              )}
+              {step.config.formatter.find !== undefined && (
+                <div className="flex items-start justify-between gap-3"><dt className="text-slate-500">Find</dt><dd className="max-w-[160px] break-words text-right font-semibold text-slate-800">{step.config.formatter.find}</dd></div>
+              )}
+              {step.config.formatter.replacement !== undefined && (
+                <div className="flex items-start justify-between gap-3"><dt className="text-slate-500">Replace with</dt><dd className="max-w-[160px] break-words text-right font-semibold text-slate-800">{step.config.formatter.replacement || "(empty)"}</dd></div>
+              )}
+              {step.config.formatter.separator !== undefined && (
+                <div className="flex items-start justify-between gap-3"><dt className="text-slate-500">Separator</dt><dd className="max-w-[160px] break-words text-right font-semibold text-slate-800">{step.config.formatter.separator || "(empty)"}</dd></div>
+              )}
+              {step.config.formatter.value !== undefined && (
+                <div className="flex items-start justify-between gap-3"><dt className="text-slate-500">Fallback / text</dt><dd className="max-w-[160px] break-words text-right font-semibold text-slate-800">{String(step.config.formatter.value)}</dd></div>
+              )}
+              {step.config.formatter.durationAmount !== undefined && step.config.formatter.durationUnit && (
+                <div className="flex items-start justify-between gap-3"><dt className="text-slate-500">Duration</dt><dd className="font-semibold text-slate-800">{step.config.formatter.durationAmount} {step.config.formatter.durationUnit}</dd></div>
+              )}
+              {step.config.formatter.timezone && (
+                <div className="flex items-start justify-between gap-3"><dt className="text-slate-500">Timezone</dt><dd className="font-semibold text-slate-800">{step.config.formatter.timezone}</dd></div>
+              )}
+            </dl>
+            <p className="mt-3 border-t border-[#ead89e] pt-3 text-[9px] leading-4 text-slate-500">Runs locally in the CrazyLoops execution engine. No AI or external request is used.</p>
           </div>
         )}
         {step.type === "public_form_trigger" && workflow?.publicForm && (

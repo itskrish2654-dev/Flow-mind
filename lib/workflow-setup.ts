@@ -72,6 +72,7 @@ function defaultInputs(step: WorkflowStep): StepInput[] {
     case "scheduled_trigger":
     case "store_data":
     case "ai_transform":
+    case "formatter_transform":
       return [];
     case "webhook_post":
     case "http_request":

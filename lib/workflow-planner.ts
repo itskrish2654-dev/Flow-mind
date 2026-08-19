@@ -5,6 +5,7 @@ import {
   type CapabilityId,
 } from "@/lib/capability-registry";
 import { parseScheduleLanguage, type ScheduleDefinition } from "@/lib/scheduling";
+import type { FormatterConfig, FormatterOperation, FormatterSource } from "@/lib/formatter";
 
 export const PLANNING_STATUSES = [
   "READY_TO_COMPILE",
@@ -19,6 +20,7 @@ export type PlannedCapability = {
   capabilityId: CapabilityId;
   displayName: string;
   instruction?: string;
+  formatter?: FormatterConfig;
 };
 
 export type PlannedCondition = {
@@ -138,6 +140,84 @@ function detectTransformations(prompt: string): PlannedCapability[] {
   }
 
   return transformations;
+}
+
+function formatterSource(field: string): FormatterSource {
+  const path = normalizeFieldPath(field
+    .replace(/[’']s\b/gi, "")
+    .replace(/\binstead\b/gi, "")
+    .replace(/\b(customer|submitted|input|field|value|the)\b/gi, " ")
+    .trim());
+  return { kind: "trigger", path };
+}
+
+function formatterOutputKey(field: string, operation: FormatterOperation): string {
+  const base = formatterSource(field).path ?? "value";
+  const suffix: Partial<Record<FormatterOperation, string>> = {
+    trim: "trimmed", uppercase: "uppercase", lowercase: "lowercase", title_case: "title_case",
+    replace: "replaced", split: "parts", join: "joined", prepend: "prepended", append: "appended",
+    add: "added", subtract: "subtracted", multiply: "multiplied", divide: "divided", round: "rounded",
+    format_date: "formatted", add_duration: "date_added", subtract_duration: "date_subtracted",
+    convert_timezone: "converted", default_value: "with_default", first_non_empty: "first_non_empty",
+  };
+  return `${base}_${suffix[operation] ?? "formatted"}`.slice(0, 80);
+}
+
+function formatterCapability(config: FormatterConfig): PlannedCapability {
+  return {
+    ...plannedCapability("formatter.transform"),
+    formatter: config,
+  };
+}
+
+function detectFormatterTransformations(prompt: string): PlannedCapability[] {
+  const found: Array<{ index: number; capability: PlannedCapability }> = [];
+  const add = (index: number, operation: FormatterOperation, field: string, extra: Partial<FormatterConfig> = {}) => {
+    const source = formatterSource(field);
+    found.push({
+      index,
+      capability: formatterCapability({
+        version: 1,
+        operation,
+        source,
+        outputKey: formatterOutputKey(field, operation),
+        ...extra,
+      }),
+    });
+  };
+  const matchAll = (pattern: RegExp, handler: (match: RegExpExecArray) => void) => {
+    pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(prompt)) !== null) handler(match);
+  };
+
+  matchAll(/\btrim\s+(?:the\s+)?([a-z][a-z0-9 _'’-]{0,40}?)(?=\s+(?:then|and then|before|after)\b|[.,;]|$)/gi, (match) => add(match.index, "trim", match[1]));
+  matchAll(/\bremove\s+(?:the\s+)?spaces\s+around\s+(?:the\s+)?([a-z][a-z0-9 _'’-]{0,40}?)(?=[.,;]|$)/gi, (match) => add(match.index, "trim", match[1]));
+  matchAll(/\b(?:make|convert)\s+(?:the\s+)?([a-z][a-z0-9 _-]{0,40}?)\s+(?:to\s+|into\s+)?title case\b/gi, (match) => add(match.index, "title_case", match[1]));
+  matchAll(/\b(?:make|convert)\s+(?:the\s+)?([a-z][a-z0-9 _-]{0,40}?)\s+(?:to\s+|into\s+)?(uppercase|upper case|lowercase|lower case)\b/gi, (match) => add(match.index, /upper/i.test(match[2]) ? "uppercase" : "lowercase", match[1]));
+  matchAll(/\breplace\s+["']([^"']{1,200})["']\s+with\s+["']([^"']{0,200})["']\s+in\s+(?:the\s+)?([a-z][a-z0-9 _-]{0,40}?)(?=[.,;]|$)/gi, (match) => add(match.index, "replace", match[3], { find: match[1], replacement: match[2] }));
+  matchAll(/\bsplit\s+(?:the\s+)?([a-z][a-z0-9 _-]{0,40}?)\s+(?:by|on)\s+["']([^"']{1,50})["']/gi, (match) => add(match.index, "split", match[1], { separator: match[2] }));
+  matchAll(/\bjoin\s+(?:the\s+)?([a-z][a-z0-9 _-]{0,40}?)\s+with\s+["']([^"']{0,50})["']/gi, (match) => add(match.index, "join", match[1], { separator: match[2] }));
+  matchAll(/\b(prepend|append)\s+["']([^"']{0,200})["']\s+(?:to\s+)?(?:the\s+)?([a-z][a-z0-9 _-]{0,40}?)(?=[.,;]|$)/gi, (match) => add(match.index, match[1].toLowerCase() as "prepend" | "append", match[3], { value: match[2] }));
+  matchAll(/\bmultiply\s+(?:the\s+)?([a-z][a-z0-9 _-]{0,40}?)\s+by\s+(-?\d+(?:\.\d+)?)/gi, (match) => add(match.index, "multiply", match[1], { operand: Number(match[2]) }));
+  matchAll(/\bdivide\s+(?:the\s+)?([a-z][a-z0-9 _-]{0,40}?)\s+by\s+(-?\d+(?:\.\d+)?)/gi, (match) => add(match.index, "divide", match[1], { operand: Number(match[2]) }));
+  matchAll(/\badd\s+(-?\d+(?:\.\d+)?)\s+to\s+(?:the\s+)?([a-z][a-z0-9 _-]{0,40}?)(?=[.,;]|$)/gi, (match) => add(match.index, "add", match[2], { operand: Number(match[1]) }));
+  matchAll(/\bsubtract\s+(-?\d+(?:\.\d+)?)\s+from\s+(?:the\s+)?([a-z][a-z0-9 _-]{0,40}?)(?=[.,;]|$)/gi, (match) => add(match.index, "subtract", match[2], { operand: Number(match[1]) }));
+  matchAll(/\bround\s+(?:the\s+)?([a-z][a-z0-9 _-]{0,40}?)\s+to\s+(\d{1,2})\s+decimal places?\b/gi, (match) => add(match.index, "round", match[1], { decimalPlaces: Number(match[2]) }));
+  matchAll(/\bformat\s+(?:the\s+)?([a-z][a-z0-9 _-]{0,40}?)\s+as\s+([YMDHmsT:/._ -]{2,40})(?=[.,;]|$)/gi, (match) => add(match.index, "format_date", match[1], { dateFormat: match[2].trim(), timezone: "UTC" }));
+  matchAll(/\bconvert\s+(?:the\s+)?([a-z][a-z0-9 _-]{0,40}?)\s+to\s+((?:Africa|America|Antarctica|Asia|Atlantic|Australia|Europe|Indian|Pacific)\/[A-Za-z_+-]+)\b/gi, (match) => add(match.index, "convert_timezone", match[1], { timezone: match[2] }));
+  matchAll(/\b(add|subtract)\s+(\d+)\s+(minutes?|hours?|days?)\s+(?:to|from)\s+(?:the\s+)?([a-z][a-z0-9 _-]{0,40}?)(?=[.,;]|$)/gi, (match) => add(match.index, match[1].toLowerCase() === "add" ? "add_duration" : "subtract_duration", match[4], { durationAmount: Number(match[2]), durationUnit: match[3].toLowerCase().replace(/s$/, "") + "s" as "minutes" | "hours" | "days" }));
+  matchAll(/\bif\s+(?:the\s+)?([a-z][a-z0-9 _-]{0,40}?)\s+(?:(?:is\s+)?empty|is\s+missing),?\s+use\s+["']([^"']{0,100})["']/gi, (match) => add(match.index, "default_value", match[1], { value: match[2] }));
+  matchAll(/\bif\s+(?:the\s+)?([a-z][a-z0-9 _-]{0,40}?)\s+(?:(?:is\s+)?empty|is\s+missing),?\s+use\s+(Unknown|N\/A|None|true|false|0)\b/gi, (match) => add(match.index, "default_value", match[1], { value: match[2] }));
+  matchAll(/\bif\s+(?:the\s+)?([a-z][a-z0-9 _-]{0,30}?)\s+(?:(?:is\s+)?empty|is\s+missing),?\s+use\s+(?:the\s+)?(?!Unknown\b|None\b|true\b|false\b)([a-z][a-z0-9 _-]{0,30}?)(?=\s+instead\b|[.,;]|$)(?:\s+instead)?/gi, (match) => {
+    const source = formatterSource(match[1]);
+    found.push({ index: match.index, capability: formatterCapability({ version: 1, operation: "first_non_empty", source, sources: [formatterSource(match[2])], outputKey: `${source.path ?? "value"}_or_${formatterSource(match[2]).path ?? "fallback"}`.slice(0, 80) }) });
+  });
+
+  return found
+    .sort((left, right) => left.index - right.index)
+    .filter((item, index, items) => index === items.findIndex((candidate) => candidate.index === item.index && candidate.capability.formatter?.operation === item.capability.formatter?.operation))
+    .map((item) => item.capability);
 }
 
 function detectsPublicFormTrigger(prompt: string): boolean {
@@ -310,6 +390,18 @@ export function planWorkflow(prompt: string): WorkflowPlan {
     };
   }
 
+  const formatterTransformations = detectFormatterTransformations(normalizedPrompt);
+  if (/\bconvert\b[^.]{0,80}\b(?:local time|local timezone)\b/i.test(normalizedPrompt)) {
+    return {
+      ...base,
+      status: "NEEDS_CLARIFICATION",
+      transformations: formatterTransformations,
+      missingRequirements: ["timezone"],
+      message: "CrazyLoops needs an explicit timezone before it can configure this deterministic conversion.",
+      clarificationQuestions: ["Which timezone should CrazyLoops use?"],
+    };
+  }
+
   const parsedSchedule = parseScheduleLanguage(normalizedPrompt);
   if (parsedSchedule && !parsedSchedule.ok) {
     return {
@@ -321,7 +413,7 @@ export function planWorkflow(prompt: string): WorkflowPlan {
     };
   }
 
-  if (!normalizedPrompt || (isVaguePrompt(normalizedPrompt) && !parsedSchedule)) {
+  if (!normalizedPrompt || (isVaguePrompt(normalizedPrompt) && !parsedSchedule && formatterTransformations.length === 0)) {
     return {
       ...base,
       status: "NEEDS_CLARIFICATION",
@@ -355,7 +447,7 @@ export function planWorkflow(prompt: string): WorkflowPlan {
     : detectsPublicFormTrigger(normalizedPrompt)
       ? plannedCapability("public_form_submission")
       : null;
-  const transformations = detectTransformations(normalizedPrompt);
+  const transformations = [...formatterTransformations, ...detectTransformations(normalizedPrompt)];
   const condition = parseCondition(normalizedPrompt);
   if (condition?.usesAiClassification && !transformations.some((item) => /classif/i.test(item.instruction ?? ""))) {
     transformations.push(plannedCapability("ai_text_transform", `Classify whether the input matches this criterion: ${condition.humanLabel.replace(/^If\s+/i, "")}. Return a short, direct classification.`));

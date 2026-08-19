@@ -21,6 +21,27 @@ function transformationTitle(instruction: string, index: number): string {
   return `AI transformation ${index + 1}`;
 }
 
+function formatterTitle(transformation: PlannedCapability): string {
+  const formatter = transformation.formatter;
+  if (!formatter) return "Format value";
+  const source = formatter.source.path?.replaceAll("_", " ") || "value";
+  const label: Record<typeof formatter.operation, string> = {
+    trim: "Trim", uppercase: "Make uppercase", lowercase: "Make lowercase", title_case: "Use title case",
+    replace: "Replace text in", split: "Split", join: "Join", prepend: "Prepend to", append: "Append to",
+    add: "Add to", subtract: "Subtract from", multiply: "Multiply", divide: "Divide", round: "Round",
+    format_date: "Format date", add_duration: "Add duration to", subtract_duration: "Subtract duration from",
+    convert_timezone: "Convert timezone for", default_value: "Use fallback for", first_non_empty: "Choose first available",
+  };
+  return `${label[formatter.operation]} ${source}`.replace(/\s+/g, " ");
+}
+
+function formatterDescription(transformation: PlannedCapability): string {
+  const formatter = transformation.formatter;
+  if (!formatter) return "Formats a value deterministically.";
+  const source = formatter.source.path?.replaceAll("_", " ") || "value";
+  return `Reads ${source}, applies ${formatter.operation.replaceAll("_", " ")}, and saves the result as ${formatter.outputKey.replaceAll("_", " ")}.`;
+}
+
 function defaultDocumentTemplate(workflowName: string, hasAiStep: boolean): string {
   return `# ${workflowName}\n\nPrepared for {{trigger.name}}\n\n{{trigger.details}}\n\n## Result\n\n${hasAiStep ? "{{ai.result}}" : "{{trigger.details}}"}`;
 }
@@ -84,11 +105,25 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
     : { id: "step_1", type: plan.trigger.capabilityId.startsWith("gmail_") || plan.trigger.capabilityId.startsWith("slack_") || plan.trigger.capabilityId.startsWith("notion_page_") || plan.trigger.capabilityId === "manual_trigger" ? "connector_trigger" : plan.trigger.capabilityId === "generic_webhook_trigger" ? "webhook_trigger" : "public_form_trigger", capabilityId: plan.trigger.capabilityId, title: plan.trigger.displayName, description: plan.trigger.capabilityId.startsWith("gmail_") ? "Starts from a new message resolved through Gmail history." : plan.trigger.capabilityId === "slack_new_channel_message" ? `Starts from a new message in ${plan.trigger.instruction ?? "the selected Slack channel"}.` : plan.trigger.capabilityId.startsWith("notion_page_") ? "Starts from a verified Notion event." : plan.trigger.capabilityId === "manual_trigger" ? "Starts when you explicitly run this workflow." : plan.trigger.capabilityId === "generic_webhook_trigger" ? "Starts from an authenticated CrazyLoops webhook endpoint." : "Starts when someone submits the hosted CrazyLoops form.", ...(plan.trigger.capabilityId === "slack_new_channel_message" ? { inputsRequired: [{ key: "channel", label: "Slack channel", type: "text" as const }] } : plan.trigger.capabilityId.startsWith("notion_page_") ? { inputsRequired: [{ key: "resourceId", label: "Notion page or data source", type: "text" as const }] } : {}), ...(plan.trigger.capabilityId.startsWith("gmail_") ? { config: { connector: { connectorId: "google_gmail", operationKind: "trigger" as const, operationKey: plan.trigger.capabilityId === "gmail_new_email_matching_search" ? "new_email_matching_search" : "new_email", operationVersion: 1, mappings: [], ...(plan.trigger.instruction ? { settings: { search: plan.trigger.instruction } } : {}) } } } : plan.trigger.capabilityId === "slack_new_channel_message" ? { config: { connector: { connectorId: "slack", operationKind: "trigger" as const, operationKey: "new_channel_message", operationVersion: 1, mappings: [], settings: { ...(plan.trigger.instruction ? { channelNameHint: plan.trigger.instruction } : {}) } } } } : plan.trigger.capabilityId.startsWith("notion_page_") ? { config: { connector: { connectorId: "notion", operationKind: "trigger" as const, operationKey: plan.trigger.capabilityId === "notion_page_created_or_added" ? "page_created_or_added" : "page_updated", operationVersion: 1, mappings: [], settings: {} } } } : plan.trigger.capabilityId === "generic_webhook_trigger" ? { config: { connector: { connectorId: "flowmind_webhook", operationKind: "trigger" as const, operationKey: "event_received", operationVersion: 1, mappings: [] } } } : {}) };
 
   const steps: Step[] = [trigger];
+  const latestFormatterStepByTriggerPath = new Map<string, string>();
   for (const transformation of plan.transformations) {
     const id = `step_${steps.length + 1}`;
-    steps.push(transformation.capabilityId === "notion_find_item"
+    const formatter = transformation.formatter
+      ? {
+          ...transformation.formatter,
+          source: transformation.formatter.source.kind === "trigger" && transformation.formatter.source.path && latestFormatterStepByTriggerPath.has(transformation.formatter.source.path)
+            ? { kind: "step" as const, stepId: latestFormatterStepByTriggerPath.get(transformation.formatter.source.path), path: "value" }
+            : transformation.formatter.source,
+        }
+      : null;
+    steps.push(transformation.capabilityId === "formatter.transform" && formatter
+      ? { id, type: "formatter_transform", capabilityId: "formatter.transform", title: formatterTitle(transformation), description: formatterDescription(transformation), config: { formatter } }
+      : transformation.capabilityId === "notion_find_item"
       ? { id, type: "connector_action", capabilityId: "notion_find_item", title: transformation.displayName, description: "Finds exactly one item in the selected Notion data source.", inputsRequired: [{ key: "dataSourceId", label: "Notion data source", type: "text" }, { key: "matchProperty", label: "Exact-match property", type: "text" }, { key: "matchValue", label: "Value to find", type: "text" }], config: { connector: { connectorId: "notion", operationKind: "action", operationKey: "find_item", operationVersion: 1, mappings: [] } } }
       : { id, type: "ai_transform", capabilityId: "ai_text_transform", title: transformationTitle(transformation.instruction ?? "", steps.length - 1), description: transformation.instruction ?? "Transform the input.", config: { transformPrompt: transformation.instruction ?? "Transform the input accurately." } });
+    if (transformation.formatter?.source.kind === "trigger" && transformation.formatter.source.path) {
+      latestFormatterStepByTriggerPath.set(transformation.formatter.source.path, id);
+    }
   }
 
   if (plan.condition) {
@@ -107,11 +142,21 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
     : destination.displayName;
   const summary = [triggerSummary, ...plan.transformations.map((item) => item.displayName), ...(plan.condition ? [plan.condition.humanLabel, `${describeDestination(plan.destination)}${plan.otherwiseDestination ? `; otherwise ${describeDestination(plan.otherwiseDestination)}` : ""}`] : [describeDestination(plan.destination)])].join(" → ").slice(0, 300);
   const basePublicForm = plan.trigger.capabilityId === "public_form_submission" ? createPublicFormDefinition(prompt, workflowName, summary) : undefined;
+  const formatterFields = plan.transformations.flatMap((transformation) => transformation.formatter
+    ? [transformation.formatter.source, ...(transformation.formatter.sources ?? [])]
+        .filter((source) => source.kind === "trigger" && source.path)
+        .map((source) => ({ key: source.path as string, label: (source.path as string).replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()), type: "text" as const, required: false }))
+    : []);
   const publicForm = basePublicForm ? {
     ...basePublicForm,
-    fields: plan.condition && plan.condition.sourcePath !== "ai_result" && !basePublicForm.fields.some((field) => field.key === plan.condition?.sourcePath) && basePublicForm.fields.length < 10
-      ? [...basePublicForm.fields, { key: plan.condition.sourcePath, label: plan.condition.sourcePath.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()), type: typeof plan.condition.expectedValue === "number" ? "number" as const : "text" as const, required: true }]
-      : basePublicForm.fields,
+    fields: [...basePublicForm.fields,
+      ...(plan.condition && plan.condition.sourcePath !== "ai_result" && !basePublicForm.fields.some((field) => field.key === plan.condition?.sourcePath) && basePublicForm.fields.length < 10
+        ? [{ key: plan.condition.sourcePath, label: plan.condition.sourcePath.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()), type: typeof plan.condition.expectedValue === "number" ? "number" as const : "text" as const, required: true }]
+        : []),
+      ...formatterFields.filter((candidate, index, fields) =>
+        !basePublicForm.fields.some((field) => field.key === candidate.key)
+        && fields.findIndex((field) => field.key === candidate.key) === index),
+    ].slice(0, 10),
     successMessage: "Your submission was processed by the configured CrazyLoops loop.",
   } : undefined;
   return annotateWorkflowCapabilities(CompiledWorkflowSchema.parse({ workflowName, summary, steps, publicForm, dataTable: publicForm ? createDefaultDataTableDefinition(publicForm) : undefined }));

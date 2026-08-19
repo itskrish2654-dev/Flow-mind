@@ -472,6 +472,24 @@ export async function retryWorkflowExecution(executionId: string): Promise<TestW
         : [];
     }),
   );
+  const formatterStepOutputs = Object.fromEntries(
+    (stepRows ?? []).flatMap((step) => {
+      if (step.status !== "succeeded") return [];
+      const workflowStep = workflow.data.steps.find((candidate) => candidate.id === step.workflow_step_id);
+      const formatter = workflowStep?.config?.formatter;
+      const metadata = step.sanitized_output_metadata;
+      if (!formatter || !metadata || typeof metadata !== "object" || Array.isArray(metadata)) return [];
+      const serialized = metadata.formatterOutput;
+      if (typeof serialized !== "string" || serialized.length > 40_000) return [];
+      try {
+        const restored = JSON.parse(serialized) as { outputKey?: unknown; value?: unknown };
+        if (restored.outputKey !== formatter.outputKey) return [];
+        return [[step.workflow_step_id, { value: restored.value, [formatter.outputKey]: restored.value }] as const];
+      } catch {
+        return [];
+      }
+    }),
+  );
   const { data: claimed, error: claimError } = await admin.rpc("claim_execution_retry", {
     p_execution_id: existing.id,
     p_user_id: auth.user.id,
@@ -518,7 +536,7 @@ export async function retryWorkflowExecution(executionId: string): Promise<TestW
               ? "scheduled"
               : "public-form",
           completedStepIds,
-          resumeState: { aiResult: priorAiResult, documents: priorDocuments, conditionDecisions },
+          resumeState: { aiResult: priorAiResult, documents: priorDocuments, conditionDecisions, stepOutputs: formatterStepOutputs },
           idempotencyKey: existing.idempotency_key,
           stateHooks: createExecutionStateHooks(admin, existing.id, {
             userId: auth.user.id,

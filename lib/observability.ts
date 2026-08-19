@@ -64,6 +64,8 @@ export const PRODUCT_EVENTS = [
   "public_form_failed",
   "ai_failed",
   "pdf_failed",
+  "formatter_execution_succeeded",
+  "formatter_execution_failed",
   "quota_reached",
 ] as const;
 
@@ -84,6 +86,7 @@ const SAFE_ANALYTICS_KEYS = new Set([
   "retry",
   "success",
   "duration_ms",
+  "operation",
   "failure_category",
   "source",
   "requester_type",

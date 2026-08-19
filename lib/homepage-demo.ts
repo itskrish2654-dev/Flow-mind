@@ -68,6 +68,8 @@ function previewSteps(prompt: string, plannedPrompt: string): HomepageDemoStep[]
       steps.push({ id: step.id, label: step.title, detail: "Connected event received", category: "trigger" });
     } else if (step.type === "ai_transform") {
       steps.push({ id: step.id, label: "AI", detail: step.title, category: "ai" });
+    } else if (step.type === "formatter_transform") {
+      steps.push({ id: step.id, label: "Formatter", detail: step.title, category: "control" });
     } else if (step.type === "filter_condition") {
       steps.push({ id: step.id, label: step.config?.condition?.humanLabel ?? "If / Otherwise", detail: "Only the matching branch runs", category: "control" });
     } else if (step.type === "generate_pdf") {
