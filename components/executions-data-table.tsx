@@ -43,13 +43,14 @@ const HANDLED_OUTPUT_FIELDS = new Set([
   ...INTERNAL_OUTPUT_FIELDS,
   "ai_result",
   "ai_metadata",
+  "http_results",
   "delivered",
   "steps",
   "status",
   "summary",
 ]);
 
-function asJsonObject(value: Json): JsonObject {
+function asJsonObject(value: Json | undefined): JsonObject {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value
     : {};
@@ -271,6 +272,27 @@ function executionLogs(value: Json): Array<{ icon: string; message: string }> {
   });
 }
 
+function httpExecutionResults(value: Json) {
+  const results = asJsonObject(asJsonObject(value).http_results);
+  return Object.entries(results).flatMap(([stepId, raw]) => {
+    const result = asJsonObject(raw);
+    if (typeof result.status !== "number") return [];
+    return [{
+      stepId,
+      method: typeof result.method === "string" ? result.method : "HTTP",
+      status: result.status,
+      durationMs: typeof result.durationMs === "number" ? result.durationMs : null,
+      acknowledged: result.acknowledged === true,
+      body: typeof result.body === "string" ? result.body : "",
+    }];
+  });
+}
+
+function httpStatusLabel(status: number): string {
+  const labels: Record<number, string> = { 200: "OK", 201: "Created", 202: "Accepted", 204: "No Content", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 409: "Conflict", 429: "Too Many Requests", 500: "Server Error", 502: "Bad Gateway", 503: "Unavailable", 504: "Gateway Timeout" };
+  return `${status}${labels[status] ? ` ${labels[status]}` : ""}`;
+}
+
 function ExecutionDetailsDrawer({
   execution,
   onClose,
@@ -286,6 +308,7 @@ function ExecutionDetailsDrawer({
   const delivered = typeof output.delivered === "boolean" ? output.delivered : null;
   const documents = executionDocuments(execution.outputData);
   const logs = executionLogs(execution.outputData);
+  const httpResults = httpExecutionResults(execution.outputData);
   const additionalOutput = Object.fromEntries(
     Object.entries(output).filter(([key]) => !HANDLED_OUTPUT_FIELDS.has(key)),
   );
@@ -364,6 +387,24 @@ function ExecutionDetailsDrawer({
                   </p>
                 </div>
               )}
+            </section>
+          )}
+
+          {httpResults.length > 0 && (
+            <section className="mt-6">
+              <h4 className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">HTTP requests</h4>
+              <div className="mt-3 space-y-2">
+                {httpResults.map((result) => (
+                  <div key={result.stepId} className="rounded-xl border border-[#ded6ca] bg-[#f8f4ec] p-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-white px-2 py-1 text-[9px] font-bold text-slate-700 ring-1 ring-inset ring-[#ded6ca]">{result.method}</span>
+                      <span className={`text-[10px] font-semibold ${result.status >= 400 ? "text-rose-700" : "text-emerald-700"}`}>{httpStatusLabel(result.status)} · {result.acknowledged ? "Succeeded" : "Failed"}</span>
+                      {result.durationMs !== null && <span className="text-[9px] text-slate-400">{result.durationMs} ms</span>}
+                    </div>
+                    {result.body && <p className="mt-2 max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-[9px] leading-4 text-slate-500">{result.body.slice(0, 1_000)}</p>}
+                  </div>
+                ))}
+              </div>
             </section>
           )}
 

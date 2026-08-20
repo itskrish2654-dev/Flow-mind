@@ -44,7 +44,7 @@ const genericHttpManifest: ConnectorManifest = {
   id: "flowmind_http",
   providerFamily: "flowmind",
   displayName: "HTTP request",
-  description: "Sends a bounded JSON POST request to a public HTTPS endpoint.",
+  description: "Sends bounded HTTP requests to public HTTPS API endpoints.",
   status: "BETA",
   version: 1,
   auth: { type: "none", defaultScopes: [], pkceRequired: false },
@@ -62,6 +62,38 @@ const genericHttpManifest: ConnectorManifest = {
     output: [
       { key: "status", label: "HTTP status", type: "number", required: true },
       { key: "referenceId", label: "Provider reference", type: "string" },
+    ],
+    requiredScopes: [],
+    connectionRequired: false,
+    testMode: true,
+    production: true,
+    deliverySemantics: "acknowledged_external",
+  }, {
+    key: "request",
+    version: 2,
+    kind: "action",
+    displayName: "HTTP request",
+    description: "Calls a public HTTPS API with a bounded, versioned request and records the acknowledged response.",
+    input: [
+      { key: "url", label: "API endpoint", type: "url", required: true },
+      { key: "method", label: "Method", type: "string", required: true },
+      { key: "query", label: "Query parameters", type: "object" },
+      { key: "headers", label: "Request headers", type: "object" },
+      { key: "body", label: "JSON body", type: "object" },
+      { key: "timeoutMs", label: "Timeout (milliseconds)", type: "number" },
+      { key: "authType", label: "Authentication", type: "string" },
+      { key: "authUsername", label: "Basic Auth username", type: "string" },
+      { key: "authName", label: "API key name", type: "string" },
+      { key: "idempotencyHeader", label: "Idempotency header", type: "string" },
+      { key: "allowDeleteBody", label: "Allow DELETE body", type: "boolean" },
+    ],
+    output: [
+      { key: "status", label: "HTTP status", type: "number", required: true },
+      { key: "headers", label: "Safe response headers", type: "object", required: true },
+      { key: "body", label: "Response body", type: "string", required: true },
+      { key: "json", label: "Parsed JSON", type: "object" },
+      { key: "durationMs", label: "Duration", type: "number", required: true },
+      { key: "acknowledged", label: "Acknowledged", type: "boolean", required: true },
     ],
     requiredScopes: [],
     connectionRequired: false,
@@ -229,6 +261,9 @@ const httpPostHandler: ConnectorActionHandler = async (input, context) => {
   }
 };
 
+const httpRequestHandler: ConnectorActionHandler = async (input, context) =>
+  (await import("@/lib/http-request-runtime")).executeHttpConnectorRequest(input, context);
+
 const internalActionHandler: ConnectorActionHandler = async (input, context) => ({
   status: "succeeded",
   acknowledged: true,
@@ -262,7 +297,7 @@ const connectors: RegisteredConnector[] = [
       },
     },
   },
-  { manifest: genericHttpManifest, runtime: { actionHandlers: { "post_json@1": httpPostHandler }, triggerHandlers: {} } },
+  { manifest: genericHttpManifest, runtime: { actionHandlers: { "post_json@1": httpPostHandler, "request@2": httpRequestHandler }, triggerHandlers: {} } },
   {
     manifest: googleGmailManifest,
     runtime: {

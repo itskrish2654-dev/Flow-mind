@@ -6,6 +6,7 @@ import {
 } from "@/lib/capability-registry";
 import { parseScheduleLanguage, type ScheduleDefinition } from "@/lib/scheduling";
 import type { FormatterConfig, FormatterOperation, FormatterSource } from "@/lib/formatter";
+import type { HttpRequestConfig } from "@/lib/schemas/workflow";
 
 export const PLANNING_STATUSES = [
   "READY_TO_COMPILE",
@@ -21,6 +22,7 @@ export type PlannedCapability = {
   displayName: string;
   instruction?: string;
   formatter?: FormatterConfig;
+  http?: HttpRequestConfig;
 };
 
 export type PlannedCondition = {
@@ -146,7 +148,7 @@ function formatterSource(field: string): FormatterSource {
   const path = normalizeFieldPath(field
     .replace(/[’']s\b/gi, "")
     .replace(/\binstead\b/gi, "")
-    .replace(/\b(customer|submitted|input|field|value|the)\b/gi, " ")
+    .replace(/\b(customer|submitted|input|field|value|the|response)\b/gi, " ")
     .trim());
   return { kind: "trigger", path };
 }
@@ -193,7 +195,7 @@ function detectFormatterTransformations(prompt: string): PlannedCapability[] {
 
   matchAll(/\btrim\s+(?:the\s+)?([a-z][a-z0-9 _'’-]{0,40}?)(?=\s+(?:then|and then|before|after)\b|[.,;]|$)/gi, (match) => add(match.index, "trim", match[1]));
   matchAll(/\bremove\s+(?:the\s+)?spaces\s+around\s+(?:the\s+)?([a-z][a-z0-9 _'’-]{0,40}?)(?=[.,;]|$)/gi, (match) => add(match.index, "trim", match[1]));
-  matchAll(/\b(?:make|convert)\s+(?:the\s+)?([a-z][a-z0-9 _-]{0,40}?)\s+(?:to\s+|into\s+)?title case\b/gi, (match) => add(match.index, "title_case", match[1]));
+  matchAll(/\b(?:make|convert|format)\s+(?:the\s+)?([a-z][a-z0-9 _-]{0,40}?)\s+(?:to\s+|into\s+)?title case\b/gi, (match) => add(match.index, "title_case", match[1]));
   matchAll(/\b(?:make|convert)\s+(?:the\s+)?([a-z][a-z0-9 _-]{0,40}?)\s+(?:to\s+|into\s+)?(uppercase|upper case|lowercase|lower case)\b/gi, (match) => add(match.index, /upper/i.test(match[2]) ? "uppercase" : "lowercase", match[1]));
   matchAll(/\breplace\s+["']([^"']{1,200})["']\s+with\s+["']([^"']{0,200})["']\s+in\s+(?:the\s+)?([a-z][a-z0-9 _-]{0,40}?)(?=[.,;]|$)/gi, (match) => add(match.index, "replace", match[3], { find: match[1], replacement: match[2] }));
   matchAll(/\bsplit\s+(?:the\s+)?([a-z][a-z0-9 _-]{0,40}?)\s+(?:by|on)\s+["']([^"']{1,50})["']/gi, (match) => add(match.index, "split", match[1], { separator: match[2] }));
@@ -232,6 +234,66 @@ function detectsWebhookTrigger(prompt: string): boolean {
 
 function detectsHttpDestination(prompt: string): boolean {
   return /\b(post (?:json|it|the result)|send (?:it|the result) to (?:an? )?webhook|http request)\b/i.test(prompt);
+}
+
+type HttpPlanning = {
+  requested: boolean;
+  capability: PlannedCapability | null;
+  missingUrl: boolean;
+  ambiguousMethod: boolean;
+  ambiguousAuth: boolean;
+};
+
+function planHttpRequest(prompt: string): HttpPlanning {
+  if (/\bpost\s+(?:it|the\s+result)\s+to\s+https:\/\//i.test(prompt) && !/\b(?:api|http\s+request)\b/i.test(prompt)) {
+    return { requested: false, capability: null, missingUrl: false, ambiguousMethod: false, ambiguousAuth: false };
+  }
+  const requested = /\b(?:api|endpoint|http\s+request|http\s+(?:get|post|put|patch|delete)|call\s+(?:this|the|an?)\s+api)\b/i.test(prompt)
+    || /https:\/\/[^\s)\]]+/i.test(prompt);
+  if (!requested) return { requested: false, capability: null, missingUrl: false, ambiguousMethod: false, ambiguousAuth: false };
+  const url = prompt.match(/https:\/\/[^\s)\]}>,;]+/i)?.[0]?.replace(/[.!?]+$/, "");
+  const explicit = prompt.match(/\b(GET|POST|PUT|PATCH|DELETE)\b/i)?.[1]?.toUpperCase() as HttpRequestConfig["method"] | undefined;
+  const ambiguousMethod = !explicit && /\b(update|modify|change)\b/i.test(prompt);
+  const method: HttpRequestConfig["method"] | null = explicit
+    ?? (/\b(delete|remove)\b/i.test(prompt) ? "DELETE"
+      : /\b(send|post|create|submit)\b/i.test(prompt) ? "POST"
+      : /\b(get|fetch|retrieve|read|list)\b/i.test(prompt) ? "GET"
+      : null);
+  const authType: HttpRequestConfig["authType"] = /\bbearer(?:\s+token)?\b/i.test(prompt)
+    ? "bearer"
+    : /\bbasic\s+auth(?:entication)?\b/i.test(prompt)
+      ? "basic"
+      : /\bapi\s+key\b[^.]{0,50}\bquery\b|\bquery\b[^.]{0,50}\bapi\s+key\b/i.test(prompt)
+        ? "api_key_query"
+        : /\bapi\s+key\b/i.test(prompt)
+          ? "api_key_header"
+          : "none";
+  const ambiguousAuth = authType === "none" && /\b(authenticated|authentication|secured?\s+api|with\s+auth)\b/i.test(prompt);
+  const authName = prompt.match(/\b(?:header|query(?:\s+parameter)?)\s+(?:named?|name\s+is)\s+["']?([A-Za-z][A-Za-z0-9_-]{0,79})/i)?.[1];
+  const authUsername = prompt.match(/\busername\s+(?:is\s+)?["']?([^\s"']{1,100})/i)?.[1];
+  if (!url || !method || ambiguousMethod || ambiguousAuth) {
+    return { requested: true, capability: null, missingUrl: !url, ambiguousMethod: ambiguousMethod || !method, ambiguousAuth };
+  }
+  return {
+    requested: true,
+    capability: {
+      ...plannedCapability("http.request"),
+      http: {
+        version: 2,
+        url,
+        method,
+        authType,
+        ...(authName ? { authName } : {}),
+        ...(authUsername ? { authUsername } : {}),
+        ...(/\bX-Idempotency-Key\b/i.test(prompt) ? { idempotencyHeader: "X-Idempotency-Key" as const }
+          : /\bIdempotency-Key\b/i.test(prompt) ? { idempotencyHeader: "Idempotency-Key" as const } : {}),
+        timeoutMs: 10_000,
+      },
+    },
+    missingUrl: false,
+    ambiguousMethod: false,
+    ambiguousAuth: false,
+  };
 }
 
 function detectsInternalDestination(prompt: string): boolean {
@@ -398,6 +460,27 @@ export function planWorkflow(prompt: string): WorkflowPlan {
     };
   }
 
+  const httpPlanning = planHttpRequest(normalizedPrompt);
+  if (httpPlanning.requested && (httpPlanning.missingUrl || httpPlanning.ambiguousMethod || httpPlanning.ambiguousAuth)) {
+    const missingRequirements: string[] = [];
+    const clarificationQuestions: string[] = [];
+    if (httpPlanning.missingUrl) {
+      missingRequirements.push("API endpoint");
+      clarificationQuestions.push("What API endpoint should CrazyLoops call?");
+    }
+    if (httpPlanning.ambiguousMethod) {
+      missingRequirements.push("HTTP method");
+      clarificationQuestions.push(/\b(update|modify|change)\b/i.test(normalizedPrompt)
+        ? "Should CrazyLoops update this record with PATCH or replace it completely with PUT?"
+        : "Should CrazyLoops create, update, or delete the record?");
+    }
+    if (httpPlanning.ambiguousAuth) {
+      missingRequirements.push("authentication method");
+      clarificationQuestions.push("How should CrazyLoops authenticate with this API?");
+    }
+    return { ...base, status: "NEEDS_CLARIFICATION", missingRequirements, message: "CrazyLoops needs the missing API details before it can build this request.", clarificationQuestions };
+  }
+
   const formatterTransformations = detectFormatterTransformations(normalizedPrompt);
   if (/\bconvert\b[^.]{0,80}\b(?:local time|local timezone)\b/i.test(normalizedPrompt)) {
     return {
@@ -455,7 +538,12 @@ export function planWorkflow(prompt: string): WorkflowPlan {
     : detectsPublicFormTrigger(normalizedPrompt)
       ? plannedCapability("public_form_submission")
       : null;
-  const transformations = [...formatterTransformations, ...detectTransformations(normalizedPrompt)];
+  const httpCapability = httpPlanning.capability;
+  const transformations = [
+    ...(httpCapability?.http?.method === "GET" ? [httpCapability] : []),
+    ...formatterTransformations,
+    ...detectTransformations(normalizedPrompt),
+  ];
   const condition = parseCondition(normalizedPrompt);
   if (condition?.usesAiClassification && !transformations.some((item) => /classif/i.test(item.instruction ?? ""))) {
     transformations.push(plannedCapability("ai_text_transform", `Classify whether the input matches this criterion: ${condition.humanLabel.replace(/^If\s+/i, "")}. Return a short, direct classification.`));
@@ -465,9 +553,16 @@ export function planWorkflow(prompt: string): WorkflowPlan {
   const trueBranchText = condition ? (branchParts[0].split(/\bthen\b/i).at(-1) ?? branchParts[0]) : normalizedPrompt;
   const falseBranchText = condition && branchParts.length > 1 ? branchParts.slice(1).join(" ") : "";
   const destinationOptions = { asksForGmail: false, asksForSheets: false, asksForSlack: false, asksForNotion: false, asksForWebhook, triggerPresent: Boolean(trigger) };
-  const destination = condition
+  const detectedDestination = condition
     ? detectDestination(trueBranchText, destinationOptions)
     : detectDestination(normalizedPrompt, { ...destinationOptions, asksForGmail, asksForSheets, asksForSlack, asksForNotion });
+  const destination = httpCapability && httpCapability.http?.method !== "GET"
+    ? httpCapability
+    : httpCapability?.http?.method === "GET" && detectedDestination?.capabilityId === "generic_http_action" && detectsInternalDestination(normalizedPrompt)
+      ? plannedCapability("flowmind_data_store")
+    : detectedDestination?.capabilityId === "generic_http_action" && httpCapability
+      ? httpCapability
+      : detectedDestination;
   const otherwiseDestination = condition && falseBranchText
     ? detectDestination(falseBranchText, destinationOptions)
     : null;

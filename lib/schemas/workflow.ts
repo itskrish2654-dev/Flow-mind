@@ -4,6 +4,7 @@ export const StepInputSchema = z.object({
   key: z.string(),
   label: z.string().min(1),
   type: z.enum(["text", "url", "secret"]),
+  required: z.boolean().optional(),
   placeholder: z.string().optional(),
   value: z.string().optional(),
   helpText: z.string().min(1).optional(),
@@ -151,6 +152,21 @@ export const FormatterConfigSchema = z.object({
   durationUnit: z.enum(["minutes", "hours", "days"]).optional(),
 });
 
+export const HttpRequestConfigSchema = z.object({
+  version: z.literal(2),
+  url: z.string().url().max(2_048),
+  method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
+  query: z.record(z.string(), z.string()).optional(),
+  headers: z.record(z.string(), z.string()).optional(),
+  body: z.unknown().optional(),
+  timeoutMs: z.number().int().min(1_000).max(15_000).optional(),
+  authType: z.enum(["none", "bearer", "basic", "api_key_header", "api_key_query"]).default("none"),
+  authUsername: z.string().max(200).optional(),
+  authName: z.string().max(120).optional(),
+  idempotencyHeader: z.enum(["Idempotency-Key", "X-Idempotency-Key"]).optional(),
+  allowDeleteBody: z.boolean().optional(),
+});
+
 export const WorkflowStepSchema = z.object({
   id: z.string(),
   type: z.enum([
@@ -176,9 +192,10 @@ export const WorkflowStepSchema = z.object({
   config: z
     .object({
       endpoint: z.string().optional(),
-      method: z.enum(["GET", "POST", "PUT", "DELETE"]).optional(),
+      method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]).optional(),
       transformPrompt: z.string().optional(),
       formatter: FormatterConfigSchema.optional(),
+      http: HttpRequestConfigSchema.optional(),
       documentTemplate: z.string().max(50_000).optional(),
       schedule: z
         .object({
@@ -268,3 +285,4 @@ export type PublicFormField = z.infer<typeof PublicFormFieldSchema>;
 export type PublicFormFieldType = z.infer<typeof PublicFormFieldTypeSchema>;
 export type DataTableColumn = z.infer<typeof DataTableColumnSchema>;
 export type DataTableDefinition = z.infer<typeof DataTableDefinitionSchema>;
+export type HttpRequestConfig = z.infer<typeof HttpRequestConfigSchema>;

@@ -76,6 +76,23 @@ export const CAPABILITY_REGISTRY = {
     limitations: ["HTTPS JSON POST only; private networks and redirects are blocked."],
     aliases: ["http request", "post json", "send to webhook"],
   }),
+  "http.request": defineCapability({
+    id: "http.request",
+    displayName: "HTTP request",
+    category: "transformation",
+    supported: true,
+    executionImplementation: "connector:flowmind_http/request@2",
+    requiredSetupFields: [{ key: "destination_url", label: "API endpoint", type: "url" }],
+    credentialsRequired: false,
+    availableInTest: true,
+    availableInProduction: true,
+    limitations: [
+      "Supports GET, POST, PUT, PATCH, and DELETE to public HTTPS endpoints only.",
+      "Private, local, metadata, redirect, oversized, and DNS-rebinding destinations are blocked.",
+      "Bearer tokens, Basic Auth passwords, and API keys are stored only in the encrypted workflow vault.",
+    ],
+    aliases: ["api request", "http get", "http post", "http put", "http patch", "http delete", "call an api", "fetch api"],
+  }),
   ai_text_transform: defineCapability({
     id: "ai_text_transform",
     displayName: "AI text transformation",
@@ -562,6 +579,7 @@ export function resolveStepCapabilityId(
       generate_pdf: ["generate_pdf"],
       webhook_post: ["webhook_post", "http_request"],
       generic_http_action: ["webhook_post", "http_request"],
+      "http.request": ["http_request"],
       gmail_new_email: ["connector_trigger"],
       gmail_new_email_matching_search: ["connector_trigger"],
       gmail_send_email: ["connector_action"],
@@ -610,7 +628,9 @@ export function resolveStepCapabilityId(
     case "webhook_post":
     case "http_request":
       return step.config?.connector?.connectorId === "flowmind_http"
-        ? "generic_http_action"
+        ? step.config.connector.operationKey === "request" && step.config.connector.operationVersion === 2
+          ? "http.request"
+          : "generic_http_action"
         : "webhook_post";
     case "filter_condition":
       return "condition.if";

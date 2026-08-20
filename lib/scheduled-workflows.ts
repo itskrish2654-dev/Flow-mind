@@ -61,7 +61,7 @@ async function executeClaimedSchedule(input: {
     triggerType: "schedule",
     triggerMetadata: { scheduleId: input.scheduleId, occurrenceId: input.occurrenceId, scheduledFor: input.scheduledFor.toISOString(), mode: "live" },
     idempotencyKey,
-    inputData: inputValues,
+    inputData: { scheduled_at: input.scheduledFor.toISOString(), schedule_timezone: input.timezone },
   });
   await admin.from("workflow_schedule_occurrences").update({ execution_id: durable.id, status: durable.created ? "running" : "duplicate" }).eq("id", input.occurrenceId).eq("user_id", input.userId);
   if (!durable.created) return { executionId: durable.id, duplicate: true, ok: durable.status === "succeeded" };

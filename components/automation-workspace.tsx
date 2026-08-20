@@ -881,6 +881,18 @@ function Inspector({
             )}
           </div>
         )}
+        {step.capabilityId === "http.request" && step.config?.http && (
+          <div className="mb-4 rounded-xl border border-[#ded6ca] bg-[#f8f4ec] p-3.5">
+            <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">Request configuration</p>
+            <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-slate-700">
+              <span className="rounded-full border border-[#ded6ca] bg-white px-2.5 py-1 font-semibold">{step.config.http.method}</span>
+              <span className="rounded-full border border-[#ded6ca] bg-white px-2.5 py-1">
+                Authentication: {step.config.http.authType === "none" ? "None" : step.config.http.authType === "bearer" ? "Bearer token" : step.config.http.authType === "basic" ? "Basic Auth" : step.config.http.authType === "api_key_header" ? "API key in header" : "API key in query"}
+              </span>
+            </div>
+            <p className="mt-2 text-[9px] leading-4 text-slate-500">Redirects, private networks, metadata endpoints, and oversized responses are blocked.</p>
+          </div>
+        )}
         {inputs.length === 0 ? (
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-center">
             <CheckCircle2 className="mx-auto size-5 text-emerald-500" />
@@ -1053,6 +1065,15 @@ function Inspector({
                               </option>
                             ))}
                           </select>
+                        ) : step.capabilityId === "http.request" && ["query_parameters", "request_headers", "json_body"].includes(input.key) ? (
+                          <textarea
+                            id={id}
+                            value={value}
+                            onChange={(event) => onChange(id, event.target.value)}
+                            placeholder={input.key === "json_body" ? '{\n  "name": "Example"\n}' : "name = value"}
+                            rows={input.key === "json_body" ? 5 : 3}
+                            className="w-full resize-y rounded-lg border border-[#ded6ca] bg-[#f8f4ec] px-3 py-2 text-[10px] text-slate-800 outline-none placeholder:text-slate-400 focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200"
+                          />
                         ) : (
                           <input
                             id={id}
@@ -1111,7 +1132,7 @@ function Inspector({
                                 workflowId,
                                 connectorId,
                                 credentialKey: input.key,
-                                credentialType: "api_key",
+                                credentialType: step.config?.http?.authType === "basic" ? "password" : step.config?.http?.authType === "bearer" ? "oauth_token" : "api_key",
                                 secret: value,
                               });
                               setCredentialBusy(null);
@@ -1125,6 +1146,7 @@ function Inspector({
                                 ),
                               );
                               onChange(id, "");
+                              window.dispatchEvent(new CustomEvent("crazyloops:credentials-changed"));
                             }}
                             className="h-8 rounded-lg border border-[#d7aa2f] px-2.5 text-[9px] font-semibold text-[#6f5100] disabled:opacity-40"
                           >
@@ -1155,6 +1177,7 @@ function Inspector({
                                     next.delete(`${connectorId}:${input.key}`);
                                     return next;
                                   });
+                                  window.dispatchEvent(new CustomEvent("crazyloops:credentials-changed"));
                                 } else setCredentialError(result.error);
                               }}
                               className="h-8 text-[9px] font-semibold text-rose-600"
@@ -1185,10 +1208,8 @@ function Inspector({
                           {notionSourceInfo && <p className="mt-2 text-[9px] leading-4 text-slate-500">{notionSourceInfo.properties.map((property) => `${property.name} · ${property.type}${property.supported ? "" : " (not supported)"}`).join(" · ")}</p>}
                         </div>
                       )}
-                      {input.type === "url" &&
-                        ["webhook_post", "http_request"].includes(
-                          step.type,
-                        ) && (
+                      {input.type === "url" && step.capabilityId !== "http.request" &&
+                        ["webhook_post", "http_request"].includes(step.type) && (
                           <button
                             type="button"
                             disabled={!value}
@@ -1256,7 +1277,22 @@ export function AutomationWorkspace({
   const [planning, setPlanning] = useState<WorkflowPlan | null>(null);
   const [connectorRequestMessage, setConnectorRequestMessage] = useState<string | null>(null);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
+  const [configuredCredentialKeys, setConfiguredCredentialKeys] = useState<Set<string>>(new Set());
   const buildRequestInFlight = useRef(false);
+
+  useEffect(() => {
+    let active = true;
+    const refreshCredentials = () => {
+      if (!workflowId) { setConfiguredCredentialKeys(new Set()); return; }
+      void getWorkflowCredentialMetadata(workflowId).then((result) => {
+        if (!active || !result.ok) return;
+        setConfiguredCredentialKeys(new Set(result.credentials.map((credential) => `${credential.connectorId}:${credential.credentialKey}`)));
+      });
+    };
+    refreshCredentials();
+    window.addEventListener("crazyloops:credentials-changed", refreshCredentials);
+    return () => { active = false; window.removeEventListener("crazyloops:credentials-changed", refreshCredentials); };
+  }, [workflowId]);
 
   useEffect(() => {
     if (!initialDraftReady) return;
@@ -1309,12 +1345,18 @@ export function AutomationWorkspace({
   function stepIsReady(step: Step) {
     if (step.capabilityStatus === "unsupported") return false;
     if (step.config?.connector && !step.config.connector.connectorId.startsWith("flowmind_") && !step.config.connector.connectionId) return false;
+    if (step.capabilityId === "http.request") {
+      const endpoint = values[inputId(step.id, "destination_url")] ?? step.config?.http?.url ?? step.config?.endpoint ?? "";
+      return Boolean(endpoint.trim()) && inputsFor(step).every((input) => {
+        if (input.required === false) return true;
+        if (input.type === "secret" && configuredCredentialKeys.has(`${step.capabilityId ?? step.type}:${input.key}`)) return true;
+        return Boolean((values[inputId(step.id, input.key)] ?? input.value ?? "").trim());
+      });
+    }
     if (["webhook_post", "http_request"].includes(step.type)) {
       return Boolean(step.config?.endpoint?.trim());
     }
-    return inputsFor(step).every((input) =>
-      (values[inputId(step.id, input.key)] ?? input.value ?? "").trim(),
-    );
+    return inputsFor(step).every((input) => input.required === false || Boolean((values[inputId(step.id, input.key)] ?? input.value ?? "").trim()));
   }
 
   const readySteps = steps.filter(stepIsReady).length;
@@ -1457,6 +1499,7 @@ export function AutomationWorkspace({
     }
     const sideEffects = steps.flatMap((step) => {
       if (step.type === "connector_action") return [`This live test will run “${toPlainEnglish(step.title)}” in the connected app.`];
+      if (step.capabilityId === "http.request") return [step.config?.http?.method === "GET" ? "This test will make a real request to this API." : "This test will make a real external request and may change data."];
       if (["webhook_post", "http_request"].includes(step.type)) return ["This live test will send data to the configured external destination."];
       return [];
     });

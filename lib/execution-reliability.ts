@@ -1,5 +1,7 @@
 import { AiExecutionError } from "@/lib/ai-execution-core";
 import { FormatterError } from "@/lib/formatter";
+import { ConnectorError } from "@/lib/connectors/errors";
+import type { HttpErrorCode } from "@/lib/http-request";
 
 export type ExecutionErrorCategory =
   | "timeout"
@@ -29,6 +31,7 @@ export type ExecutionErrorCategory =
   | "FORMATTER_INVALID_DATE"
   | "FORMATTER_TIMEZONE_REQUIRED"
   | "FORMATTER_OUTPUT_TOO_LARGE"
+  | HttpErrorCode
   | "unknown";
 
 export type ClassifiedExecutionError = {
@@ -54,6 +57,14 @@ export function classifyExecutionError(error: unknown): ClassifiedExecutionError
       category: error.code,
       retryable: false,
       safeMessage: error.message,
+    };
+  }
+  if (error instanceof ConnectorError) {
+    return {
+      category: error.details.code as ExecutionErrorCategory,
+      retryable: error.details.retryable,
+      safeMessage: error.details.message,
+      ...(error.details.retryAfterMs !== undefined ? { retryAfterMs: error.details.retryAfterMs } : {}),
     };
   }
   const message = error instanceof Error ? error.message : String(error);

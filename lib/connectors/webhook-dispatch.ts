@@ -13,18 +13,24 @@ function stringInputs(payload: unknown): Record<string, string> {
   return Object.fromEntries(Object.entries(payload).map(([key, value]) => [key, typeof value === "string" ? value : JSON.stringify(value)]));
 }
 
+function stringSetup(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+}
+
 export async function dispatchConnectorReceipt(receiptId: string) {
   const admin = createAdminClient();
   const { data: receipt } = await admin.from("connector_event_receipts").update({ status: "processing" }).eq("id", receiptId).eq("status", "queued").select("*").maybeSingle();
   if (!receipt) return;
   const { data: subscription } = await admin.from("connector_subscriptions").select("user_id, workflow_id, workflow_version_id, status").eq("id", receipt.subscription_id).eq("status", "active").maybeSingle();
   if (!subscription) { await admin.from("connector_event_receipts").update({ status: "failed", processed_at: new Date().toISOString() }).eq("id", receiptId); return; }
-  const { data: version } = await admin.from("workflow_versions").select("compiled_workflow").eq("id", subscription.workflow_version_id).eq("workflow_id", subscription.workflow_id).eq("user_id", subscription.user_id).maybeSingle();
+  const { data: version } = await admin.from("workflow_versions").select("compiled_workflow, setup_config").eq("id", subscription.workflow_version_id).eq("workflow_id", subscription.workflow_id).eq("user_id", subscription.user_id).maybeSingle();
   const workflow = CompiledWorkflowSchema.safeParse(version?.compiled_workflow);
   const { data: identity } = await admin.from("workflows").select("name, lifecycle_state").eq("id", subscription.workflow_id).eq("user_id", subscription.user_id).maybeSingle();
   if (!workflow.success || !identity || identity.lifecycle_state !== "active") { await admin.from("connector_event_receipts").update({ status: "failed", processed_at: new Date().toISOString() }).eq("id", receiptId); return; }
-  const inputValues = stringInputs(receipt.payload);
-  const durable = await createDurableExecution(admin, { workflowId: subscription.workflow_id, workflowVersionId: subscription.workflow_version_id, userId: subscription.user_id, triggerType: "connector_webhook", triggerMetadata: { subscriptionId: receipt.subscription_id }, idempotencyKey: `connector:${receipt.subscription_id}:${receipt.provider_event_key}`, inputData: inputValues });
+  const eventInputs = stringInputs(receipt.payload);
+  const inputValues = { ...stringSetup(version?.setup_config), ...eventInputs };
+  const durable = await createDurableExecution(admin, { workflowId: subscription.workflow_id, workflowVersionId: subscription.workflow_version_id, userId: subscription.user_id, triggerType: "connector_webhook", triggerMetadata: { subscriptionId: receipt.subscription_id }, idempotencyKey: `connector:${receipt.subscription_id}:${receipt.provider_event_key}`, inputData: eventInputs });
   if (!durable.created) { await admin.from("connector_event_receipts").update({ status: "duplicate", execution_id: durable.id, processed_at: new Date().toISOString() }).eq("id", receiptId); return; }
   await admin.from("connector_event_receipts").update({ execution_id: durable.id }).eq("id", receiptId).eq("status", "processing");
   try {

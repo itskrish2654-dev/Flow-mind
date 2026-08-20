@@ -14,7 +14,7 @@ import { securityLog } from "@/lib/security/redaction";
 
 const CredentialIdentitySchema = z.object({
   workflowId: z.string().uuid(),
-  connectorId: z.string().trim().min(1).max(80).regex(/^[a-z0-9_-]+$/i),
+  connectorId: z.string().trim().min(1).max(80).regex(/^[a-z0-9_.-]+$/i),
   credentialKey: z.string().trim().min(1).max(80).regex(/^[a-z0-9_-]+$/i),
 });
 

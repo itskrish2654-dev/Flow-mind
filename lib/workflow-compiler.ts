@@ -50,6 +50,39 @@ function connectorConfig(connector: NonNullable<NonNullable<Step["config"]>["con
   return { connector, ...(branch ? { branch } : {}) };
 }
 
+function httpRequestStep(capability: PlannedCapability, id: string, branch?: Branch): Step {
+  const http = capability.http;
+  if (!http) throw new Error("HTTP request planning data is missing.");
+  const inputs: NonNullable<Step["inputsRequired"]> = [
+    { key: "destination_url", label: "API endpoint", type: "url", value: http.url, helpText: "A public HTTPS API endpoint." },
+    { key: "query_parameters", label: "Query parameters", type: "text", required: false, value: http.query ? JSON.stringify(http.query, null, 2) : "", helpText: "Optional name and value pairs; CrazyLoops URL-encodes them safely." },
+    { key: "request_headers", label: "Request headers", type: "text", required: false, value: http.headers ? JSON.stringify(http.headers, null, 2) : "", helpText: "Optional safe headers. Configure authentication separately below." },
+    { key: "request_timeout", label: "Timeout in milliseconds", type: "text", required: false, value: String(http.timeoutMs ?? 10_000), helpText: "Between 1000 and 15000 milliseconds." },
+  ];
+  if (["POST", "PUT", "PATCH"].includes(http.method) || (http.method === "DELETE" && http.allowDeleteBody)) {
+    inputs.push({ key: "json_body", label: "JSON request body", type: "text", required: false, value: http.body === undefined ? "" : JSON.stringify(http.body, null, 2), helpText: "A bounded JSON object. Workflow values are included automatically when left empty." });
+  }
+  if (http.authType === "basic") inputs.push({ key: "auth_username", label: "Basic Auth username", type: "text", value: http.authUsername });
+  if (http.authType === "api_key_header" || http.authType === "api_key_query") inputs.push({ key: "auth_name", label: http.authType === "api_key_header" ? "API key header name" : "API key query name", type: "text", value: http.authName });
+  if (http.authType !== "none") inputs.push({ key: "auth_secret", label: http.authType === "bearer" ? "Bearer token" : http.authType === "basic" ? "Password" : "API key", type: "secret", helpText: "Encrypted in the CrazyLoops vault and never shown again after saving." });
+  const verb = http.method.charAt(0) + http.method.slice(1).toLowerCase();
+  return {
+    id,
+    type: "http_request",
+    capabilityId: "http.request",
+    title: `${verb} API data`,
+    description: `${http.method} ${new URL(http.url).hostname}. Redirects and private destinations are blocked.`,
+    inputsRequired: inputs,
+    config: {
+      http,
+      method: http.method,
+      endpoint: http.url,
+      ...(branch ? { branch } : {}),
+      connector: { connectorId: "flowmind_http", operationKind: "action", operationKey: "request", operationVersion: 2, mappings: [] },
+    },
+  };
+}
+
 function destinationStep(
   destination: PlannedCapability,
   id: string,
@@ -59,6 +92,7 @@ function destinationStep(
   branch?: Branch,
 ): Step {
   const capabilityId = destination.capabilityId;
+  if (capabilityId === "http.request") return httpRequestStep(destination, id, branch);
   if (capabilityId.startsWith("google_sheets_")) {
     const operationKey = capabilityId.replace("google_sheets_", "");
     const operationInputs = operationKey === "find_row"
@@ -108,12 +142,19 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
   const latestFormatterStepByTriggerPath = new Map<string, string>();
   for (const transformation of plan.transformations) {
     const id = `step_${steps.length + 1}`;
+    if (transformation.capabilityId === "http.request") {
+      steps.push(httpRequestStep(transformation, id));
+      continue;
+    }
+    const latestHttpStep = [...steps].reverse().find((step) => step.capabilityId === "http.request");
     const formatter = transformation.formatter
       ? {
           ...transformation.formatter,
           source: transformation.formatter.source.kind === "trigger" && transformation.formatter.source.path && latestFormatterStepByTriggerPath.has(transformation.formatter.source.path)
             ? { kind: "step" as const, stepId: latestFormatterStepByTriggerPath.get(transformation.formatter.source.path), path: "value" }
-            : transformation.formatter.source,
+            : transformation.formatter.source.kind === "trigger" && latestHttpStep
+              ? { kind: "step" as const, stepId: latestHttpStep.id, path: transformation.formatter.source.path ?? "json" }
+              : transformation.formatter.source,
         }
       : null;
     steps.push(transformation.capabilityId === "formatter.transform" && formatter
@@ -128,7 +169,11 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
 
   if (plan.condition) {
     const conditionId = `step_${steps.length + 1}`;
-    steps.push({ id: conditionId, type: "filter_condition", capabilityId: "condition.if", title: plan.condition.humanLabel, description: `${plan.condition.humanLabel}. Only the matching branch will run.`, config: { condition: { sourcePath: plan.condition.sourcePath, operator: plan.condition.operator, ...(plan.condition.expectedValue !== undefined ? { expectedValue: plan.condition.expectedValue } : {}), humanLabel: plan.condition.humanLabel } } });
+    const latestHttpStep = [...steps].reverse().find((step) => step.capabilityId === "http.request");
+    const sourcePath = latestHttpStep && /^response(?:_|\.)?/i.test(plan.condition.sourcePath)
+      ? `${latestHttpStep.id}.${plan.condition.sourcePath.replace(/^response(?:_|\.)?/i, "") || "status"}`
+      : plan.condition.sourcePath;
+    steps.push({ id: conditionId, type: "filter_condition", capabilityId: "condition.if", title: plan.condition.humanLabel, description: `${plan.condition.humanLabel}. Only the matching branch will run.`, config: { condition: { sourcePath, operator: plan.condition.operator, ...(plan.condition.expectedValue !== undefined ? { expectedValue: plan.condition.expectedValue } : {}), humanLabel: plan.condition.humanLabel } } });
     steps.push(destinationStep(plan.destination, `step_${steps.length + 1}`, prompt, steps, workflowName, { conditionStepId: conditionId, when: "true" }));
     if (plan.otherwiseDestination) steps.push(destinationStep(plan.otherwiseDestination, `step_${steps.length + 1}`, prompt, steps, workflowName, { conditionStepId: conditionId, when: "false" }));
   } else {
@@ -139,6 +184,8 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
     ?? (plan.trigger.capabilityId === "generic_webhook_trigger" ? "Receives an authenticated CrazyLoops webhook event" : plan.trigger.displayName);
   const describeDestination = (destination: typeof plan.destination) => destination.capabilityId === "generic_http_action"
     ? "posts the result as JSON"
+    : destination.capabilityId === "http.request"
+      ? `${destination.http?.method ?? "HTTP"} request`
     : destination.displayName;
   const summary = [triggerSummary, ...plan.transformations.map((item) => item.displayName), ...(plan.condition ? [plan.condition.humanLabel, `${describeDestination(plan.destination)}${plan.otherwiseDestination ? `; otherwise ${describeDestination(plan.otherwiseDestination)}` : ""}`] : [describeDestination(plan.destination)])].join(" → ").slice(0, 300);
   const basePublicForm = plan.trigger.capabilityId === "public_form_submission" ? createPublicFormDefinition(prompt, workflowName, summary) : undefined;

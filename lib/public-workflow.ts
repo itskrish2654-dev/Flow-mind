@@ -68,7 +68,7 @@ export async function getPublicExecutableWorkflow(workflowId: string) {
     if (error || !data?.user_id || !data.current_version_id || data.lifecycle_state !== "active") return null;
     const { data: version, error: versionError } = await admin
       .from("workflow_versions")
-      .select("id, compiled_workflow")
+      .select("id, compiled_workflow, setup_config")
       .eq("id", data.current_version_id)
       .eq("workflow_id", publicWorkflow.id)
       .eq("user_id", data.user_id)
@@ -85,6 +85,9 @@ export async function getPublicExecutableWorkflow(workflowId: string) {
       ownerId: data.user_id,
       versionId: version.id,
       workflow: parsed.data,
+      setupConfig: version.setup_config && typeof version.setup_config === "object" && !Array.isArray(version.setup_config)
+        ? Object.fromEntries(Object.entries(version.setup_config).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
+        : {},
       capabilityError: unavailable?.assessment.message ?? null,
       admin,
     };

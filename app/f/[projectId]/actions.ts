@@ -294,7 +294,7 @@ export async function submitPublicWorkflow(
             workflowId: publicWorkflow.id,
             workflowName: publicWorkflow.name,
             steps: publicWorkflow.workflow.steps,
-            inputValues: inputData,
+            inputValues: { ...publicWorkflow.setupConfig, ...inputData },
             mode: "public-form",
             executeAi: async (input) => {
               await enforceRateLimit(

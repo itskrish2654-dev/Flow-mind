@@ -137,7 +137,10 @@ export async function runTestWorkflow(
   const setupInput = Object.fromEntries(Object.entries(request.data.inputValues).filter(([key]) => !key.startsWith("test_input:")));
   const authoritativeSetup = sanitizeSetupConfig(setupInput, isSensitiveFieldName);
   const runtimeInputValues = { ...setupInput, ...testInput };
-  const durableInput = { ...authoritativeSetup, ...testInput };
+  // Execution history stores the trigger sample, not reusable request setup.
+  // The immutable version already owns setup; this avoids duplicating URLs,
+  // headers, or other configuration into every execution row.
+  const durableInput = testInput;
   const normalize = (value: Record<string, string>) => JSON.stringify(
     Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right))),
   );
@@ -436,7 +439,7 @@ export async function retryWorkflowExecution(executionId: string): Promise<TestW
     return { ok: false, error: "This execution cannot be retried because its exact workflow version is unavailable." };
   }
   const { data: version } = await admin.from("workflow_versions")
-    .select("compiled_workflow")
+    .select("compiled_workflow, setup_config")
     .eq("id", existing.workflow_version_id)
     .eq("workflow_id", existing.workflow_id)
     .eq("user_id", auth.user.id)
@@ -452,13 +455,13 @@ export async function retryWorkflowExecution(executionId: string): Promise<TestW
     const metadata = step.sanitized_output_metadata;
     if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return latest;
     const aiProvider = metadata.aiProvider;
-    if (!aiProvider || typeof aiProvider !== "object" || Array.isArray(aiProvider)) return latest;
-    const delayMs = typeof aiProvider.retryAfterMs === "number" ? aiProvider.retryAfterMs : 0;
+    const aiDelay = aiProvider && typeof aiProvider === "object" && !Array.isArray(aiProvider) && typeof aiProvider.retryAfterMs === "number" ? aiProvider.retryAfterMs : 0;
+    const delayMs = typeof metadata.retryAfterMs === "number" ? metadata.retryAfterMs : aiDelay;
     return Math.max(latest, Date.parse(step.completed_at) + Math.max(0, delayMs));
   }, 0);
   if (retryNotBefore > Date.now()) {
     const seconds = Math.max(1, Math.ceil((retryNotBefore - Date.now()) / 1_000));
-    return { ok: false, error: `AI is temporarily busy. Retry this step in ${seconds} seconds.` };
+    return { ok: false, error: `The provider requested a cooldown. Retry this step in ${seconds} seconds.` };
   }
   const completedStepIds = new Set(
     (stepRows ?? []).filter((step) => step.status === "succeeded").map((step) => step.workflow_step_id),
@@ -498,13 +501,23 @@ export async function retryWorkflowExecution(executionId: string): Promise<TestW
     return { ok: false, error: "No safely retryable failed step is available. Completed or ambiguous external steps will not be repeated." };
   }
 
-  const inputValues = existing.input_data && typeof existing.input_data === "object" && !Array.isArray(existing.input_data)
+  const executionInputs = existing.input_data && typeof existing.input_data === "object" && !Array.isArray(existing.input_data)
     ? Object.fromEntries(Object.entries(existing.input_data).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
     : {};
+  const setupInputs = version?.setup_config && typeof version.setup_config === "object" && !Array.isArray(version.setup_config)
+    ? Object.fromEntries(Object.entries(version.setup_config).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
+    : {};
+  const inputValues = { ...setupInputs, ...executionInputs };
   const priorOutput = existing.output_data && typeof existing.output_data === "object" && !Array.isArray(existing.output_data)
     ? existing.output_data
     : {};
   const priorAiResult = typeof priorOutput.ai_result === "string" ? priorOutput.ai_result : null;
+  const priorHttpOutputs: Record<string, Record<string, unknown>> = {};
+  if (priorOutput.http_results && typeof priorOutput.http_results === "object" && !Array.isArray(priorOutput.http_results)) {
+    for (const [stepId, output] of Object.entries(priorOutput.http_results)) {
+      if (output && typeof output === "object" && !Array.isArray(output)) priorHttpOutputs[stepId] = output as Record<string, unknown>;
+    }
+  }
   const priorDocuments = Array.isArray(priorOutput.documents)
     ? priorOutput.documents.flatMap((document) => {
         if (!document || typeof document !== "object" || Array.isArray(document)) return [];
@@ -536,7 +549,7 @@ export async function retryWorkflowExecution(executionId: string): Promise<TestW
               ? "scheduled"
               : "public-form",
           completedStepIds,
-          resumeState: { aiResult: priorAiResult, documents: priorDocuments, conditionDecisions, stepOutputs: formatterStepOutputs },
+          resumeState: { aiResult: priorAiResult, documents: priorDocuments, conditionDecisions, stepOutputs: { ...formatterStepOutputs, ...priorHttpOutputs } },
           idempotencyKey: existing.idempotency_key,
           stateHooks: createExecutionStateHooks(admin, existing.id, {
             userId: auth.user.id,

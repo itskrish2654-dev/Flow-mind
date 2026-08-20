@@ -8,6 +8,7 @@ import {
 } from "@/lib/capability-registry";
 import { getConnectorOperation } from "@/lib/connectors/registry";
 import { ConnectorError } from "@/lib/connectors/errors";
+import type { ConnectorActionHandler } from "@/lib/connectors/types";
 import { applyFieldMappings, resolveMappingSource, type FieldMapping, type MappingSource } from "@/lib/connectors/mapping";
 import { executeFormatter, FormatterError, type FormatterSource } from "@/lib/formatter";
 import {
@@ -86,6 +87,7 @@ export type WorkflowExecutionResult = {
     ai_result: string | null;
     ai_metadata: Array<AiExecutionMetadata & { stepId: string }>;
     formatter_results: Record<string, { operation: string; outputKey: string; value: unknown }>;
+    http_results: Record<string, Record<string, unknown>>;
     steps: StepExecutionRecord[];
     logs: ExecutionLog[];
     delivered: boolean;
@@ -120,20 +122,22 @@ export function validateRequiredSetupInputs(
     }
 
     if (["webhook_post", "http_request"].includes(step.type)) {
-      if (!step.config?.endpoint?.trim()) {
+      const endpoint = inputValues[`${step.id}-destination_url`] ?? inputValues.destination_url ?? step.config?.http?.url ?? step.config?.endpoint;
+      if (!endpoint?.trim()) {
         return "Save a trusted webhook destination before running a test.";
       }
-      continue;
+      if (step.capabilityId !== "http.request") continue;
     }
 
       for (const input of step.inputsRequired ?? []) {
+        if (step.capabilityId === "http.request" && input.type === "secret") continue;
         const mapping = connectorConfig?.mappings.find((item) => item.target === input.key);
         const isResolvedByMapping = Boolean(
           mapping &&
           (mapping.source.kind !== "literal" ||
             (mapping.source.value !== undefined && mapping.source.value !== null && mapping.source.value !== "")),
         );
-        if (isResolvedByMapping) continue;
+        if (isResolvedByMapping || input.required === false) continue;
         const value = (
         inputValues[`${step.id}-${input.key}`] ??
         inputValues[input.key] ??
@@ -144,8 +148,8 @@ export function validateRequiredSetupInputs(
       if (input.type === "url") {
         try {
           const parsed = new URL(value);
-          if (!["http:", "https:"].includes(parsed.protocol)) {
-            return `${input.label} must be a valid http or https link.`;
+          if (step.capabilityId === "http.request" ? parsed.protocol !== "https:" : !["http:", "https:"].includes(parsed.protocol)) {
+            return step.capabilityId === "http.request" ? `${input.label} must be a public HTTPS link.` : `${input.label} must be a valid http or https link.`;
           }
         } catch {
           return `${input.label} must be a valid link.`;
@@ -172,6 +176,7 @@ function safeInputData(
       ([key, value]) =>
         !secretKeys.has(key) &&
         !key.endsWith("document_template") &&
+        !/(?:^|-)(?:destination_url|query_parameters|request_headers|json_body|request_timeout|auth_username|auth_name)$/.test(key) &&
         value.trim().length > 0,
     ),
   );
@@ -218,6 +223,7 @@ export async function executeWorkflowSteps({
   uploadGeneratedDocument,
   executeAi,
   executeWebhook = postTrustedWebhook,
+  executeHttpRequest,
   idempotencyKey,
   stateHooks,
   completedStepIds = new Set<string>(),
@@ -232,6 +238,7 @@ export async function executeWorkflowSteps({
   uploadGeneratedDocument?: GeneratedDocumentUpload;
   executeAi?: AiTextExecutor;
   executeWebhook?: TrustedWebhookExecutor;
+  executeHttpRequest?: ConnectorActionHandler;
   idempotencyKey?: string;
   stateHooks?: ExecutionStateHooks;
   completedStepIds?: Set<string>;
@@ -262,6 +269,7 @@ export async function executeWorkflowSteps({
   const triggerContext = Object.fromEntries(Object.entries(inputData).map(([key, value]) => [key, parseInputValue(value)]));
   const connectorStepOutputs: Record<string, Record<string, unknown>> = { ...(resumeState?.stepOutputs ?? {}) };
   const formatterResults: Record<string, { operation: string; outputKey: string; value: unknown }> = {};
+  const httpResults: Record<string, Record<string, unknown>> = {};
   let delivered = false;
   let aiResult: string | null = resumeState?.aiResult ?? null;
   let failureReason: string | null = null;
@@ -279,6 +287,7 @@ export async function executeWorkflowSteps({
         value: output.value,
       };
     }
+    if (steps.some((step) => step.id === stepId && step.capabilityId === "http.request")) httpResults[stepId] = output;
   }
   if (aiResult) {
     variables.ai_result = aiResult;
@@ -311,6 +320,7 @@ export async function executeWorkflowSteps({
         ai_result: aiResult,
         ai_metadata: aiMetadata,
         formatter_results: formatterResults,
+        http_results: httpResults,
         steps: records,
         logs,
         delivered,
@@ -404,11 +414,17 @@ export async function executeWorkflowSteps({
       logs.push({ icon: "✅", message, stepId: step.id, status: "succeeded" });
       await stateHooks?.onStepFinish?.(step, { status: "succeeded", message, metadata, providerReferenceId });
     };
-    const fail = async (message: string, status: "failed" | "skipped" = "failed", error?: unknown) => {
+    const fail = async (
+      message: string,
+      status: "failed" | "skipped" = "failed",
+      error?: unknown,
+      retryable?: boolean,
+      metadata?: Record<string, string | number | boolean | null>,
+    ) => {
       failureReason = message;
       records.push({ stepId: step.id, capabilityId, title: step.title, status, message });
       logs.push({ icon: status === "skipped" ? "⏭" : "❌", message, stepId: step.id, status });
-      await stateHooks?.onStepFinish?.(step, { status, message, error });
+      await stateHooks?.onStepFinish?.(step, { status, message, error, retryable, metadata });
       await skipRemaining(index + 1, message);
     };
 
@@ -536,6 +552,82 @@ export async function executeWorkflowSteps({
       continue;
     }
 
+    if (capabilityId === "http.request") {
+      const http = step.config?.http;
+      const connectorConfig = step.config?.connector;
+      if (!http || !connectorConfig || connectorConfig.operationKey !== "request" || connectorConfig.operationVersion !== 2) {
+        await fail("This HTTP request is missing its versioned operation configuration.");
+        break;
+      }
+      const registered = getConnectorOperation("flowmind_http", "action", "request", 2);
+      if (!registered || typeof registered.handler !== "function") {
+        await fail("This HTTP request is not supported by the current server runtime.");
+        break;
+      }
+      const value = (key: string) => inputValues[`${step.id}-${key}`] ?? inputValues[key];
+      const flattenedFormatterValues = Object.values(formatterResults).reduce<Record<string, unknown>>((result, item) => {
+        result[item.outputKey] = item.value;
+        return result;
+      }, {});
+      const configuredBody = value("json_body");
+      const defaultBody = { ...triggerContext, ...flattenedFormatterValues, ...(aiResult ? { ai_result: aiResult } : {}) };
+      const connectorInput: Record<string, unknown> = {
+        url: value("destination_url") ?? http.url,
+        method: http.method,
+        query: value("query_parameters") || http.query,
+        headers: value("request_headers") || http.headers,
+        body: configuredBody || http.body || (["POST", "PUT", "PATCH"].includes(http.method) || (http.method === "DELETE" && http.allowDeleteBody) ? defaultBody : undefined),
+        timeoutMs: value("request_timeout") || http.timeoutMs,
+        authType: http.authType,
+        authUsername: value("auth_username") ?? http.authUsername,
+        authName: value("auth_name") ?? http.authName,
+        idempotencyHeader: http.idempotencyHeader,
+        allowDeleteBody: http.allowDeleteBody,
+      };
+      try {
+        const handler = executeHttpRequest ?? registered.handler;
+        const result = await handler(connectorInput, {
+          userId,
+          workflowId,
+          executionId: idempotencyKey ?? workflowId,
+          stepId: step.id,
+          idempotencyKey: `${idempotencyKey ?? workflowId}:${step.id}`,
+        });
+        if (result.status !== "succeeded" || !result.acknowledged) {
+          const connectorError = result.error ? new ConnectorError(result.error) : new Error("The API did not acknowledge this request.");
+          const failedOutput = { method: http.method, ...result.output, acknowledged: false, completed: false, ...(result.error ? { errorCode: result.error.code, retryable: result.error.retryable } : {}) };
+          connectorStepOutputs[step.id] = failedOutput;
+          httpResults[step.id] = failedOutput;
+          await fail(
+            `${result.error?.message ?? "The API did not acknowledge this request."}${result.error?.retryable ? " Retry available." : ""}`,
+            "failed",
+            connectorError,
+            result.error?.retryable ?? false,
+            result.metadata,
+          );
+          break;
+        }
+        connectorStepOutputs[step.id] = result.output;
+        httpResults[step.id] = result.output;
+        variables[step.id] = result.output;
+        for (const [key, outputValue] of Object.entries(result.output)) variables[key] = outputValue;
+        delivered = delivered || result.externallyDelivered;
+        const status = typeof result.output.status === "number" ? result.output.status : null;
+        await succeed(
+          http.method === "GET"
+            ? `${step.title} completed${status ? ` with ${status}` : ""}.`
+            : `${step.title} was acknowledged${status ? ` with ${status}` : ""}.`,
+          result.metadata,
+          result.providerReferenceId,
+        );
+      } catch (error) {
+        const details = error instanceof ConnectorError ? error.details : null;
+        await fail(error instanceof Error ? error.message : "The HTTP request failed.", "failed", error, details?.retryable ?? false, details?.retryAfterMs !== undefined ? { retryAfterMs: details.retryAfterMs } : undefined);
+        break;
+      }
+      continue;
+    }
+
     if (capabilityId === "generic_http_action") {
       const connectorConfig = step.config?.connector;
       if (!connectorConfig || connectorConfig.operationKind !== "action") {
@@ -571,7 +663,7 @@ export async function executeWorkflowSteps({
         },
       };
       const result = await registered.handler(connectorInput, {
-        userId: "runtime-owner",
+        userId,
         workflowId,
         executionId: idempotencyKey ?? workflowId,
         stepId: step.id,
