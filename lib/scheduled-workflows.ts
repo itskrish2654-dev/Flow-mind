@@ -79,6 +79,7 @@ async function executeClaimedSchedule(input: {
         mode: "scheduled",
         idempotencyKey,
         telemetryExecutionId: durable.id,
+        workflowVersionId: input.workflowVersionId,
         stateHooks: createExecutionStateHooks(admin, durable.id, { userId: input.userId, workflowId: input.workflowId, workflowVersionId: input.workflowVersionId }),
         executeAi: async (request) => {
           await enforceRateLimit("ai-execution", [input.userId], SECURITY_LIMITS.ai);

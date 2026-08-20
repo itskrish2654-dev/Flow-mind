@@ -273,6 +273,7 @@ export async function runTestWorkflow(
             },
             idempotencyKey: createManualIdempotencyKey(request.data.idempotencyKey),
             telemetryExecutionId: durable.id,
+            workflowVersionId: snapshot.versionId,
             stateHooks: createExecutionStateHooks(admin, durable.id, {
               userId: auth.user.id,
               workflowId: request.data.workflowId,
@@ -553,6 +554,7 @@ export async function retryWorkflowExecution(executionId: string): Promise<TestW
           resumeState: { aiResult: priorAiResult, documents: priorDocuments, conditionDecisions, stepOutputs: { ...formatterStepOutputs, ...priorHttpOutputs } },
           idempotencyKey: existing.idempotency_key,
           telemetryExecutionId: existing.id,
+          workflowVersionId: existing.workflow_version_id ?? undefined,
           stateHooks: createExecutionStateHooks(admin, existing.id, {
             userId: auth.user.id,
             workflowId: existing.workflow_id,

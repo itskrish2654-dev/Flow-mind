@@ -186,6 +186,12 @@ export const WorkflowStepSchema = z.object({
   capabilityId: z.string().min(1).max(80).optional(),
   capabilityStatus: z.enum(["supported", "test_only", "unsupported"]).optional(),
   capabilityMessage: z.string().max(300).optional(),
+  executor: z
+    .object({
+      kind: z.enum(["native", "activepieces"]),
+      capabilityVersion: z.number().int().positive(),
+    })
+    .optional(),
   title: z.string(),
   description: z.string(),
   inputsRequired: z.array(StepInputSchema).optional(),

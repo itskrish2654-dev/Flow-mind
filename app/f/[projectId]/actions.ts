@@ -335,6 +335,7 @@ export async function submitPublicWorkflow(
             },
             idempotencyKey,
             telemetryExecutionId: durable.id,
+            workflowVersionId: publicWorkflow.versionId,
             stateHooks: createExecutionStateHooks(publicWorkflow.admin, durable.id, {
               userId: publicWorkflow.ownerId,
               workflowId: publicWorkflow.id,

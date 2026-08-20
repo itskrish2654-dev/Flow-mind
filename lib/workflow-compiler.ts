@@ -1,4 +1,4 @@
-import { annotateWorkflowCapabilities } from "@/lib/capability-registry";
+import { annotateWorkflowCapabilities, pinWorkflowExecutorSelections } from "@/lib/capability-registry";
 import { createPublicFormDefinition } from "@/lib/public-form";
 import { CompiledWorkflowSchema, type CompiledWorkflow } from "@/lib/schemas/workflow";
 import { createDefaultDataTableDefinition } from "@/lib/workflow-customization";
@@ -206,5 +206,5 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
     ].slice(0, 10),
     successMessage: "Your submission was processed by the configured CrazyLoops loop.",
   } : undefined;
-  return annotateWorkflowCapabilities(CompiledWorkflowSchema.parse({ workflowName, summary, steps, publicForm, dataTable: publicForm ? createDefaultDataTableDefinition(publicForm) : undefined }));
+  return annotateWorkflowCapabilities(pinWorkflowExecutorSelections(CompiledWorkflowSchema.parse({ workflowName, summary, steps, publicForm, dataTable: publicForm ? createDefaultDataTableDefinition(publicForm) : undefined })));
 }

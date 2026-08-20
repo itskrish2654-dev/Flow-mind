@@ -1,4 +1,5 @@
 import type { CompiledWorkflow } from "@/lib/schemas/workflow";
+import type { ExecutorKind } from "@/lib/executors/types";
 
 export type CapabilityCategory = "trigger" | "transformation" | "control" | "destination";
 export type ExecutionMode = "test" | "production";
@@ -19,9 +20,24 @@ export type CapabilityDefinition = {
   availableInProduction: boolean;
   limitations: string[];
   aliases: string[];
+  executorVersions: Readonly<Record<number, ExecutorKind>>;
+  defaultCapabilityVersion: number;
+  internalOnly: boolean;
+  plannerVisible: boolean;
 };
 
-const defineCapability = <T extends CapabilityDefinition>(capability: T) => capability;
+type CapabilityDefinitionInput = Omit<
+  CapabilityDefinition,
+  "executorVersions" | "defaultCapabilityVersion" | "internalOnly" | "plannerVisible"
+> & Partial<Pick<CapabilityDefinition, "executorVersions" | "defaultCapabilityVersion" | "internalOnly" | "plannerVisible">>;
+
+const defineCapability = <T extends CapabilityDefinitionInput>(capability: T): CapabilityDefinition & T => ({
+  executorVersions: { 1: "native" },
+  defaultCapabilityVersion: 1,
+  internalOnly: false,
+  plannerVisible: true,
+  ...capability,
+});
 
 /**
  * CrazyLoops' authoritative capability registry.
@@ -498,6 +514,23 @@ export const CAPABILITY_REGISTRY = {
     limitations: ["Custom code, formulas, and regular expressions are not supported by Formatter."],
     aliases: ["regular expression", "regex", "javascript formatter", "custom script", "arbitrary formula"],
   }),
+  "internal.bridge_echo": defineCapability({
+    id: "internal.bridge_echo",
+    displayName: "Internal bridge echo",
+    category: "transformation",
+    supported: true,
+    executionImplementation: "delegated:activepieces/internal.bridge_echo@1",
+    requiredSetupFields: [],
+    credentialsRequired: false,
+    availableInTest: true,
+    availableInProduction: true,
+    limitations: ["Internal infrastructure verification only."],
+    aliases: [],
+    executorVersions: { 1: "activepieces" },
+    defaultCapabilityVersion: 1,
+    internalOnly: true,
+    plannerVisible: false,
+  }),
   external_integration: defineCapability({
     id: "external_integration",
     displayName: "External app integration",
@@ -543,6 +576,7 @@ export function findRequestedUnsupportedCapabilities(prompt: string): Capability
   const normalized = prompt.toLowerCase();
   return Object.values(CAPABILITY_REGISTRY).filter(
     (capability) =>
+      capability.plannerVisible &&
       !capability.supported &&
       capability.aliases.some((alias) => containsAlias(normalized, alias)),
   );
@@ -551,7 +585,7 @@ export function findRequestedUnsupportedCapabilities(prompt: string): Capability
 function legacyIntegrationCapability(step: CompiledWorkflow["steps"][number]): string | null {
   const context = `${step.title} ${step.description} ${step.config?.endpoint ?? ""}`.toLowerCase();
   for (const capability of Object.values(CAPABILITY_REGISTRY)) {
-    if (capability.supported || capability.id === "rss_ingestion") {
+    if (!capability.plannerVisible || capability.supported || capability.id === "rss_ingestion") {
       continue;
     }
     if (capability.aliases.some((alias) => containsAlias(context, alias))) {
@@ -596,6 +630,7 @@ export function resolveStepCapabilityId(
       notion_create_data_source_item: ["connector_action"],
       notion_find_item: ["connector_action"],
       notion_update_item: ["connector_action"],
+      "internal.bridge_echo": ["connector_action"],
     };
     const compatible = compatibleTypes[step.capabilityId as CapabilityId];
     return compatible?.includes(step.type) ? step.capabilityId : null;
@@ -711,6 +746,28 @@ export function annotateWorkflowCapabilities(
         capabilityId: assessment.capabilityId,
         capabilityStatus: assessment.status,
         ...(assessment.message ? { capabilityMessage: assessment.message } : {}),
+      };
+    }),
+  };
+}
+
+/** Pins executor semantics into a newly compiled immutable workflow version. */
+export function pinWorkflowExecutorSelections(workflow: CompiledWorkflow): CompiledWorkflow {
+  return {
+    ...workflow,
+    steps: workflow.steps.map((step) => {
+      if (step.executor) return step;
+      const capabilityId = resolveStepCapabilityId(step);
+      const capability = capabilityId ? getCapability(capabilityId) : null;
+      if (!capability) return step;
+      const kind = capability.executorVersions[capability.defaultCapabilityVersion];
+      if (!kind) return step;
+      return {
+        ...step,
+        executor: {
+          kind,
+          capabilityVersion: capability.defaultCapabilityVersion,
+        },
       };
     }),
   };

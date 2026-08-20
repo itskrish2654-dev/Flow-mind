@@ -69,6 +69,9 @@ function plannedCapability(
 ): PlannedCapability {
   const capability = getCapability(capabilityId);
   if (!capability) throw new Error(`Unknown CrazyLoops capability: ${capabilityId}`);
+  if (!capability.plannerVisible || capability.internalOnly) {
+    throw new Error("This capability is not available to the workflow planner.");
+  }
   return {
     capabilityId,
     displayName: capability.displayName,

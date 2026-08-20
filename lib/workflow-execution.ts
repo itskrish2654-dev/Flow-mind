@@ -2,8 +2,10 @@ import type {
   AiExecutionMetadata,
   AiTextExecutor,
 } from "@/lib/ai-execution-core";
+import { randomUUID } from "node:crypto";
 import {
   assessWorkflowCapabilities,
+  getCapability,
   resolveStepCapabilityId,
 } from "@/lib/capability-registry";
 import { getConnectorOperation } from "@/lib/connectors/registry";
@@ -21,6 +23,11 @@ import type { CompiledWorkflow } from "@/lib/schemas/workflow";
 import { postTrustedWebhook } from "@/lib/security/outbound-webhook";
 import { securityLog } from "@/lib/security/redaction";
 import { evaluateCondition } from "@/lib/workflow-conditions";
+import { resolveExecutor, resolveExecutorSelection } from "@/lib/executors/router";
+import {
+  type CapabilityExecutor,
+  DelegatedExecutionError,
+} from "@/lib/executors/types";
 
 export type StepExecutionStatus =
   | "pending"
@@ -226,6 +233,10 @@ export async function executeWorkflowSteps({
   executeHttpRequest,
   idempotencyKey,
   telemetryExecutionId,
+  workflowVersionId,
+  workflowOwnerId = userId,
+  allowInternalCapabilities = false,
+  delegatedExecutor,
   stateHooks,
   completedStepIds = new Set<string>(),
   resumeState,
@@ -242,6 +253,11 @@ export async function executeWorkflowSteps({
   executeHttpRequest?: ConnectorActionHandler;
   idempotencyKey?: string;
   telemetryExecutionId?: string;
+  workflowVersionId?: string;
+  workflowOwnerId?: string;
+  /** Test/operations-only gate. No application route enables internal capabilities. */
+  allowInternalCapabilities?: boolean;
+  delegatedExecutor?: CapabilityExecutor;
   stateHooks?: ExecutionStateHooks;
   completedStepIds?: Set<string>;
   resumeState?: {
@@ -336,9 +352,16 @@ export async function executeWorkflowSteps({
     steps,
     mode === "test" ? "test" : "production",
   );
-  const unavailable = capabilityChecks.find(({ assessment }) => !assessment.available);
+  const unavailable = capabilityChecks.find(({ step, assessment }) => {
+    if (!assessment.available) return true;
+    const capability = getCapability(resolveStepCapabilityId(step) ?? "");
+    return Boolean(capability?.internalOnly && !allowInternalCapabilities);
+  });
   if (unavailable) {
-    failureReason = unavailable.assessment.message ?? "This workflow contains an unsupported step.";
+    const unavailableCapability = getCapability(unavailable.assessment.capabilityId);
+    failureReason = unavailableCapability?.internalOnly
+      ? "This workflow contains an unsupported step."
+      : unavailable.assessment.message ?? "This workflow contains an unsupported step.";
     for (const { step, assessment } of capabilityChecks) {
       const isUnavailable = step.id === unavailable.step.id;
       const status: StepExecutionStatus = isUnavailable ? "unsupported" : "skipped";
@@ -429,6 +452,66 @@ export async function executeWorkflowSteps({
       await stateHooks?.onStepFinish?.(step, { status, message, error, retryable, metadata });
       await skipRemaining(index + 1, message);
     };
+
+    let executorSelection;
+    try {
+      executorSelection = resolveExecutorSelection(step, capabilityId);
+    } catch (error) {
+      const normalized = error instanceof DelegatedExecutionError
+        ? error
+        : new DelegatedExecutionError("DELEGATED_EXECUTION_FAILED", false);
+      await fail(normalized.message, "failed", normalized, normalized.retryable);
+      break;
+    }
+
+    if (executorSelection.kind !== "native") {
+      const capability = getCapability(capabilityId);
+      if (!capability?.internalOnly || !allowInternalCapabilities) {
+        const error = new DelegatedExecutionError("DELEGATED_AUTH_FAILED", false);
+        await fail(error.message, "failed", error, false);
+        break;
+      }
+      if (!telemetryExecutionId || !workflowVersionId) {
+        const error = new DelegatedExecutionError("DELEGATED_EXECUTION_FAILED", false);
+        await fail(error.message, "failed", error, false);
+        break;
+      }
+      const executor = delegatedExecutor ?? resolveExecutor(executorSelection);
+      if (!executor || executor.kind !== executorSelection.kind) {
+        const error = new DelegatedExecutionError("DELEGATED_EXECUTION_FAILED", false);
+        await fail(error.message, "failed", error, false);
+        break;
+      }
+      const logicalIdempotencyKey = `${idempotencyKey ?? telemetryExecutionId}:${step.id}:v${executorSelection.capabilityVersion}`;
+      const result = await executor.execute({
+        authenticatedUserId: userId,
+        workflowOwnerId,
+        envelope: {
+          protocolVersion: 1,
+          requestId: randomUUID(),
+          executionId: telemetryExecutionId,
+          workflowVersionId,
+          stepId: step.id,
+          capabilityId,
+          capabilityVersion: executorSelection.capabilityVersion,
+          mode: mode === "test" ? "TEST" : "LIVE",
+          idempotencyKey: logicalIdempotencyKey,
+          input: capabilityId === "internal.bridge_echo"
+            ? { message: inputValues.message ?? "" }
+            : {},
+        },
+      });
+      if (!result.ok) {
+        const error = new DelegatedExecutionError(result.errorCategory, result.retryable);
+        await fail(error.message, "failed", error, result.retryable);
+        break;
+      }
+      connectorStepOutputs[step.id] = result.output;
+      variables[step.id] = result.output;
+      for (const [key, value] of Object.entries(result.output)) variables[key] = value;
+      await succeed("This step completed.");
+      continue;
+    }
 
     if (capabilityId === "public_form_submission" || capabilityId === "generic_webhook_trigger" || capabilityId === "manual_trigger" || capabilityId === "schedule.trigger" || step.type === "connector_trigger") {
       await succeed(
