@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { CAPABILITY_REGISTRY } from "../lib/capability-registry";
+import { getConnectorTrigger } from "../lib/connectors/registry";
 import { classifyExecutionError } from "../lib/execution-reliability";
 import {
   executeFormatter,
@@ -154,6 +155,19 @@ test("9B-9. Test Loop and production modes share the same formatter runtime", as
   assert.equal(liveResult.ok, true);
   assert.deepEqual(testResult.outputData.formatter_results, liveResult.outputData.formatter_results);
   assert.equal(testResult.outputData.formatter_results.format.value, "USER@EXAMPLE.COM");
+});
+
+test("9B-9a. live webhook normalization exposes root fields without breaking payload mappings", async () => {
+  const trigger = getConnectorTrigger("flowmind_webhook", "event_received", 1);
+  assert.ok(trigger);
+  const raw = { name: "  krish patil  ", amount: "123.4567", date: "2026-08-19T12:00:00Z", company: "" };
+  const normalized = await trigger.handler.normalize(
+    new Request("https://www.crazy-loops.com/api/connectors/events/flowmind_webhook", { method: "POST" }),
+    raw,
+    trigger.operation,
+  );
+  assert.equal(normalized.data.name, raw.name);
+  assert.deepEqual(normalized.data.payload, raw);
 });
 
 test("9B-10. completed formatter output is restored on retry instead of recomputed", async () => {

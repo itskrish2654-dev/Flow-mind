@@ -246,10 +246,18 @@ const connectors: RegisteredConnector[] = [
       triggerHandlers: {
         "event_received@1": {
           verify: async () => true,
-          normalize: async (_request, payload, operation) => ({
-            eventId: randomUUID(), connectorId: "flowmind_webhook", operationKey: operation.key, operationVersion: operation.version,
-            occurredAt: new Date().toISOString(), receivedAt: new Date().toISOString(), data: { payload }, metadata: {},
-          }),
+          normalize: async (_request, payload, operation) => {
+            const rootPayload = payload && typeof payload === "object" && !Array.isArray(payload)
+              ? payload as Record<string, unknown>
+              : { value: payload };
+            return {
+              eventId: randomUUID(), connectorId: "flowmind_webhook", operationKey: operation.key, operationVersion: operation.version,
+              occurredAt: new Date().toISOString(), receivedAt: new Date().toISOString(),
+              // Root fields power ordinary trigger mappings. `payload` remains for
+              // existing workflows that intentionally consume the complete object.
+              data: { ...rootPayload, payload }, metadata: {},
+            };
+          },
         },
       },
     },
