@@ -130,6 +130,17 @@ test("8B-5. AI classification compiles before condition and retry can reuse its 
   assert.equal(resumed.outputData.steps.find((step) => step.stepId === "store")?.status, "succeeded");
 });
 
+test("8B-6. a webhook trigger does not turn an internal otherwise branch into HTTP delivery", () => {
+  const plan = planWorkflow("When an incoming webhook arrives, if priority equals urgent store it as urgent, otherwise store it as normal in CrazyLoops.");
+  assert.equal(plan.status, "READY_TO_COMPILE");
+  if (plan.status !== "READY_TO_COMPILE") return;
+  const workflow = compileReadyPlan(plan.intent, plan);
+  assert.deepEqual(
+    workflow.steps.map((step) => step.capabilityId),
+    ["generic_webhook_trigger", "condition.if", "flowmind_data_store", "flowmind_data_store"],
+  );
+});
+
 test("8C-1. Preview has no execution path and Live Test is durable and marked TEST", async () => {
   const demo = await readFile("app/actions/homepage-demo.ts", "utf8");
   const action = await readFile("app/actions/execute.ts", "utf8");

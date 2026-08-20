@@ -375,7 +375,7 @@ function detectDestination(prompt: string, options: { asksForGmail: boolean; ask
   if (asksForGmail && /\breply\b/i.test(prompt)) return plannedCapability("gmail_reply_to_email");
   if (asksForGmail && /\b(send|email it|mail it)\b/i.test(prompt)) return plannedCapability("gmail_send_email");
   if (asksForSlack && /\b(reply)\b[^.]{0,30}\bthread\b|\bthread\b[^.]{0,30}\breply\b/i.test(prompt)) return plannedCapability("slack_reply_in_thread");
-  if (asksForSlack && /\b(send|post|alert|notify|message)\b/i.test(prompt)) return plannedCapability("slack_send_channel_message");
+  if (asksForSlack && /\b(send|post|alert|notify)\b/i.test(prompt)) return plannedCapability("slack_send_channel_message");
   if (asksForNotion && /\bupdate\b/i.test(prompt)) return plannedCapability("notion_update_item");
   if (asksForNotion && /\bcreate\b[^.]{0,30}\bpage\b|\bpage\b[^.]{0,30}\bcreate\b/i.test(prompt)) return plannedCapability("notion_create_page");
   if (asksForNotion && /\b(save|add|create|store|notion)\b/i.test(prompt)) return plannedCapability("notion_create_data_source_item");
@@ -433,7 +433,6 @@ export function planWorkflow(prompt: string): WorkflowPlan {
   const asksForSlack = /\bslack\b|#[a-z0-9_-]+/i.test(normalizedPrompt);
   const asksForNotion = /\bnotion\b/i.test(normalizedPrompt);
   const unsupported = findRequestedUnsupportedCapabilities(normalizedPrompt).filter((capability) => !(asksForGmail && ["email_ingestion", "email_delivery"].includes(capability.id)));
-  const asksForWebhook = /\bwebhook(?:\.site)?\b/i.test(normalizedPrompt);
   const asksForUnknownExternalConnection =
     /\b(connect(?:\s+to)?|sync\s+(?:to|with)|post\s+(?:it\s+)?to)\b/i.test(
       normalizedPrompt,
@@ -552,7 +551,11 @@ export function planWorkflow(prompt: string): WorkflowPlan {
   const branchParts = condition ? normalizedPrompt.split(/\botherwise\b|\belse\b/i) : [];
   const trueBranchText = condition ? (branchParts[0].split(/\bthen\b/i).at(-1) ?? branchParts[0]) : normalizedPrompt;
   const falseBranchText = condition && branchParts.length > 1 ? branchParts.slice(1).join(" ") : "";
-  const destinationOptions = { asksForGmail: false, asksForSheets: false, asksForSlack: false, asksForNotion: false, asksForWebhook, triggerPresent: Boolean(trigger) };
+  // Branch text is evaluated independently from the trigger clause. Carrying the
+  // full prompt's webhook flag into a branch can turn an internal `otherwise
+  // store ...` branch into an outbound HTTP action merely because the workflow
+  // starts from a webhook.
+  const destinationOptions = { asksForGmail: false, asksForSheets: false, asksForSlack: false, asksForNotion: false, asksForWebhook: false, triggerPresent: Boolean(trigger) };
   const detectedDestination = condition
     ? detectDestination(trueBranchText, destinationOptions)
     : detectDestination(normalizedPrompt, { ...destinationOptions, asksForGmail, asksForSheets, asksForSlack, asksForNotion });

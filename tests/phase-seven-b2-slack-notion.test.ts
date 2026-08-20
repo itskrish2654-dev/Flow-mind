@@ -140,6 +140,7 @@ test("7B2-13. webhook ingress persists durable deduplicated receipts before disp
 test("7B2-14. planner composes Slack to AI to Notion and other required connector paths", () => {
   const cases = [
     ["When someone posts in #sales, summarize it and save it to Notion.", ["slack_new_channel_message", "ai_text_transform", "notion_create_data_source_item"]],
+    ["When a new message is posted in Slack, summarize the message with AI and create a new page in Notion.", ["slack_new_channel_message", "ai_text_transform", "notion_create_page"]],
     ["When a Notion page is updated, send a message to Slack.", ["notion_page_updated", "slack_send_channel_message"]],
     ["When a public form is submitted, add it to Notion.", ["public_form_submission", "notion_create_data_source_item"]],
     ["When an incoming webhook arrives, summarize it and send to Slack.", ["generic_webhook_trigger", "ai_text_transform", "slack_send_channel_message"]],
