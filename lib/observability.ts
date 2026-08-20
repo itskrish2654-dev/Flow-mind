@@ -5,6 +5,10 @@ import { createHmac, randomUUID } from "node:crypto";
 import type { Json } from "@/lib/supabase/types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { redactForLog } from "@/lib/security/redaction";
+import {
+  normalizeTelemetryRequestId,
+  normalizeTelemetryUuid,
+} from "@/lib/telemetry-identifiers";
 
 export type LogLevel = "info" | "warn" | "error";
 
@@ -123,16 +127,18 @@ export function sanitizeOperationalMetadata(
 }
 
 function structuredPayload(event: OperationalEvent, eventId: string) {
+  const normalizedEventId = normalizeTelemetryUuid(eventId);
+  if (!normalizedEventId) throw new Error("Operational telemetry event ID generation failed.");
   return {
     timestamp: new Date().toISOString(),
     level: event.level,
     event: event.event.slice(0, 120),
-    event_id: eventId,
-    request_id: event.requestId ?? null,
+    event_id: normalizedEventId,
+    request_id: normalizeTelemetryRequestId(event.requestId),
     user_id_hash: hashOperationalIdentity(event.userId),
-    workflow_id: event.workflowId ?? null,
-    workflow_version_id: event.workflowVersionId ?? null,
-    execution_id: event.executionId ?? null,
+    workflow_id: normalizeTelemetryUuid(event.workflowId),
+    workflow_version_id: normalizeTelemetryUuid(event.workflowVersionId),
+    execution_id: normalizeTelemetryUuid(event.executionId),
     step_id: event.stepId ?? null,
     capability: event.capability ?? null,
     duration_ms: event.durationMs ?? null,
@@ -173,7 +179,7 @@ export async function captureOperationalEvent(event: OperationalEvent): Promise<
     });
     if (error) console.error(JSON.stringify({ event: "telemetry_persistence_failed", category: "database" }));
   } catch {
-    // Runtime logs are the fail-safe monitoring sink when telemetry storage is unavailable.
+    console.error(JSON.stringify({ event: "telemetry_persistence_failed", category: "database" }));
   }
   return eventId.slice(0, 8).toUpperCase();
 }

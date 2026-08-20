@@ -225,6 +225,7 @@ export async function executeWorkflowSteps({
   executeWebhook = postTrustedWebhook,
   executeHttpRequest,
   idempotencyKey,
+  telemetryExecutionId,
   stateHooks,
   completedStepIds = new Set<string>(),
   resumeState,
@@ -240,6 +241,7 @@ export async function executeWorkflowSteps({
   executeWebhook?: TrustedWebhookExecutor;
   executeHttpRequest?: ConnectorActionHandler;
   idempotencyKey?: string;
+  telemetryExecutionId?: string;
   stateHooks?: ExecutionStateHooks;
   completedStepIds?: Set<string>;
   resumeState?: {
@@ -543,7 +545,7 @@ export async function executeWorkflowSteps({
             ...(latestAi ? { Summary: latestAi.result, ai_result: latestAi.result } : {}),
           };
         }
-        const result = await registered.handler(connectorInput, { userId, workflowId, executionId: idempotencyKey ?? workflowId, stepId: step.id, ...(connectorConfig.connectionId ? { connectionId: connectorConfig.connectionId } : {}), idempotencyKey: `${idempotencyKey ?? workflowId}:${step.id}` });
+        const result = await registered.handler(connectorInput, { userId, workflowId, executionId: telemetryExecutionId ?? idempotencyKey ?? workflowId, stepId: step.id, ...(connectorConfig.connectionId ? { connectionId: connectorConfig.connectionId } : {}), idempotencyKey: `${idempotencyKey ?? workflowId}:${step.id}` });
         if (result.status !== "succeeded" || !result.acknowledged) { await fail(result.error?.message ?? "The connector did not acknowledge this action.", "failed", result.error ? new ConnectorError(result.error) : undefined); break; }
         connectorStepOutputs[step.id] = result.output; variables[step.id] = result.output;
         delivered = delivered || result.externallyDelivered;
@@ -589,7 +591,7 @@ export async function executeWorkflowSteps({
         const result = await handler(connectorInput, {
           userId,
           workflowId,
-          executionId: idempotencyKey ?? workflowId,
+          executionId: telemetryExecutionId ?? idempotencyKey ?? workflowId,
           stepId: step.id,
           idempotencyKey: `${idempotencyKey ?? workflowId}:${step.id}`,
         });
@@ -665,7 +667,7 @@ export async function executeWorkflowSteps({
       const result = await registered.handler(connectorInput, {
         userId,
         workflowId,
-        executionId: idempotencyKey ?? workflowId,
+        executionId: telemetryExecutionId ?? idempotencyKey ?? workflowId,
         stepId: step.id,
         ...(connectorConfig.connectionId ? { connectionId: connectorConfig.connectionId } : {}),
         idempotencyKey: `${idempotencyKey ?? workflowId}:${step.id}`,
