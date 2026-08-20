@@ -164,6 +164,11 @@ test("9C-10. Wait and For Each stay explicitly unsupported", () => {
   assert.equal(CAPABILITY_REGISTRY.for_each.supported, false);
 });
 
+test("9C-10a. workflow replacement refreshes parent workflow state before setup restoration", async () => {
+  const projectPage = await readFile("app/dashboard/projects/[id]/page.tsx", "utf8");
+  assert.match(projectPage, /<ProjectWorkspace\s+key={result\.versionId}/);
+});
+
 test("9C-11. runtime exposes structured GET output without claiming external delivery", async () => {
   const result = await executeWorkflowSteps({
     userId: "owner-a", workflowId: "workflow-a", workflowName: "Get orders", steps: httpSteps("GET"), inputValues: {}, mode: "test", idempotencyKey: "execution-1",

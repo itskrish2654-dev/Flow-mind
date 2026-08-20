@@ -36,6 +36,7 @@ export default async function ProjectPage({
 
   return (
     <ProjectWorkspace
+      key={result.versionId}
       workflowId={id}
       workflow={result.workflow}
       published={result.published}
