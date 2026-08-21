@@ -531,6 +531,23 @@ export const CAPABILITY_REGISTRY = {
     internalOnly: true,
     plannerVisible: false,
   }),
+  "internal.connector_runner_canary": defineCapability({
+    id: "internal.connector_runner_canary",
+    displayName: "Internal connector runner canary",
+    category: "transformation",
+    supported: true,
+    executionImplementation: "delegated:connector_runner/internal.connector_runner_canary@1",
+    requiredSetupFields: [],
+    credentialsRequired: true,
+    availableInTest: true,
+    availableInProduction: false,
+    limitations: ["Internal credential-safety verification only."],
+    aliases: [],
+    executorVersions: { 1: "connector_runner" },
+    defaultCapabilityVersion: 1,
+    internalOnly: true,
+    plannerVisible: false,
+  }),
   external_integration: defineCapability({
     id: "external_integration",
     displayName: "External app integration",
@@ -631,6 +648,7 @@ export function resolveStepCapabilityId(
       notion_find_item: ["connector_action"],
       notion_update_item: ["connector_action"],
       "internal.bridge_echo": ["connector_action"],
+      "internal.connector_runner_canary": ["connector_action"],
     };
     const compatible = compatibleTypes[step.capabilityId as CapabilityId];
     return compatible?.includes(step.type) ? step.capabilityId : null;

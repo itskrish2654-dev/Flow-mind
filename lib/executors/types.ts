@@ -1,4 +1,4 @@
-export type ExecutorKind = "native" | "activepieces";
+export type ExecutorKind = "native" | "activepieces" | "connector_runner";
 
 export const DELEGATED_ERROR_CATEGORIES = [
   "DELEGATED_DISABLED",
@@ -9,6 +9,10 @@ export const DELEGATED_ERROR_CATEGORIES = [
   "DELEGATED_RATE_LIMITED",
   "DELEGATED_UNAVAILABLE",
   "DELEGATED_EXECUTION_FAILED",
+  "DELEGATED_CAPSULE_REJECTED",
+  "DELEGATED_REPLAYED",
+  "DELEGATED_REPLAY_UNAVAILABLE",
+  "DELEGATED_UNSUPPORTED_CAPABILITY",
 ] as const;
 
 export type DelegatedErrorCategory = (typeof DELEGATED_ERROR_CATEGORIES)[number];
@@ -37,6 +41,11 @@ export type CapabilityExecutionRequest = {
   envelope: CapabilityExecutionEnvelope;
   authenticatedUserId: string;
   workflowOwnerId: string;
+  /** Server-only lookup context. It is never serialized into an executor envelope. */
+  credentialReference?: {
+    connectionId: string;
+    connectorId: string;
+  };
 };
 
 export type CapabilityExecutionResult =

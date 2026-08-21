@@ -188,7 +188,7 @@ export const WorkflowStepSchema = z.object({
   capabilityMessage: z.string().max(300).optional(),
   executor: z
     .object({
-      kind: z.enum(["native", "activepieces"]),
+      kind: z.enum(["native", "activepieces", "connector_runner"]),
       capabilityVersion: z.number().int().positive(),
     })
     .optional(),

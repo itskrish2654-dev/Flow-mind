@@ -2,6 +2,7 @@ import "@/lib/server-only-runtime";
 
 import { getCapability } from "@/lib/capability-registry";
 import { ActivepiecesExecutor } from "@/lib/executors/activepieces";
+import { ConnectorRunnerExecutor } from "@/lib/executors/connector-runner";
 import {
   type CapabilityExecutor,
   type CapabilityExecutorSelection,
@@ -32,5 +33,6 @@ export function resolveExecutor(
 ): CapabilityExecutor | null {
   if (selection.kind === "native") return null;
   if (selection.kind === "activepieces") return new ActivepiecesExecutor();
+  if (selection.kind === "connector_runner") return new ConnectorRunnerExecutor();
   throw new DelegatedExecutionError("DELEGATED_EXECUTION_FAILED", false);
 }

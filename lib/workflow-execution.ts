@@ -498,7 +498,9 @@ export async function executeWorkflowSteps({
           idempotencyKey: logicalIdempotencyKey,
           input: capabilityId === "internal.bridge_echo"
             ? { message: inputValues.message ?? "" }
-            : {},
+            : capabilityId === "internal.connector_runner_canary"
+              ? { simulation: inputValues.simulation ?? "success" }
+              : {},
         },
       });
       if (!result.ok) {
