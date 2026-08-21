@@ -1,0 +1,76 @@
+{
+  "created": "2026-08-21T00:00:00.000Z",
+  "updated": "2026-08-21T00:00:00.000Z",
+  "name": "crazyloops-bridge-worker-v2-canary-spike",
+  "description": "Non-production encrypted credential capsule canary. No provider integration.",
+  "tags": [],
+  "pieces": ["@activepieces/piece-webhook"],
+  "template": {
+    "displayName": "CrazyLoops bridge worker v2 canary spike",
+    "trigger": {
+      "name": "trigger",
+      "valid": true,
+      "displayName": "Receive encrypted canary",
+      "type": "PIECE_TRIGGER",
+      "settings": {
+        "pieceName": "@activepieces/piece-webhook",
+        "pieceVersion": "~0.1.40",
+        "pieceType": "OFFICIAL",
+        "packageType": "REGISTRY",
+        "triggerName": "catch_webhook",
+        "input": { "authType": "none", "authFields": {} },
+        "inputUiInfo": { "customizedInputs": {} }
+      },
+      "nextAction": {
+        "name": "step_1",
+        "valid": true,
+        "skip": false,
+        "displayName": "Authenticate and consume encrypted canary",
+        "type": "CODE",
+        "settings": {
+          "input": { "event": "{{trigger}}" },
+          "sourceCode": {
+            "code": "import { createDecipheriv, createHash, createHmac, timingSafeEqual } from 'node:crypto';\n\nconst MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;\nconst MAX_BODY_BYTES = 128 * 1024;\nconst MAX_CAPSULE_TTL_MS = 120 * 1000;\nconst ALGORITHM = 'aes-256-gcm';\n\nfunction safeEqual(left, right) {\n  const a = Buffer.from(left);\n  const b = Buffer.from(right);\n  return a.length === b.length && timingSafeEqual(a, b);\n}\n\nfunction failure(requestId, status, errorCategory, retryable = false) {\n  return { status, response: { ok: false, protocolVersion: 2, requestId: typeof requestId === 'string' ? requestId : 'invalid', errorCategory, retryable } };\n}\n\nfunction canonicalBase64(value, bytes) {\n  if (typeof value !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) throw new Error('reject');\n  const decoded = Buffer.from(value, 'base64');\n  if (!decoded.length || decoded.toString('base64') !== value || (bytes && decoded.length !== bytes)) throw new Error('reject');\n  return decoded;\n}\n\nfunction wrappingKey(version) {\n  let values;\n  try { values = JSON.parse(process.env.CRAZYLOOPS_DELEGATED_WRAP_KEYS ?? ''); } catch { throw new Error('reject'); }\n  if (!values || Array.isArray(values) || typeof values !== 'object') throw new Error('reject');\n  const encoded = values[String(version)];\n  if (typeof encoded !== 'string' || !/^[A-Za-z0-9+/]{43}=$/.test(encoded)) throw new Error('reject');\n  const key = Buffer.from(encoded, 'base64');\n  if (key.length !== 32 || key.toString('base64') !== encoded) throw new Error('reject');\n  return key;\n}\n\nfunction aad(body, capsule) {\n  return Buffer.from(JSON.stringify({\n    namespace: 'crazyloops:delegated-credential-capsule',\n    protocolVersion: body.protocolVersion,\n    requestId: body.requestId,\n    executionId: body.executionId,\n    workflowVersionId: body.workflowVersionId,\n    stepId: body.stepId,\n    capabilityId: body.capabilityId,\n    capabilityVersion: body.capabilityVersion,\n    keyVersion: capsule.keyVersion,\n    algorithm: ALGORITHM,\n    expiresAt: capsule.expiresAt,\n  }), 'utf8');\n}\n\nexport const code = async (inputs) => {\n  const event = inputs.event ?? {};\n  const headers = Object.fromEntries(Object.entries(event.headers ?? {}).map(([key, value]) => [key.toLowerCase(), String(value)]));\n  const rawBody = Buffer.isBuffer(event.rawBody) ? event.rawBody.toString('utf8') : typeof event.rawBody === 'string' ? event.rawBody : '';\n  if (!rawBody || Buffer.byteLength(rawBody) > MAX_BODY_BYTES) return failure(null, 400, 'DELEGATED_BAD_RESPONSE');\n\n  let body;\n  try { body = JSON.parse(rawBody); } catch { return failure(null, 400, 'DELEGATED_BAD_RESPONSE'); }\n  const requestId = body?.requestId;\n  const timestamp = headers['x-crazyloops-timestamp'];\n  const requestHeader = headers['x-crazyloops-request-id'];\n  const digestHeader = headers['x-crazyloops-content-sha256'];\n  const signatureHeader = headers['x-crazyloops-signature'];\n  const bridgeSecret = process.env.CRAZYLOOPS_BRIDGE_SECRET ?? '';\n\n  if (bridgeSecret.length < 32 || !timestamp || !requestHeader || !digestHeader || !signatureHeader?.startsWith('v2=')) return failure(requestId, 403, 'DELEGATED_AUTH_FAILED');\n  const timestampNumber = Number(timestamp);\n  if (!Number.isFinite(timestampNumber) || Math.abs(Date.now() - timestampNumber) > MAX_CLOCK_SKEW_MS) return failure(requestId, 403, 'DELEGATED_AUTH_FAILED');\n  const digest = createHash('sha256').update(rawBody).digest('hex');\n  if (!safeEqual(digest, digestHeader) || requestHeader !== requestId) return failure(requestId, 403, 'DELEGATED_AUTH_FAILED');\n  const expected = createHmac('sha256', bridgeSecret).update(`${timestamp}.${requestId}.${digest}`).digest('hex');\n  if (!safeEqual(expected, signatureHeader.slice(3))) return failure(requestId, 403, 'DELEGATED_AUTH_FAILED');\n\n  const capsule = body?.credentialCapsule;\n  const validEnvelope = body?.protocolVersion === 2 && body?.capabilityId === 'internal.credential_canary' && body?.capabilityVersion === 1 && ['TEST', 'LIVE'].includes(body?.mode) && typeof body?.executionId === 'string' && typeof body?.workflowVersionId === 'string' && typeof body?.stepId === 'string' && typeof body?.idempotencyKey === 'string' && body?.input?.operation === 'canary_digest' && capsule?.algorithm === ALGORITHM && Number.isSafeInteger(capsule?.keyVersion) && Number.isSafeInteger(capsule?.expiresAt);\n  if (!validEnvelope) return failure(requestId, 400, 'DELEGATED_EXECUTION_FAILED');\n  if (capsule.expiresAt <= Date.now()) return failure(requestId, 400, 'DELEGATED_CAPSULE_EXPIRED');\n  if (capsule.expiresAt - Date.now() > MAX_CAPSULE_TTL_MS) return failure(requestId, 400, 'DELEGATED_CAPSULE_REJECTED');\n\n  let plaintext;\n  let key;\n  try {\n    key = wrappingKey(capsule.keyVersion);\n    const decipher = createDecipheriv(ALGORITHM, key, canonicalBase64(capsule.nonce, 12));\n    decipher.setAAD(aad(body, capsule));\n    decipher.setAuthTag(canonicalBase64(capsule.authTag, 16));\n    plaintext = Buffer.concat([decipher.update(canonicalBase64(capsule.ciphertext)), decipher.final()]);\n    if (!plaintext.length || plaintext.length > 16 * 1024) throw new Error('reject');\n    const proof = createHmac('sha256', plaintext).update(`crazyloops-canary-proof:${requestId}`).digest('hex');\n    return { status: 200, response: { ok: true, protocolVersion: 2, requestId, acknowledged: true, output: { proof } } };\n  } catch {\n    return failure(requestId, 400, 'DELEGATED_CAPSULE_REJECTED');\n  } finally {\n    if (plaintext) plaintext.fill(0);\n    if (key) key.fill(0);\n  }\n};",
+            "packageJson": "{\"dependencies\":{}}"
+          },
+          "inputUiInfo": { "customizedInputs": {} },
+          "errorHandlingOptions": {
+            "retryOnFailure": { "value": false },
+            "continueOnFailure": { "value": false }
+          }
+        },
+        "nextAction": {
+          "name": "step_2",
+          "valid": true,
+          "skip": false,
+          "displayName": "Return sanitized proof",
+          "type": "PIECE",
+          "settings": {
+            "pieceName": "@activepieces/piece-webhook",
+            "pieceVersion": "~0.1.40",
+            "pieceType": "OFFICIAL",
+            "packageType": "REGISTRY",
+            "actionName": "return_response",
+            "input": {
+              "responseType": "json",
+              "fields": {
+                "status": "{{step_1['status']}}",
+                "headers": { "Content-Type": "application/json" },
+                "body": "{{step_1['response']}}"
+              },
+              "respond": "stop"
+            },
+            "inputUiInfo": { "customizedInputs": {} },
+            "errorHandlingOptions": {
+              "retryOnFailure": { "value": false },
+              "continueOnFailure": { "value": false }
+            }
+          }
+        }
+      }
+    },
+    "valid": true,
+    "schemaVersion": "1"
+  },
+  "blogUrl": ""
+}
