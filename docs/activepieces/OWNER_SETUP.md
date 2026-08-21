@@ -54,4 +54,20 @@ Redeploy with both flags still false. Run the internal echo acceptance probe. On
 - CrazyLoops owns business retries. Keep retry disabled in this worker.
 - The worker accepts only protocol v1 and `internal.bridge_echo`; do not add customer integrations to this template.
 
+## 7. Admin and webhook exposure boundary
+
+Before any real customer credential can reach delegated infrastructure, remove
+general public access to the Activepieces editor. Keep the published synchronous
+webhook reachable by CrazyLoops, while owner/editor access uses a private network,
+SSH tunnel, or a separately tested private admin hostname. Port 8080 remains
+private.
+
+Do not place Cloudflare Access or another interactive challenge over the entire
+worker hostname: that would also intercept the webhook, and Activepieces UI,
+Socket.IO, API, and absolute URL behavior may depend on `AP_FRONTEND_URL`. Prefer
+a public reverse-proxy allowlist for the exact published webhook path and a private
+owner route. Validate the exact Activepieces 0.88.3 paths on staging before
+changing the production proxy. See `DELEGATED_CREDENTIAL_MODEL.md` for the audited
+credential and routing constraints.
+
 Official references: [Activepieces Docker Compose](https://www.activepieces.com/docs/install/options/docker-compose), [Activepieces HTTPS](https://www.activepieces.com/docs/install/configure-operate/setup-ssl), and [Activepieces webhook limits](https://www.activepieces.com/docs/install/reference/limits).

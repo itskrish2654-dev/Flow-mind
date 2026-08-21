@@ -25,13 +25,20 @@ export async function storeConnectionSecret(input: { userId: string; connectionI
   if (error) throw new Error("Connection credential could not be stored.");
 }
 
-export async function readConnectionSecret(input: { userId: string; connectionId: string; credentialKey: string }) {
+export async function readConnectionCredential(input: { userId: string; connectionId: string; credentialKey: string }) {
   const connection = await assertOwnedConnection(input.userId, input.connectionId);
   const { data, error } = await createAdminClient().from("connector_connection_credentials")
-    .select("ciphertext, nonce, auth_tag, algorithm, encryption_version")
+    .select("credential_type, ciphertext, nonce, auth_tag, algorithm, encryption_version")
     .eq("connection_id", input.connectionId).eq("user_id", input.userId).eq("credential_key", input.credentialKey).maybeSingle();
   if (error || !data) throw new Error("Connection credential is unavailable.");
-  return decryptCredential({ ciphertext: data.ciphertext, nonce: data.nonce, authTag: data.auth_tag, algorithm: data.algorithm as "aes-256-gcm", encryptionVersion: data.encryption_version as 1 }, context(input.userId, input.connectionId, connection.connector_id, input.credentialKey));
+  return {
+    credentialType: data.credential_type,
+    plaintext: decryptCredential({ ciphertext: data.ciphertext, nonce: data.nonce, authTag: data.auth_tag, algorithm: data.algorithm as "aes-256-gcm", encryptionVersion: data.encryption_version as 1 }, context(input.userId, input.connectionId, connection.connector_id, input.credentialKey)),
+  };
+}
+
+export async function readConnectionSecret(input: { userId: string; connectionId: string; credentialKey: string }) {
+  return (await readConnectionCredential(input)).plaintext;
 }
 
 export async function revokeConnection(userId: string, connectionId: string) {
