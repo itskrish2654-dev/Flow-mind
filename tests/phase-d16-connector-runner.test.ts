@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -702,4 +703,59 @@ test("D1.6-31 runner rotation accepts a bounded prior key version", () => {
     for (const key of keyRing.values()) key.fill(0);
     nextKey.fill(0);
   }
+});
+
+test("D1.6-32 replay claim failures happen before credential decryption", async () => {
+  const unavailable = await invokeService({
+    keyRing: new Map([[1, Buffer.from(WRONG_WRAP_KEY)]]),
+    replayStore: { claim: async () => { throw new Error("unavailable"); } },
+  });
+  assert.equal(unavailable.status, 503);
+  assert.equal(errorBody(unavailable).errorCategory, "DELEGATED_REPLAY_UNAVAILABLE");
+
+  const replayed = await invokeService({
+    keyRing: new Map([[1, Buffer.from(WRONG_WRAP_KEY)]]),
+    replayStore: { claim: async () => false },
+  });
+  assert.equal(replayed.status, 409);
+  assert.equal(errorBody(replayed).errorCategory, "DELEGATED_REPLAYED");
+});
+
+test("D1.6-33 canary script runs through an async main in the CommonJS repository", () => {
+  const script = readFileSync(join(process.cwd(), "scripts", "run-d16-canary.ts"), "utf8");
+  assert.match(script, /async function main\(\): Promise<void>/);
+  assert.match(script, /main\(\)\.catch/);
+
+  const probe = spawnSync(
+    process.execPath,
+    ["--import", "tsx", join(process.cwd(), "scripts", "run-d16-canary.ts")],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        D16_CANARY_CONFIRM: "",
+        CONNECTOR_RUNNER_URL: "",
+      },
+    },
+  );
+  assert.notEqual(probe.status, 0);
+  assert.match(probe.stderr, /Set D16_CANARY_CONFIRM=/);
+  assert.doesNotMatch(`${probe.stdout}\n${probe.stderr}`, /top-level await/i);
+});
+
+test("D1.6-34 owner procedure keeps Redis private and separates evidence claims", () => {
+  const ownerSetup = readFileSync(
+    join(process.cwd(), "docs", "connector-runner", "OWNER_SETUP.md"),
+    "utf8",
+  );
+  assert.match(ownerSetup, /docker network connect crazyloops-private redis/);
+  assert.match(ownerSetup, /CONNECTOR_RUNNER_REDIS_URL=redis:\/\/redis:6379\/0/);
+  assert.match(ownerSetup, /docker exec redis redis-cli --scan/);
+  assert.doesNotMatch(ownerSetup, /^redis-cli\b/m);
+  assert.match(ownerSetup, /Never publish Redis/);
+  assert.match(ownerSetup, /Mandatory runner-host surfaces/);
+  assert.match(ownerSetup, /CrazyLoops-side surfaces and truthful claims/);
+  assert.match(ownerSetup, /does \*\*not\*\* prove that production Vercel runtime/);
+  assert.match(ownerSetup, /does not add a public diagnostic route/);
 });

@@ -47,7 +47,19 @@ performed by the implementation phase.
 ```bash
 cd /opt/crazyloops/source/services/connector-runner
 docker build --pull -t crazyloops-connector-runner:d16 .
-docker network create crazyloops-private 2>/dev/null || true
+docker network inspect crazyloops-private >/dev/null 2>&1 || \
+  docker network create crazyloops-private
+
+# Attach the existing Redis container without changing its current networks.
+if ! docker network inspect crazyloops-private \
+  --format '{{range .Containers}}{{println .Name}}{{end}}' | grep -qx redis; then
+  docker network connect crazyloops-private redis
+fi
+
+# Redis must have no host-published port. Stop if 6379 has a HostPort mapping.
+docker inspect redis --format '{{json .NetworkSettings.Ports}}'
+docker exec redis redis-cli PING
+
 docker run -d \
   --name crazyloops-connector-runner \
   --restart unless-stopped \
@@ -56,6 +68,18 @@ docker run -d \
   -p 127.0.0.1:8788:8788 \
   crazyloops-connector-runner:d16
 ```
+
+The runner environment file must contain:
+
+```text
+CONNECTOR_RUNNER_REDIS_URL=redis://redis:6379/0
+```
+
+Never publish Redis with `-p 6379:6379` or any equivalent host mapping. Redis is
+reachable by the runner only through `crazyloops-private`. The runner joins only
+that network and publishes only `127.0.0.1:8788:8788`. Do not edit the existing
+Activepieces compose configuration, restart the BHISMULDSRVACDC VM, or restart
+unrelated services for this procedure.
 
 The container listens on `0.0.0.0:8788` internally only because Docker publishes
 it to host loopback. Do not publish `0.0.0.0:8788` on the host. Route exactly one
@@ -95,7 +119,7 @@ The control file is the intentional test input and is excluded from the leak
 count. Every other surface below must be inspected after the request. If a
 surface cannot be inspected, D1.6 cannot receive the READY verdict.
 
-## Mandatory persistence scan
+## Mandatory runner-host surfaces and persistence scan
 
 Create an isolated evidence directory and copy/capture each surface without
 printing the canary into the terminal or shell history:
@@ -109,18 +133,12 @@ docker inspect crazyloops-connector-runner > "$EVIDENCE_DIR/runner-inspect.json"
 docker diff crazyloops-connector-runner > "$EVIDENCE_DIR/runner-diff.txt"
 docker export crazyloops-connector-runner -o "$EVIDENCE_DIR/runner-filesystem.tar"
 
-redis-cli --scan --pattern 'crazyloops:connector-runner:v1:*' \
+docker exec redis redis-cli --scan --pattern 'crazyloops:connector-runner:v1:*' \
   > "$EVIDENCE_DIR/redis-keys.txt"
 while IFS= read -r key; do
   printf '%s\t' "$key"
-  redis-cli --raw GET "$key"
+  docker exec redis redis-cli --raw GET "$key"
 done < "$EVIDENCE_DIR/redis-keys.txt" > "$EVIDENCE_DIR/redis-values.txt"
-
-# Use the production log export mechanism already approved for CrazyLoops.
-# Save stdout/stderr, structured logs, and operational telemetry exports here:
-#   $EVIDENCE_DIR/crazyloops-runtime.log
-#   $EVIDENCE_DIR/crazyloops-telemetry.json
-#   $EVIDENCE_DIR/crazyloops-execution-export.json
 
 find /tmp -type f ! -samefile "$CONTROL_FILE" -maxdepth 3 -print0 2>/dev/null \
   | xargs -0 -r grep -aFl -f "$CONTROL_FILE" \
@@ -141,16 +159,29 @@ ciphertext may exist; plaintext may not.
 
 Required surfaces:
 
-1. runner stdout and stderr;
-2. Docker logs;
-3. Redis values and keys;
-4. runner filesystem and temporary files;
-5. any request/response capture;
-6. CrazyLoops runtime logs;
-7. CrazyLoops operational telemetry;
-8. serialized workflow/execution output;
-9. shell history created by the procedure;
-10. Docker inspect/config metadata.
+1. runner stdout, stderr, and Docker logs;
+2. runner filesystem and temporary files;
+3. Docker inspect/config metadata;
+4. Redis keys and values;
+5. ingress or reverse-proxy request capture, when enabled;
+6. the returned response;
+7. host temporary files and shell history created by the procedure.
+
+These runner-host surfaces are mandatory for the real host canary. The control
+file is the only intentional plaintext copy and is excluded from the match count.
+
+## CrazyLoops-side surfaces and truthful claims
+
+The automated tests cover CrazyLoops telemetry and log serialization without
+persisting credential plaintext. Running the canary script from a trusted local
+checkout proves the client/runner exchange and the inspected runner-host
+surfaces; it does **not** prove that production Vercel runtime logs, telemetry,
+or execution persistence were scanned.
+
+Only claim production Vercel runtime verification after a real invocation has
+originated in the Vercel runtime and its runtime logs, operational telemetry,
+and serialized execution output have been exported and scanned. This D1.6
+pre-host fix does not add a public diagnostic route.
 
 After preserving non-secret evidence, remove the control and evidence files:
 
@@ -160,6 +191,20 @@ rm -rf -- "$EVIDENCE_DIR"
 unset CONTROL_FILE EVIDENCE_DIR MATCH_COUNT D16_CANARY_CONFIRM
 set -o history
 ```
+
+If the canary is abandoned or the runner is removed, clean up without touching
+Redis's existing networks or restarting it:
+
+```bash
+docker stop crazyloops-connector-runner 2>/dev/null || true
+docker rm crazyloops-connector-runner 2>/dev/null || true
+docker network disconnect crazyloops-private redis 2>/dev/null || true
+docker network rm crazyloops-private 2>/dev/null || true
+```
+
+Disconnect Redis only after the runner has been removed and the added private
+network is no longer needed. Never disconnect Redis from its pre-existing
+Activepieces network.
 
 ## Failure-path canaries
 

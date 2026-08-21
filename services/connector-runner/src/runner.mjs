@@ -176,14 +176,16 @@ function capsuleAad(envelope) {
   }), "utf8");
 }
 
+function validateCapsuleLifetime(envelope, now) {
+  const expiresAt = envelope.credentialCapsule.expiresAt;
+  if (expiresAt <= now || expiresAt - now > MAX_CAPSULE_TTL_MS) {
+    throw new RunnerError("DELEGATED_CAPSULE_REJECTED", false, 400);
+  }
+}
+
 export function openCredentialCapsule(envelope, keyRing, now) {
   const capsule = envelope.credentialCapsule;
-  if (capsule.expiresAt <= now) {
-    throw new RunnerError("DELEGATED_CAPSULE_REJECTED", false, 400);
-  }
-  if (capsule.expiresAt - now > MAX_CAPSULE_TTL_MS) {
-    throw new RunnerError("DELEGATED_CAPSULE_REJECTED", false, 400);
-  }
+  validateCapsuleLifetime(envelope, now);
   const sourceKey = keyRing.get(capsule.keyVersion);
   if (!Buffer.isBuffer(sourceKey) || sourceKey.length !== 32) {
     throw new RunnerError("DELEGATED_CAPSULE_REJECTED", false, 400);
@@ -331,18 +333,20 @@ export async function processRunnerRequest({
     const adapter = ADAPTERS.get(envelope.capabilityId);
     if (!adapter) throw new RunnerError("DELEGATED_UNSUPPORTED_CAPABILITY", false, 422);
 
+    validateCapsuleLifetime(envelope, now);
+    let claimed;
+    try {
+      claimed = await replayStore.claim({
+        fingerprint: capsuleFingerprint(envelope),
+        ttlMs: envelope.credentialCapsule.expiresAt - now,
+      });
+    } catch {
+      throw new RunnerError("DELEGATED_REPLAY_UNAVAILABLE", true, 503);
+    }
+    if (!claimed) throw new RunnerError("DELEGATED_REPLAYED", false, 409);
+
     const credential = openCredentialCapsule(envelope, keyRing, now);
     try {
-      let claimed;
-      try {
-        claimed = await replayStore.claim({
-          fingerprint: capsuleFingerprint(envelope),
-          ttlMs: envelope.credentialCapsule.expiresAt - now,
-        });
-      } catch {
-        throw new RunnerError("DELEGATED_REPLAY_UNAVAILABLE", true, 503);
-      }
-      if (!claimed) throw new RunnerError("DELEGATED_REPLAYED", false, 409);
       safeLog(logger, "connector_runner_started", envelope, startedAt, "started");
       const controller = new AbortController();
       const timeout = setTimeout(

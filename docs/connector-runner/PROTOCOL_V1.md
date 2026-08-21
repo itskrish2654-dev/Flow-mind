@@ -49,6 +49,10 @@ are at most 64 KiB.
 Unknown or extra top-level and capsule fields are rejected. The request contains
 neither a user session nor a connection/vault identifier. The capsule's AAD binds
 all execution identifiers, capability/version, key version, algorithm, and expiry.
+The runner's security order is fixed: authenticate transport, validate the
+bounded envelope and capsule lifetime, atomically claim the Redis replay token,
+decrypt the capsule, then execute one allowlisted adapter. A replay or Redis
+failure is rejected before credential plaintext exists in runner memory.
 
 ## Response
 
