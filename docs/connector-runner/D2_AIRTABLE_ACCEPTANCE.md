@@ -14,7 +14,131 @@ account, base, table, record, or credential, and never paste any secret into cha
    source file, SQL statement, environment variable, URL, command argument, or
    persistent shell history.
 
-## 2. Prepare independent operator secrets and server-owned configuration
+## 2. Upgrade only the Connector Runner and complete host preflight
+
+Do this on the runner host before enabling Vercel execution or provisioning the
+PAT. A Vercel deployment does not rebuild the home-hosted runner image. Do not
+continue unless the checkout is the exact reviewed and merged D2.2 commit.
+
+Record the existing container and immutable image details in a protected rollback
+directory. Keep the old image; do not overwrite its tag or delete it during D2.
+
+```bash
+set -euo pipefail
+umask 077
+cd /opt/crazyloops/source
+
+EXPECTED_D22_SHA='<full reviewed and merged D2.2 Git SHA>'
+CURRENT_SHA="$(git rev-parse HEAD)"
+test "$CURRENT_SHA" = "$EXPECTED_D22_SHA"
+test -z "$(git status --porcelain)"
+
+ROLLBACK_DIR="$(mktemp -d /tmp/crazyloops-d2-runner-rollback.XXXXXX)"
+chmod 700 "$ROLLBACK_DIR"
+docker inspect crazyloops-connector-runner > "$ROLLBACK_DIR/old-container.json"
+OLD_RUNNER_IMAGE_ID="$(docker inspect crazyloops-connector-runner --format '{{.Image}}')"
+OLD_RUNNER_IMAGE_REF="$(docker inspect crazyloops-connector-runner --format '{{.Config.Image}}')"
+printf '%s\n' "$OLD_RUNNER_IMAGE_ID" > "$ROLLBACK_DIR/old-image-id.txt"
+printf '%s\n' "$OLD_RUNNER_IMAGE_REF" > "$ROLLBACK_DIR/old-image-ref.txt"
+docker image inspect "$OLD_RUNNER_IMAGE_ID" > "$ROLLBACK_DIR/old-image.json"
+
+test "$(docker inspect crazyloops-connector-runner --format '{{.HostConfig.RestartPolicy.Name}}')" = 'unless-stopped'
+test "$(docker port crazyloops-connector-runner 8788/tcp)" = '127.0.0.1:8788'
+docker network inspect crazyloops-private \
+  --format '{{range .Containers}}{{println .Name}}{{end}}' | grep -qx crazyloops-connector-runner
+docker network inspect crazyloops-private \
+  --format '{{range .Containers}}{{println .Name}}{{end}}' | grep -qx redis
+test "$(docker inspect redis --format '{{with (index .NetworkSettings.Ports "6379/tcp")}}{{len .}}{{else}}0{{end}}')" = '0'
+test "$(docker exec redis redis-cli PING)" = 'PONG'
+```
+
+Keep the existing Vercel state at this point:
+
+```text
+CONNECTOR_RUNNER_EXECUTION_ENABLED=false
+```
+
+Build a release-specific image from the reviewed runner directory. The exact Git
+SHA in the tag prevents this build from overwriting the rollback image.
+
+```bash
+NEW_RUNNER_IMAGE="crazyloops-connector-runner:d22-${CURRENT_SHA}"
+docker build --pull \
+  --label "com.crazyloops.git-sha=${CURRENT_SHA}" \
+  --tag "$NEW_RUNNER_IMAGE" \
+  services/connector-runner
+
+docker run --rm --entrypoint node "$NEW_RUNNER_IMAGE" --input-type=module --eval '
+  const fs = await import("node:fs");
+  const airtable = await import("./src/adapters/airtable.mjs");
+  const runner = fs.readFileSync("./src/runner.mjs", "utf8");
+  if (airtable.AIRTABLE_CREATE_RECORD_CAPABILITY !== "airtable.create_record" ||
+      airtable.AIRTABLE_CREATE_RECORD_VERSION !== 1 ||
+      !runner.includes("internal.connector_runner_canary") ||
+      !runner.includes("createAirtableCreateRecordAdapter")) process.exit(1);
+'
+```
+
+Replace only `crazyloops-connector-runner`. Reuse the existing protected env
+file, private network, Redis attachment, restart policy, and loopback binding.
+Do not restart Redis or Activepieces. Do not edit/restart Cloudflare or create a
+second runner on another port.
+
+The preflight below requires Redis `PONG`, local unsigned POST `401`, and public
+unsigned POST `401` before the execution window may open.
+
+```bash
+docker stop crazyloops-connector-runner
+docker rm crazyloops-connector-runner
+docker run -d \
+  --name crazyloops-connector-runner \
+  --restart unless-stopped \
+  --network crazyloops-private \
+  --env-file /opt/crazyloops/secrets/connector-runner.env \
+  -p 127.0.0.1:8788:8788 \
+  "$NEW_RUNNER_IMAGE"
+
+test "$(docker inspect crazyloops-connector-runner --format '{{.State.Running}}')" = 'true'
+test "$(docker inspect crazyloops-connector-runner --format '{{.HostConfig.RestartPolicy.Name}}')" = 'unless-stopped'
+test "$(docker port crazyloops-connector-runner 8788/tcp)" = '127.0.0.1:8788'
+test "$(docker exec redis redis-cli PING)" = 'PONG'
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  --request POST --header 'Content-Type: application/json' --data '{}' \
+  http://127.0.0.1:8788/v1/execute)" = '401'
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  --request POST --header 'Content-Type: application/json' --data '{}' \
+  https://runner.crazy-loops.com/v1/execute)" = '401'
+
+NEW_RUNNER_IMAGE_ID="$(docker inspect crazyloops-connector-runner --format '{{.Image}}')"
+test "$NEW_RUNNER_IMAGE_ID" = "$(docker image inspect "$NEW_RUNNER_IMAGE" --format '{{.Id}}')"
+printf 'RUNNER_GIT_SHA=%s\nRUNNER_IMAGE=%s\nRUNNER_IMAGE_ID=%s\n' \
+  "$CURRENT_SHA" "$NEW_RUNNER_IMAGE" "$NEW_RUNNER_IMAGE_ID" \
+  > "$ROLLBACK_DIR/new-release.txt"
+```
+
+If any replacement preflight fails, restore the exact previous immutable image;
+do not change the env file, network, Redis, Activepieces, or Cloudflare:
+
+```bash
+docker stop crazyloops-connector-runner 2>/dev/null || true
+docker rm crazyloops-connector-runner 2>/dev/null || true
+docker run -d \
+  --name crazyloops-connector-runner \
+  --restart unless-stopped \
+  --network crazyloops-private \
+  --env-file /opt/crazyloops/secrets/connector-runner.env \
+  -p 127.0.0.1:8788:8788 \
+  "$OLD_RUNNER_IMAGE_ID"
+test "$(docker inspect crazyloops-connector-runner --format '{{.State.Running}}')" = 'true'
+test "$(docker port crazyloops-connector-runner 8788/tcp)" = '127.0.0.1:8788'
+test "$(docker exec redis redis-cli PING)" = 'PONG'
+```
+
+Stop the acceptance if rollback was required. Retain `ROLLBACK_DIR`, the old
+image ID, the release tag, image ID, and Git SHA as non-secret evidence until D2
+is complete.
+
+## 3. Prepare operator secrets and open the controlled execution window
 
 Generate two different random secrets of at least 32 characters:
 
@@ -48,16 +172,16 @@ DELEGATED_EXECUTION_ENABLED=true
 Do not change that flag during D2. If it is not already true, stop and resolve the
 unexpected production configuration rather than expanding this procedure.
 
-The post-D1.7 production state has the Connector Runner disabled. Temporarily set:
+Only after every runner-host preflight above passes, temporarily set:
 
 ```text
 CONNECTOR_RUNNER_EXECUTION_ENABLED=true
 ```
 
-Deploy only the reviewed D2.1 commit for this controlled window. Do not modify
+Deploy only the reviewed D2.2 commit for this controlled window. Do not modify
 Cloudflare, Activepieces, Redis exposure, or the runner-host configuration.
 
-## 3. Provision the disposable PAT exactly once
+## 4. Provision the disposable PAT exactly once
 
 Use an isolated Bash session with history disabled. Read the PAT silently into an
 unexported shell variable, then stream it as a bounded raw body. It must not be a
@@ -91,11 +215,18 @@ accepts no caller configuration. The current vault API requires one unavoidable
 transient immutable JavaScript string; complete process-memory zeroization is not
 claimed. Mutable request and provisioner buffers are zeroized best-effort.
 
+If provisioning does not return that exact success response, **do not retry**.
+First inspect the configured disposable connection ID and confirm that no active
+connection or encrypted credential remains. If a fallback revoke was required,
+the connection must have `status = revoked` and `granted_scopes = []` before any
+manual cleanup. A cleanup failure requires operator intervention; never reuse the
+same connection ID.
+
 Do not call provisioning twice. Verify the connection metadata and credential row
 in Supabase. Only encrypted `ciphertext`, `nonce`, and `auth_tag` may be stored;
 there must be no plaintext credential column or plaintext value.
 
-## 4. Execute create-record exactly once
+## 5. Execute create-record exactly once
 
 ```bash
 curl --fail-with-body --silent --show-error \
@@ -115,7 +246,7 @@ Acceptance requires exactly one acceptance HTTP invocation, one runner invocatio
 one Airtable API attempt, exactly one matching Airtable record, and a sanitized
 response whose `recordId` equals the created Airtable record ID.
 
-## 5. Verify execution, telemetry, and replay behavior
+## 6. Verify execution, telemetry, and replay behavior
 
 Confirm:
 
@@ -131,7 +262,7 @@ Do not resend the production request to test replay. Exact duplicate-envelope
 rejection is covered by the D2 automated test. A new signed envelope is a new
 provider operation and is not provider exactly-once.
 
-## 6. Run the required plaintext persistence scan
+## 7. Run the required plaintext persistence scan
 
 Keep `D2_PAT` unexported until scanning is complete. Export the relevant Vercel
 runtime logs, `operational_events`, serialized execution outputs, and operator
@@ -169,7 +300,7 @@ keys/values, Docker inspect, exported runner filesystem, relevant temporary
 files, shell history, and both operator response files. Do not print matching
 content. Encrypted capsule/vault ciphertext is allowed; plaintext is not.
 
-## 7. Cleanup and restore the accepted production state
+## 8. Cleanup and restore the accepted production state
 
 1. Revoke/delete the disposable PAT in Airtable.
 2. Delete the disposable `connector_connections` row by the exact configured

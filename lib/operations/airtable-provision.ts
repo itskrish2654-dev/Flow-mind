@@ -22,6 +22,22 @@ type ConnectionMetadata = {
   safe_metadata: { internalAcceptance: "d2" };
 };
 
+export type AirtableProvisionCleanupOutcome =
+  | "not_required"
+  | "deleted"
+  | "revoked"
+  | "failed";
+
+export class AirtableProvisioningError extends Error {
+  readonly cleanupOutcome: AirtableProvisionCleanupOutcome;
+
+  constructor(cleanupOutcome: AirtableProvisionCleanupOutcome) {
+    super("Airtable provisioning failed.");
+    this.name = "AirtableProvisioningError";
+    this.cleanupOutcome = cleanupOutcome;
+  }
+}
+
 type AirtableProvisionDependencies = {
   findConnection(connectionId: string): Promise<{ id: string } | null>;
   insertConnection(metadata: ConnectionMetadata): Promise<void>;
@@ -36,7 +52,7 @@ type AirtableProvisionDependencies = {
     userId: string;
     connectionId: string;
     externalAccountId: string;
-  }): Promise<void>;
+  }): Promise<"deleted" | "revoked">;
 };
 
 type ProvisionOptions = {
@@ -67,21 +83,37 @@ const defaultDependencies: AirtableProvisionDependencies = {
   async cleanupConnection({ userId, connectionId, externalAccountId }) {
     const { createAdminClient } = await import("@/lib/supabase/admin");
     const admin = createAdminClient();
-    const { error } = await admin
+    const { error: deleteError } = await admin
       .from("connector_connections")
       .delete()
       .eq("id", connectionId)
       .eq("user_id", userId)
       .eq("connector_id", "airtable")
       .eq("external_account_id", externalAccountId);
-    if (!error) return;
-    await admin
+    if (!deleteError) return "deleted";
+
+    const revokedAt = new Date().toISOString();
+    const { data, error: revokeError } = await admin
       .from("connector_connections")
-      .update({ status: "revoked", granted_scopes: [], updated_at: new Date().toISOString() })
+      .update({ status: "revoked", granted_scopes: [], updated_at: revokedAt })
       .eq("id", connectionId)
       .eq("user_id", userId)
       .eq("connector_id", "airtable")
-      .eq("external_account_id", externalAccountId);
+      .eq("external_account_id", externalAccountId)
+      .select("id,status,granted_scopes,updated_at")
+      .maybeSingle();
+    if (
+      revokeError ||
+      !data ||
+      data.id !== connectionId ||
+      data.status !== "revoked" ||
+      !Array.isArray(data.granted_scopes) ||
+      data.granted_scopes.length !== 0 ||
+      data.updated_at !== revokedAt
+    ) {
+      throw new Error("Disposable Airtable connection cleanup failed.");
+    }
+    return "revoked";
   },
 };
 
@@ -170,12 +202,20 @@ export async function provisionAirtableConnection(
       plaintext,
     });
     return { ok: true, connectionId };
-  } catch (error) {
+  } catch {
+    let cleanupOutcome: AirtableProvisionCleanupOutcome = "not_required";
     if (created) {
-      await dependencies.cleanupConnection({ userId: ownerId, connectionId, externalAccountId })
-        .catch(() => undefined);
+      try {
+        cleanupOutcome = await dependencies.cleanupConnection({
+          userId: ownerId,
+          connectionId,
+          externalAccountId,
+        });
+      } catch {
+        cleanupOutcome = "failed";
+      }
     }
-    throw error;
+    throw new AirtableProvisioningError(cleanupOutcome);
   } finally {
     credential.fill(0);
   }

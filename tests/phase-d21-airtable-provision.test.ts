@@ -6,6 +6,7 @@ import test from "node:test";
 import { CAPABILITY_REGISTRY } from "../lib/capability-registry";
 import { listCustomerConnectors } from "../lib/connectors/registry";
 import {
+  AirtableProvisioningError,
   handleAirtableProvisionPost,
   provisionAirtableConnection,
 } from "../lib/operations/airtable-provision";
@@ -47,7 +48,12 @@ function request(input: {
   });
 }
 
-function dependencyFixture(options: { existing?: boolean; storeFailure?: boolean } = {}) {
+function dependencyFixture(options: {
+  existing?: boolean;
+  storeFailure?: boolean;
+  cleanupOutcome?: "deleted" | "revoked";
+  cleanupFailure?: boolean;
+} = {}) {
   const calls = {
     finds: [] as string[],
     inserts: [] as Array<Record<string, unknown>>,
@@ -72,7 +78,9 @@ function dependencyFixture(options: { existing?: boolean; storeFailure?: boolean
       },
       async cleanupConnection(input: Record<string, unknown>) {
         calls.cleanups.push(input);
+        if (options.cleanupFailure) throw new Error(`cleanup failed ${PAT}`);
         exists = false;
+        return options.cleanupOutcome ?? "deleted";
       },
     },
   };
@@ -180,7 +188,7 @@ test("D2.1 existing connection is never overwritten and repeated provisioning fa
   assert.equal(once.calls.stores.length, 1);
 });
 
-test("D2.1 vault failure cleans up the exact disposable connection and returns no PAT", async () => {
+test("D2.2 vault failure records successful exact DELETE cleanup and returns no PAT", async () => {
   const fixture = dependencyFixture({ storeFailure: true });
   const captured: unknown[] = [];
   const original = { error: console.error, warn: console.warn, info: console.info, log: console.log };
@@ -207,6 +215,61 @@ test("D2.1 vault failure cleans up the exact disposable connection and returns n
   assert.doesNotMatch(JSON.stringify(captured), new RegExp(PAT));
 });
 
+test("D2.2 DELETE failure records a verified revoke fallback as cleanup success", async () => {
+  const fixture = dependencyFixture({ storeFailure: true, cleanupOutcome: "revoked" });
+  await assert.rejects(
+    provisionAirtableConnection(Buffer.from(PAT), {
+      environment: environment(),
+      dependencies: fixture.dependencies,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof AirtableProvisioningError);
+      assert.equal(error.cleanupOutcome, "revoked");
+      assert.doesNotMatch(error.message, new RegExp(PAT));
+      return true;
+    },
+  );
+  assert.equal(fixture.calls.cleanups.length, 1);
+});
+
+test("D2.2 DELETE and revoke failure is internally reported as failed cleanup", async () => {
+  const fixture = dependencyFixture({ storeFailure: true, cleanupFailure: true });
+  const captured: unknown[] = [];
+  const original = { error: console.error, warn: console.warn, info: console.info, log: console.log };
+  console.error = (...values) => { captured.push(values); };
+  console.warn = (...values) => { captured.push(values); };
+  console.info = (...values) => { captured.push(values); };
+  console.log = (...values) => { captured.push(values); };
+  try {
+    await assert.rejects(
+      provisionAirtableConnection(Buffer.from(PAT), {
+        environment: environment(),
+        dependencies: fixture.dependencies,
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof AirtableProvisioningError);
+        assert.equal(error.cleanupOutcome, "failed");
+        assert.doesNotMatch(error.message, new RegExp(PAT));
+        return true;
+      },
+    );
+  } finally {
+    Object.assign(console, original);
+  }
+  assert.equal(fixture.calls.cleanups.length, 1);
+  assert.doesNotMatch(JSON.stringify(captured), new RegExp(PAT));
+
+  const routeFixture = dependencyFixture({ storeFailure: true, cleanupFailure: true });
+  const response = await handleAirtableProvisionPost(request(), {
+    environment: environment(),
+    dependencies: routeFixture.dependencies,
+  });
+  assert.equal(response.status, 409);
+  const body = await response.text();
+  assert.equal(body, JSON.stringify({ ok: false, error: "Provisioning failed" }));
+  assert.doesNotMatch(body, new RegExp(PAT));
+});
+
 test("D2.1 mutable PAT buffer is zeroized after the unavoidable transient vault string", async () => {
   const fixture = dependencyFixture();
   const credential = Buffer.from(PAT, "utf8");
@@ -227,6 +290,44 @@ test("D2.1 runbook explicitly opens and closes the temporary runner window", () 
   assert.match(runbook, /Do not change that flag during D2/);
   assert.match(runbook, /never paste any secret into chat/i);
   assert.match(runbook, /PLAINTEXT_PAT_PERSISTENCE_OCCURRENCES/);
+});
+
+test("D2.2 runbook upgrades and preflights the exact runner before execution is enabled", () => {
+  const runbook = readFileSync(
+    join(process.cwd(), "docs", "connector-runner", "D2_AIRTABLE_ACCEPTANCE.md"),
+    "utf8",
+  );
+  const build = runbook.indexOf("docker build --pull");
+  const replace = runbook.indexOf("docker stop crazyloops-connector-runner");
+  const publicUnsigned = runbook.indexOf("https://runner.crazy-loops.com/v1/execute");
+  const enabled = runbook.indexOf("CONNECTOR_RUNNER_EXECUTION_ENABLED=true");
+  const finalDisabled = runbook.lastIndexOf("CONNECTOR_RUNNER_EXECUTION_ENABLED=false");
+  assert.ok(build >= 0 && replace > build && publicUnsigned > replace && enabled > publicUnsigned);
+  assert.ok(finalDisabled > enabled);
+  assert.match(runbook, /crazyloops-connector-runner:d22-\$\{CURRENT_SHA\}/);
+  assert.match(runbook, /OLD_RUNNER_IMAGE_ID/);
+  assert.match(runbook, /old image; do not overwrite its tag or delete it/i);
+  assert.match(runbook, /127\.0\.0\.1:8788:8788/);
+  assert.match(runbook, /http:\/\/127\.0\.0\.1:8788\/v1\/execute/);
+  assert.match(runbook, /public\s+unsigned POST `401`/i);
+  assert.match(runbook, /Do not restart Redis or Activepieces/);
+  assert.match(runbook, /Do not edit\/restart Cloudflare/);
+  assert.doesNotMatch(runbook, /docker restart (?:redis|activepieces)/);
+  assert.doesNotMatch(runbook, /systemctl restart cloudflared/);
+});
+
+test("D2.2 cleanup implementation constrains DELETE and verifies revoke fallback", () => {
+  const source = readFileSync(
+    join(process.cwd(), "lib", "operations", "airtable-provision.ts"),
+    "utf8",
+  );
+  const cleanup = source.slice(source.indexOf("async cleanupConnection"), source.indexOf("async function readBoundedPat"));
+  assert.match(cleanup, /\.delete\(\)[\s\S]*\.eq\("id", connectionId\)[\s\S]*\.eq\("user_id", userId\)[\s\S]*\.eq\("connector_id", "airtable"\)[\s\S]*\.eq\("external_account_id", externalAccountId\)/);
+  assert.match(cleanup, /if \(!deleteError\) return "deleted"/);
+  assert.match(cleanup, /status: "revoked", granted_scopes: \[\], updated_at: revokedAt/);
+  assert.match(cleanup, /\.select\("id,status,granted_scopes,updated_at"\)[\s\S]*\.maybeSingle\(\)/);
+  assert.match(cleanup, /revokeError[\s\S]*data\.status !== "revoked"[\s\S]*data\.granted_scopes\.length !== 0[\s\S]*data\.updated_at !== revokedAt/);
+  assert.doesNotMatch(source, /captureOperationalEvent|operational_events|console\./);
 });
 
 test("D2.1 customer isolation and accepted executor paths remain unchanged", () => {
