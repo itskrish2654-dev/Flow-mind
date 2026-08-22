@@ -129,6 +129,45 @@ const internalTestManifest: ConnectorManifest = {
   limitations: ["Never available in production or customer-facing connector lists."],
 };
 
+const internalAirtableManifest: ConnectorManifest = {
+  id: "airtable",
+  providerFamily: "airtable",
+  displayName: "Airtable internal acceptance",
+  description: "Internal-only create-record capability executed by the isolated connector runner.",
+  status: "INTERNAL",
+  version: 1,
+  auth: {
+    type: "api_key",
+    defaultScopes: ["data.records:write"],
+    pkceRequired: false,
+  },
+  triggers: [],
+  actions: [{
+    key: "create_record",
+    version: 1,
+    kind: "action",
+    displayName: "Create Airtable record",
+    description: "Creates exactly one record in an explicitly configured base and table.",
+    input: [
+      { key: "baseId", label: "Base ID", type: "string", required: true },
+      { key: "tableId", label: "Table ID", type: "string", required: true },
+      { key: "fields", label: "Fields", type: "object", required: true },
+    ],
+    output: [{ key: "recordId", label: "Record ID", type: "string", required: true }],
+    requiredScopes: ["data.records:write"],
+    connectionRequired: true,
+    testMode: true,
+    production: false,
+    deliverySemantics: "acknowledged_external",
+    executor: "connector_runner",
+  }],
+  limitations: [
+    "Internal controlled acceptance only; no customer connection or planner support.",
+    "Airtable create-record does not provide a native idempotency key.",
+  ],
+  documentationUrl: "https://airtable.com/developers/web/api/create-records",
+};
+
 const googleGmailManifest: ConnectorManifest = {
   id: "google_gmail",
   providerFamily: "google",
@@ -338,6 +377,10 @@ const connectors: RegisteredConnector[] = [
       },
     },
   },
+  {
+    manifest: internalAirtableManifest,
+    runtime: { actionHandlers: {}, triggerHandlers: {} },
+  },
 ];
 
 function operationId(operation: ConnectorOperation) { return `${operation.kind}:${operation.key}@${operation.version}`; }
@@ -357,7 +400,11 @@ export function validateConnectorRegistry(entries: RegisteredConnector[] = conne
       operationIds.add(id);
       const runtimeKey = `${operation.key}@${operation.version}`;
       const handler = operation.kind === "action" ? runtime.actionHandlers[runtimeKey] : runtime.triggerHandlers[runtimeKey];
-      if ((manifest.status === "AVAILABLE" || manifest.status === "BETA" || manifest.status === "INTERNAL") && !handler) errors.push(`Missing runtime handler ${manifest.id}/${id}`);
+      if (
+        (manifest.status === "AVAILABLE" || manifest.status === "BETA" || manifest.status === "INTERNAL") &&
+        !handler &&
+        operation.executor !== "connector_runner"
+      ) errors.push(`Missing runtime handler ${manifest.id}/${id}`);
       if (operation.production && manifest.status === "INTERNAL") errors.push(`Internal connector cannot expose production operation ${manifest.id}/${id}`);
     }
   }

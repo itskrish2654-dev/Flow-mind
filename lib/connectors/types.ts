@@ -49,6 +49,8 @@ export type ConnectorOperation = {
   testMode: boolean;
   production: boolean;
   deliverySemantics?: "internal" | "acknowledged_external" | "trigger";
+  /** A delegated operation is implemented only by the isolated connector runner. */
+  executor?: "connector_runner";
 };
 
 export type ConnectorManifest = {

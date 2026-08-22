@@ -86,11 +86,20 @@ retry.
 
 ## Adapter interface
 
-Adapters are statically registered and receive only:
+Adapters are statically registered by exact capability ID and version and receive only:
 
 ```text
 execute({ capabilityId, input, credential, idempotencyKey, signal })
 ```
 
-There is no dynamic import, eval, arbitrary code, or generic destination URL. D1.6
-registers only `internal.connector_runner_canary@1`, which returns an HMAC proof.
+There is no dynamic import, eval, arbitrary code, or generic destination URL. The
+allowlist contains `internal.connector_runner_canary@1`, which returns an HMAC
+proof, and the internal-only `airtable.create_record@1`, which calls only
+`POST https://api.airtable.com/v0/{baseId}/{tableId}` and returns only a validated
+record ID. The Airtable adapter never accepts a URL, method, header, credential,
+hostname, or connection ID in its input.
+
+The runner makes one provider attempt. Airtable create-record has no native
+idempotency-key primitive, so CrazyLoops does not claim provider exactly-once.
+A network failure after dispatch is a non-retryable ambiguous execution failure;
+an operator must check Airtable before choosing to run the operation again.

@@ -12,7 +12,10 @@ import {
   type ConnectorRunnerCapsuleBinding,
   type ConnectorRunnerRequestEnvelope,
 } from "@/lib/executors/connector-runner-protocol";
-import { resolveDelegatedCredential } from "@/lib/executors/delegated-credentials";
+import {
+  DelegatedCredentialError,
+  resolveDelegatedCredential,
+} from "@/lib/executors/delegated-credentials";
 import {
   DELEGATED_ERROR_CATEGORIES,
   type CapabilityExecutionRequest,
@@ -28,6 +31,10 @@ const MIN_TIMEOUT_MS = 1_000;
 const MAX_TIMEOUT_MS = 30_000;
 const MIN_SECRET_LENGTH = 32;
 const CANARY_CAPABILITY = "internal.connector_runner_canary";
+const SUPPORTED_CAPABILITY_VERSIONS = new Set([
+  `${CANARY_CAPABILITY}@1`,
+  "airtable.create_record@1",
+]);
 
 type FetchImplementation = typeof fetch;
 type TelemetryCapture = (event: OperationalEvent) => Promise<unknown>;
@@ -247,8 +254,9 @@ export class ConnectorRunnerExecutor implements CapabilityExecutor {
       return { ok: false, errorCategory: "DELEGATED_AUTH_FAILED", retryable: false };
     }
     if (
-      request.envelope.capabilityId !== CANARY_CAPABILITY ||
-      request.envelope.capabilityVersion !== 1
+      !SUPPORTED_CAPABILITY_VERSIONS.has(
+        `${request.envelope.capabilityId}@${request.envelope.capabilityVersion}`,
+      )
     ) {
       return {
         ok: false,
@@ -386,6 +394,8 @@ export class ConnectorRunnerExecutor implements CapabilityExecutor {
     } catch (error) {
       const normalized = error instanceof DelegatedExecutionError
         ? error
+        : error instanceof DelegatedCredentialError
+          ? new DelegatedExecutionError("DELEGATED_AUTH_FAILED", false)
         : error instanceof ConnectorRunnerProtocolError
           ? new DelegatedExecutionError("DELEGATED_DISABLED", false)
           : error instanceof Error && error.name === "AbortError"

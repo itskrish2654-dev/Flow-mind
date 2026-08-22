@@ -5,6 +5,12 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 
+import {
+  AIRTABLE_CREATE_RECORD_CAPABILITY,
+  AIRTABLE_CREATE_RECORD_VERSION,
+  createAirtableCreateRecordAdapter,
+} from "./adapters/airtable.mjs";
+
 export const PROTOCOL_VERSION = 1;
 export const MAX_REQUEST_BYTES = 128 * 1024;
 export const MAX_RESPONSE_BYTES = 64 * 1024;
@@ -18,7 +24,7 @@ const MIN_TRANSPORT_SECRET_LENGTH = 32;
 const ALGORITHM = "aes-256-gcm";
 const NOOP_LOGGER = (event) => { void event; };
 
-class RunnerError extends Error {
+export class RunnerError extends Error {
   constructor(category, retryable = false, status = 400) {
     super("Connector runner request failed.");
     this.name = "RunnerError";
@@ -270,7 +276,21 @@ function canaryAdapter() {
   };
 }
 
-const ADAPTERS = new Map([[CANARY_CAPABILITY, canaryAdapter()]]);
+function adapterKey(capabilityId, capabilityVersion) {
+  return `${capabilityId}@${capabilityVersion}`;
+}
+
+function fail(category, retryable = false, status = 200) {
+  throw new RunnerError(category, retryable, status);
+}
+
+const ADAPTERS = new Map([
+  [adapterKey(CANARY_CAPABILITY, 1), canaryAdapter()],
+  [
+    adapterKey(AIRTABLE_CREATE_RECORD_CAPABILITY, AIRTABLE_CREATE_RECORD_VERSION),
+    createAirtableCreateRecordAdapter({ fail }),
+  ],
+]);
 
 function safeLog(logger, event, envelope, startedAt, status, category) {
   logger({
@@ -308,6 +328,8 @@ export async function processRunnerRequest({
   replayStore,
   now = Date.now(),
   adapterTimeoutMs = 10_000,
+  fetchImplementation = fetch,
+  adapters = ADAPTERS,
   logger = NOOP_LOGGER,
 }) {
   const startedAt = Date.now();
@@ -327,10 +349,7 @@ export async function processRunnerRequest({
     if (envelope.requestId !== requestId) {
       throw new RunnerError("DELEGATED_AUTH_FAILED", false, 401);
     }
-    if (envelope.capabilityId !== CANARY_CAPABILITY || envelope.capabilityVersion !== 1) {
-      throw new RunnerError("DELEGATED_UNSUPPORTED_CAPABILITY", false, 422);
-    }
-    const adapter = ADAPTERS.get(envelope.capabilityId);
+    const adapter = adapters.get(adapterKey(envelope.capabilityId, envelope.capabilityVersion));
     if (!adapter) throw new RunnerError("DELEGATED_UNSUPPORTED_CAPABILITY", false, 422);
 
     validateCapsuleLifetime(envelope, now);
@@ -360,6 +379,7 @@ export async function processRunnerRequest({
           credential,
           idempotencyKey: envelope.idempotencyKey,
           signal: controller.signal,
+          fetchImplementation,
         });
         safeLog(logger, "connector_runner_succeeded", envelope, startedAt, "succeeded");
         return {

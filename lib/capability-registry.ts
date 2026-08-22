@@ -548,6 +548,26 @@ export const CAPABILITY_REGISTRY = {
     internalOnly: true,
     plannerVisible: false,
   }),
+  "airtable.create_record": defineCapability({
+    id: "airtable.create_record",
+    displayName: "Create Airtable record",
+    category: "destination",
+    supported: true,
+    executionImplementation: "connector:airtable/create_record@1",
+    requiredSetupFields: [],
+    credentialsRequired: true,
+    availableInTest: true,
+    availableInProduction: false,
+    limitations: [
+      "Internal controlled acceptance only.",
+      "Airtable create-record has no native idempotency key; ambiguous outcomes require manual verification.",
+    ],
+    aliases: [],
+    executorVersions: { 1: "connector_runner" },
+    defaultCapabilityVersion: 1,
+    internalOnly: true,
+    plannerVisible: false,
+  }),
   external_integration: defineCapability({
     id: "external_integration",
     displayName: "External app integration",
@@ -649,6 +669,7 @@ export function resolveStepCapabilityId(
       notion_update_item: ["connector_action"],
       "internal.bridge_echo": ["connector_action"],
       "internal.connector_runner_canary": ["connector_action"],
+      "airtable.create_record": ["connector_action"],
     };
     const compatible = compatibleTypes[step.capabilityId as CapabilityId];
     return compatible?.includes(step.type) ? step.capabilityId : null;
