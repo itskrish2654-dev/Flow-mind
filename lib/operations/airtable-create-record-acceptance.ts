@@ -1,29 +1,26 @@
 import "@/lib/server-only-runtime";
 
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import { ConnectorRunnerExecutor } from "@/lib/executors/connector-runner";
 import type { CapabilityExecutionRequest } from "@/lib/executors/types";
+import {
+  isD2OperatorAuthorized,
+  type D2OperatorEnvironment,
+} from "@/lib/operations/d2-operator-auth";
 
 const CAPABILITY_ID = "airtable.create_record";
 const CAPABILITY_VERSION = 1;
 const STEP_ID = "d2_airtable_create_record";
-const MIN_OPERATOR_SECRET_LENGTH = 32;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-type AcceptanceEnvironment = Record<string, string | undefined>;
+type AcceptanceEnvironment = D2OperatorEnvironment;
 
 type AcceptanceDependencies = {
   environment?: AcceptanceEnvironment;
   executor?: Pick<ConnectorRunnerExecutor, "execute">;
   randomUUID?: () => string;
 };
-
-function constantTimeTextEqual(expected: string, supplied: string): boolean {
-  const expectedDigest = createHash("sha256").update(expected, "utf8").digest();
-  const suppliedDigest = createHash("sha256").update(supplied, "utf8").digest();
-  return timingSafeEqual(expectedDigest, suppliedDigest);
-}
 
 function parseFields(value: string | undefined): Record<string, unknown> | null {
   if (!value || Buffer.byteLength(value, "utf8") > 60 * 1024) return null;
@@ -41,18 +38,12 @@ export function isAirtableAcceptanceAuthorized(
   request: Request,
   environment: AcceptanceEnvironment = process.env,
 ): boolean {
-  if (environment.D2_AIRTABLE_ACCEPTANCE_ENABLED !== "true") return false;
-  const secret = environment.D2_AIRTABLE_ACCEPTANCE_SECRET ?? "";
-  const reusedSecret = Object.entries(environment).some(([name, value]) =>
-    name !== "D2_AIRTABLE_ACCEPTANCE_SECRET" &&
-    /(?:SECRET|KEY|TOKEN)/.test(name) &&
-    Boolean(value) &&
-    constantTimeTextEqual(secret, value ?? ""));
-  if (secret.length < MIN_OPERATOR_SECRET_LENGTH || reusedSecret) return false;
-  const supplied = (request.headers.get("authorization") ?? "").startsWith("Bearer ")
-    ? (request.headers.get("authorization") ?? "").slice("Bearer ".length)
-    : "";
-  return constantTimeTextEqual(secret, supplied);
+  return isD2OperatorAuthorized({
+    request,
+    environment,
+    enabledName: "D2_AIRTABLE_ACCEPTANCE_ENABLED",
+    secretName: "D2_AIRTABLE_ACCEPTANCE_SECRET",
+  });
 }
 
 export async function executeAirtableAcceptance(

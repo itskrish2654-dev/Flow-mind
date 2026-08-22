@@ -1,98 +1,141 @@
 # D2 Airtable create-record controlled acceptance
 
-This is an owner-only, one-request production acceptance procedure for
-`airtable.create_record@1`. It is not customer setup and must not be linked from
-the product. Do not use a customer account, base, table, or credential.
+This is the owner-only, single-request acceptance procedure for
+`airtable.create_record@1`. It is not customer setup. Never use a customer
+account, base, table, record, or credential, and never paste any secret into chat.
 
-## Prepare the disposable provider resource
+## 1. Prepare disposable Airtable resources
 
 1. Create a dedicated Airtable test workspace, base, and table.
-2. Add a plain text field dedicated to the test, for example `Acceptance value`.
-3. Create a Personal Access Token restricted to that one base with only
-   `data.records:write`. Airtable account/base permissions still apply.
-4. Create an owner-scoped `connector_connections` record with connector and
-   provider family `airtable`, auth type `api_key`, connected status, and granted
-   scope `data.records:write`.
-5. From trusted server-only setup code, call the existing
-   `storeConnectionSecret` vault function with credential key `api_key` and
-   credential type `api_key`. Never put the PAT in SQL, source, a Vercel command
-   argument, an environment variable, or the runner environment.
+2. Add one plain-text field named `Acceptance value`.
+3. Create a disposable Personal Access Token restricted to that base with only
+   `data.records:write`.
+4. Record the `app...` base ID and `tbl...` table ID. Do not copy the PAT into a
+   source file, SQL statement, environment variable, URL, command argument, or
+   persistent shell history.
 
-The only intentional plaintext copies are Airtable's token display and the
-trusted vault setup process memory. The stored credential must be ciphertext in
-CrazyLoops. Confirm browser APIs and connection views return no credential data.
+## 2. Prepare independent operator secrets and server-owned configuration
 
-## Configure the temporary Vercel acceptance surface
+Generate two different random secrets of at least 32 characters:
 
-Generate a new dedicated operator secret. It must not equal any other application
-secret. Configure these server-only values for the controlled deployment:
+- `D2_AIRTABLE_PROVISION_SECRET`
+- `D2_AIRTABLE_ACCEPTANCE_SECRET`
+
+They must not equal one another or any runner transport, wrap, vault, cron,
+schedule, OAuth, provider, application, or other operator secret.
+
+Generate a disposable CrazyLoops owner and an operator-chosen connection UUID.
+Configure these temporary server-only Vercel Production variables:
 
 ```text
+D2_AIRTABLE_PROVISION_ENABLED=true
+D2_AIRTABLE_PROVISION_SECRET=<dedicated provision operator secret>
 D2_AIRTABLE_ACCEPTANCE_ENABLED=true
-D2_AIRTABLE_ACCEPTANCE_SECRET=<new dedicated random value, at least 32 characters>
-D2_AIRTABLE_ACCEPTANCE_OWNER_ID=<disposable CrazyLoops owner UUID>
-D2_AIRTABLE_ACCEPTANCE_CONNECTION_ID=<owned Airtable connection UUID>
+D2_AIRTABLE_ACCEPTANCE_SECRET=<different dedicated execution operator secret>
+D2_AIRTABLE_ACCEPTANCE_OWNER_ID=<disposable CrazyLoops auth.users UUID>
+D2_AIRTABLE_ACCEPTANCE_CONNECTION_ID=<new operator-generated UUID>
 D2_AIRTABLE_ACCEPTANCE_BASE_ID=<dedicated app... ID>
 D2_AIRTABLE_ACCEPTANCE_TABLE_ID=<dedicated tbl... ID>
 D2_AIRTABLE_ACCEPTANCE_FIELDS_JSON={"Acceptance value":"CRAZYLOOPS_D2_<distinctive non-sensitive value>"}
 ```
 
-Keep the established connector-runner transport, wrap-key, URL, and execution
-flags unchanged. The acceptance route reads no request body, and its caller
-cannot provide a base, table, fields, connection, token, URL, method, or header.
+Confirm the accepted delegated foundation already has:
 
-## Execute exactly once
+```text
+DELEGATED_EXECUTION_ENABLED=true
+```
 
-Disable shell history and load the operator secret without printing it. Then make
-one request only:
+Do not change that flag during D2. If it is not already true, stop and resolve the
+unexpected production configuration rather than expanding this procedure.
+
+The post-D1.7 production state has the Connector Runner disabled. Temporarily set:
+
+```text
+CONNECTOR_RUNNER_EXECUTION_ENABLED=true
+```
+
+Deploy only the reviewed D2.1 commit for this controlled window. Do not modify
+Cloudflare, Activepieces, Redis exposure, or the runner-host configuration.
+
+## 3. Provision the disposable PAT exactly once
+
+Use an isolated Bash session with history disabled. Read the PAT silently into an
+unexported shell variable, then stream it as a bounded raw body. It must not be a
+URL/query/header/JSON value, environment variable, file, or command argument.
 
 ```bash
 set +o history
+umask 077
+IFS= read -r -s -p 'Disposable Airtable PAT: ' D2_PAT
+printf '\n'
+printf '%s' "$D2_PAT" | curl --fail-with-body --silent --show-error \
+  --request POST \
+  --header "Authorization: Bearer ${D2_AIRTABLE_PROVISION_SECRET}" \
+  --header 'Content-Type: application/octet-stream' \
+  --data-binary @- \
+  https://www.crazy-loops.com/api/operations/connector-runner-airtable-provision \
+  > /tmp/crazyloops-d2-provision-response.json
+chmod 600 /tmp/crazyloops-d2-provision-response.json
+```
+
+The only successful response shape is:
+
+```json
+{"ok":true,"connectionId":"<configured UUID>"}
+```
+
+The provisioner refuses an existing connection ID, creates only an internal
+`airtable` / `api_key` connection with `data.records:write`, and immediately calls
+the existing encrypted vault with credential key/type `api_key` / `api_key`. It
+accepts no caller configuration. The current vault API requires one unavoidable
+transient immutable JavaScript string; complete process-memory zeroization is not
+claimed. Mutable request and provisioner buffers are zeroized best-effort.
+
+Do not call provisioning twice. Verify the connection metadata and credential row
+in Supabase. Only encrypted `ciphertext`, `nonce`, and `auth_tag` may be stored;
+there must be no plaintext credential column or plaintext value.
+
+## 4. Execute create-record exactly once
+
+```bash
 curl --fail-with-body --silent --show-error \
   --request POST \
   --header "Authorization: Bearer ${D2_AIRTABLE_ACCEPTANCE_SECRET}" \
   https://www.crazy-loops.com/api/operations/connector-runner-airtable-canary \
-  > /tmp/crazyloops-d2-result.json
-chmod 600 /tmp/crazyloops-d2-result.json
+  > /tmp/crazyloops-d2-execution-response.json
+chmod 600 /tmp/crazyloops-d2-execution-response.json
 ```
 
 Do not automatically retry a timeout, network failure, 5xx, or lost response.
-Airtable create-record has no native idempotency key. First inspect the test table
-for the distinctive value; retrying an ambiguous create may create a duplicate.
+Airtable create-record has no native idempotency key. First inspect Airtable for
+the distinctive value; a second invocation creates a new capsule and may create a
+duplicate record.
 
-Acceptance requires one HTTP invocation, one runner invocation, one Airtable API
-attempt, exactly one new Airtable record, and a response containing only the
-matching `recordId` plus CrazyLoops request/execution identifiers.
+Acceptance requires exactly one acceptance HTTP invocation, one runner invocation,
+one Airtable API attempt, exactly one matching Airtable record, and a sanitized
+response whose `recordId` equals the created Airtable record ID.
 
-## Verify the execution and replay boundary
+## 5. Verify execution, telemetry, and replay behavior
 
-Confirm the Vercel runtime execution and operational telemetry contain succeeded
-events for `airtable.create_record`, the runner contains one started/succeeded
-pair, and Airtable contains exactly one matching record whose ID equals the
-sanitized response. Confirm the runner performed Redis `SET ... NX PX` before
-capsule decryption. Do not send a second acceptance request: a new request creates
-a new capsule and is a new provider operation. Duplicate delivery of the exact
-same signed envelope/capsule must return `DELEGATED_REPLAYED`; this invariant is
-covered by the D2 automated test and may be verified only with a captured
-non-secret test envelope in a controlled runner test.
+Confirm:
 
-## Plaintext persistence scan
+1. the Vercel invocation succeeded;
+2. operational telemetry has one started/succeeded pair for
+   `airtable.create_record` with no input/output body;
+3. runner logs have one started/succeeded pair;
+4. the Redis replay claim was established before capsule decryption;
+5. Airtable has exactly one matching record and the returned record ID matches;
+6. the returned response contains no provider response body or credential data.
 
-Prepare a mode-0600 pattern file containing the PAT without placing the PAT in a
-command argument or shell history. Exclude that intentional pattern file from
-the count. Capture and scan all of these surfaces:
+Do not resend the production request to test replay. Exact duplicate-envelope
+rejection is covered by the D2 automated test. A new signed envelope is a new
+provider operation and is not provider exactly-once.
 
-1. Vercel runtime logs created for the acceptance request;
-2. CrazyLoops operational telemetry and serialized execution output;
-3. connector-runner Docker logs;
-4. Cloudflared journal and any ingress capture (request bodies must be disabled);
-5. Redis replay keys and values;
-6. Docker inspect/config metadata;
-7. exported runner filesystem, runner temporary files, and host temporary files;
-8. returned response and the isolated shell history.
+## 6. Run the required plaintext persistence scan
 
-Runner-host collection must use the containerized Redis CLI; Redis remains on the
-private Docker network and port 6379 must not be host-published:
+Keep `D2_PAT` unexported until scanning is complete. Export the relevant Vercel
+runtime logs, `operational_events`, serialized execution outputs, and operator
+response files into a mode-0700 evidence directory. On the runner host collect:
 
 ```bash
 EVIDENCE_DIR="$(mktemp -d /tmp/crazyloops-d2-evidence.XXXXXX)"
@@ -100,7 +143,7 @@ chmod 700 "$EVIDENCE_DIR"
 docker logs crazyloops-connector-runner > "$EVIDENCE_DIR/runner.log" 2>&1
 docker inspect crazyloops-connector-runner > "$EVIDENCE_DIR/runner-inspect.json"
 docker export crazyloops-connector-runner -o "$EVIDENCE_DIR/runner-filesystem.tar"
-journalctl -u cloudflared --since "10 minutes ago" > "$EVIDENCE_DIR/cloudflared.log"
+journalctl -u cloudflared --since '30 minutes ago' > "$EVIDENCE_DIR/cloudflared.log"
 docker exec redis redis-cli --scan --pattern 'crazyloops:connector-runner:v1:*' \
   > "$EVIDENCE_DIR/redis-keys.txt"
 while IFS= read -r key; do
@@ -109,17 +152,52 @@ while IFS= read -r key; do
 done < "$EVIDENCE_DIR/redis-keys.txt" > "$EVIDENCE_DIR/redis-values.txt"
 ```
 
-Export the Vercel and telemetry evidence into the same protected directory, then
-scan extracted text and binary surfaces with `grep -aFl -f <PATTERN_FILE>`. The
-required plaintext occurrence count outside the intentional pattern file is
-zero. Do not print matching content. Encrypted capsule ciphertext is allowed;
-plaintext is not.
+Extract text-readable runner filesystem evidence into the protected directory.
+Scan without placing the PAT in a command argument or pattern file:
 
-## Cleanup
+```bash
+grep -aRFl -f <(printf '%s' "$D2_PAT") "$EVIDENCE_DIR" \
+  > "$EVIDENCE_DIR/plaintext-matches.txt" || true
+MATCH_COUNT="$(wc -l < "$EVIDENCE_DIR/plaintext-matches.txt" | tr -d ' ')"
+printf 'PLAINTEXT_PAT_PERSISTENCE_OCCURRENCES=%s\n' "$MATCH_COUNT"
+test "$MATCH_COUNT" = '0'
+```
 
-Immediately set `D2_AIRTABLE_ACCEPTANCE_ENABLED=false`, remove all temporary D2
-acceptance variables, and redeploy. Revoke/delete the disposable PAT in Airtable,
-call the existing owner-scoped connection revocation flow so the encrypted vault
-row is deleted, and remove the disposable Airtable base/workspace if desired.
-Delete protected result, pattern, and evidence files after retaining only
-non-secret acceptance counts and identifiers.
+Required count: **0** across Vercel runtime logs, operational telemetry,
+serialized execution outputs, runner Docker logs, Cloudflared journal, Redis
+keys/values, Docker inspect, exported runner filesystem, relevant temporary
+files, shell history, and both operator response files. Do not print matching
+content. Encrypted capsule/vault ciphertext is allowed; plaintext is not.
+
+## 7. Cleanup and restore the accepted production state
+
+1. Revoke/delete the disposable PAT in Airtable.
+2. Delete the disposable `connector_connections` row by the exact configured
+   connection ID and owner ID, additionally requiring `connector_id = 'airtable'`.
+   The foreign key cascade removes its encrypted credential. Verify both rows are
+   gone. No PAT is used in SQL.
+3. Set both temporary route flags to false, then remove every D2 provision and
+   acceptance variable:
+
+```text
+D2_AIRTABLE_PROVISION_ENABLED=false
+D2_AIRTABLE_ACCEPTANCE_ENABLED=false
+```
+
+4. Restore the post-D1.7 runner flag exactly:
+
+```text
+CONNECTOR_RUNNER_EXECUTION_ENABLED=false
+```
+
+5. Redeploy, confirm `GET /api/health` returns HTTP 200 with application/database
+   OK, and verify both D2 routes now reject requests.
+6. Unset the unexported PAT variable and remove response/evidence files after
+   retaining only non-secret counts and IDs:
+
+```bash
+unset D2_PAT
+rm -f /tmp/crazyloops-d2-provision-response.json \
+  /tmp/crazyloops-d2-execution-response.json
+rm -rf -- "$EVIDENCE_DIR"
+```
