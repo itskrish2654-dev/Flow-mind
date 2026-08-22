@@ -1,8 +1,8 @@
 FROM node:22-alpine
 
 WORKDIR /runner
-COPY package.json ./package.json
-COPY src ./src
+COPY --chown=node:node package.json ./package.json
+COPY --chown=node:node src ./src
 
 ENV NODE_ENV=production
 ENV CONNECTOR_RUNNER_HOST=0.0.0.0

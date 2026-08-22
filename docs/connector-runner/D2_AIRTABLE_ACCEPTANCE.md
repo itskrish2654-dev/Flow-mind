@@ -18,7 +18,7 @@ account, base, table, record, or credential, and never paste any secret into cha
 
 Do this on the runner host before enabling Vercel execution or provisioning the
 PAT. A Vercel deployment does not rebuild the home-hosted runner image. Do not
-continue unless the checkout is the exact reviewed and merged D2.2 commit.
+continue unless the checkout is the exact reviewed and merged D2.3 commit.
 
 Record the existing container and immutable image details in a protected rollback
 directory. Keep the old image; do not overwrite its tag or delete it during D2.
@@ -28,9 +28,9 @@ set -euo pipefail
 umask 077
 cd /opt/crazyloops/source
 
-EXPECTED_D22_SHA='<full reviewed and merged D2.2 Git SHA>'
+EXPECTED_D23_SHA='<full reviewed and merged D2.3 Git SHA>'
 CURRENT_SHA="$(git rev-parse HEAD)"
-test "$CURRENT_SHA" = "$EXPECTED_D22_SHA"
+test "$CURRENT_SHA" = "$EXPECTED_D23_SHA"
 test -z "$(git status --porcelain)"
 
 ROLLBACK_DIR="$(mktemp -d /tmp/crazyloops-d2-runner-rollback.XXXXXX)"
@@ -62,22 +62,39 @@ Build a release-specific image from the reviewed runner directory. The exact Git
 SHA in the tag prevents this build from overwriting the rollback image.
 
 ```bash
-NEW_RUNNER_IMAGE="crazyloops-connector-runner:d22-${CURRENT_SHA}"
+NEW_RUNNER_IMAGE="crazyloops-connector-runner:d23-${CURRENT_SHA}"
 docker build --pull \
   --label "com.crazyloops.git-sha=${CURRENT_SHA}" \
   --tag "$NEW_RUNNER_IMAGE" \
   services/connector-runner
 
+docker run --rm --entrypoint sh "$NEW_RUNNER_IMAGE" -ec '
+  test "$(id -un)" = "node"
+  test "$(id -u)" = "1000"
+  test -r /runner/src/index.mjs
+  test -r /runner/src/runner.mjs
+  test -x /runner/src/adapters
+  test -r /runner/src/adapters/airtable.mjs
+'
+
 docker run --rm --entrypoint node "$NEW_RUNNER_IMAGE" --input-type=module --eval '
   const fs = await import("node:fs");
   const airtable = await import("./src/adapters/airtable.mjs");
-  const runner = fs.readFileSync("./src/runner.mjs", "utf8");
+  const runnerModule = await import("./src/runner.mjs");
+  const runnerSource = fs.readFileSync("./src/runner.mjs", "utf8");
   if (airtable.AIRTABLE_CREATE_RECORD_CAPABILITY !== "airtable.create_record" ||
       airtable.AIRTABLE_CREATE_RECORD_VERSION !== 1 ||
-      !runner.includes("internal.connector_runner_canary") ||
-      !runner.includes("createAirtableCreateRecordAdapter")) process.exit(1);
+      runnerModule.CANARY_CAPABILITY !== "internal.connector_runner_canary" ||
+      !runnerSource.includes("[adapterKey(CANARY_CAPABILITY, 1)") ||
+      !runnerSource.includes("createAirtableCreateRecordAdapter")) process.exit(1);
 '
 ```
+
+Both probes run as the image's default `node` user. Do not add `--user root` to
+either command. They prove the default runtime can read `index.mjs` and
+`runner.mjs`, traverse `src/adapters`, read and import `airtable.mjs`, and find
+`internal.connector_runner_canary@1` plus `airtable.create_record@1` before the
+live runner is replaced.
 
 Replace only `crazyloops-connector-runner`. Reuse the existing protected env
 file, private network, Redis attachment, restart policy, and loopback binding.
@@ -178,7 +195,7 @@ Only after every runner-host preflight above passes, temporarily set:
 CONNECTOR_RUNNER_EXECUTION_ENABLED=true
 ```
 
-Deploy only the reviewed D2.2 commit for this controlled window. Do not modify
+Deploy only the reviewed D2.3 commit for this controlled window. Do not modify
 Cloudflare, Activepieces, Redis exposure, or the runner-host configuration.
 
 ## 4. Provision the disposable PAT exactly once

@@ -292,21 +292,52 @@ test("D2.1 runbook explicitly opens and closes the temporary runner window", () 
   assert.match(runbook, /PLAINTEXT_PAT_PERSISTENCE_OCCURRENCES/);
 });
 
-test("D2.2 runbook upgrades and preflights the exact runner before execution is enabled", () => {
+test("D2.3 Dockerfile assigns restrictive copied sources to the node runtime user", () => {
+  const dockerfile = readFileSync(
+    join(process.cwd(), "services", "connector-runner", "Dockerfile"),
+    "utf8",
+  );
+  const base = dockerfile.indexOf("FROM node:22-alpine");
+  const packageCopy = dockerfile.indexOf("COPY --chown=node:node package.json ./package.json");
+  const sourceCopy = dockerfile.indexOf("COPY --chown=node:node src ./src");
+  const runtimeUser = dockerfile.indexOf("USER node");
+  assert.ok(base >= 0 && packageCopy > base && sourceCopy > packageCopy && runtimeUser > sourceCopy);
+  assert.doesNotMatch(dockerfile, /^COPY (?:package\.json|src)/m);
+  assert.doesNotMatch(dockerfile, /USER root|chmod\s+(?:777|o\+w)/);
+});
+
+test("D2.3 runbook verifies runtime readability before execution is enabled", () => {
   const runbook = readFileSync(
     join(process.cwd(), "docs", "connector-runner", "D2_AIRTABLE_ACCEPTANCE.md"),
     "utf8",
   );
   const build = runbook.indexOf("docker build --pull");
+  const permissionProbe = runbook.indexOf("test -r /runner/src/index.mjs");
+  const importProbe = runbook.indexOf('await import("./src/adapters/airtable.mjs")');
   const replace = runbook.indexOf("docker stop crazyloops-connector-runner");
   const publicUnsigned = runbook.indexOf("https://runner.crazy-loops.com/v1/execute");
   const enabled = runbook.indexOf("CONNECTOR_RUNNER_EXECUTION_ENABLED=true");
   const finalDisabled = runbook.lastIndexOf("CONNECTOR_RUNNER_EXECUTION_ENABLED=false");
-  assert.ok(build >= 0 && replace > build && publicUnsigned > replace && enabled > publicUnsigned);
+  assert.ok(
+    build >= 0 &&
+    permissionProbe > build &&
+    importProbe > permissionProbe &&
+    replace > importProbe &&
+    publicUnsigned > replace &&
+    enabled > publicUnsigned,
+  );
   assert.ok(finalDisabled > enabled);
-  assert.match(runbook, /crazyloops-connector-runner:d22-\$\{CURRENT_SHA\}/);
+  assert.match(runbook, /crazyloops-connector-runner:d23-\$\{CURRENT_SHA\}/);
   assert.match(runbook, /OLD_RUNNER_IMAGE_ID/);
   assert.match(runbook, /old image; do not overwrite its tag or delete it/i);
+  assert.match(runbook, /test "\$\(id -un\)" = "node"/);
+  assert.match(runbook, /test -r \/runner\/src\/index\.mjs/);
+  assert.match(runbook, /test -r \/runner\/src\/runner\.mjs/);
+  assert.match(runbook, /test -x \/runner\/src\/adapters/);
+  assert.match(runbook, /test -r \/runner\/src\/adapters\/airtable\.mjs/);
+  assert.match(runbook, /runnerModule\.CANARY_CAPABILITY !== "internal\.connector_runner_canary"/);
+  assert.match(runbook, /AIRTABLE_CREATE_RECORD_VERSION !== 1/);
+  assert.doesNotMatch(runbook, /docker run[^\n]*--user\s+root/);
   assert.match(runbook, /127\.0\.0\.1:8788:8788/);
   assert.match(runbook, /http:\/\/127\.0\.0\.1:8788\/v1\/execute/);
   assert.match(runbook, /public\s+unsigned POST `401`/i);
