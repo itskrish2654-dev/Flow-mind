@@ -3,7 +3,7 @@ import "server-only";
 import type { Json } from "@/lib/supabase/types";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-export type ConnectionProvider = "google" | "slack" | "notion";
+export type ConnectionProvider = "airtable" | "google" | "slack" | "notion";
 
 export type ConnectionView = {
   id: string;
@@ -14,6 +14,7 @@ export type ConnectionView = {
   lastCheckedAt: string;
   usedByWorkflows: number;
   permissionSummary: string;
+  verification: "provider_verified" | "locally_configured";
 };
 
 const providerDetails: Record<ConnectionProvider, {
@@ -36,10 +37,15 @@ const providerDetails: Record<ConnectionProvider, {
     fallbackLabel: "Connected Google account",
     permissionSummary: "Use approved Gmail permissions and spreadsheets explicitly selected through Google Picker.",
   },
+  airtable: {
+    name: "Airtable",
+    fallbackLabel: "Airtable connection",
+    permissionSummary: "Create records using the personal access token you saved. CrazyLoops does not verify the token until an Airtable action runs.",
+  },
 };
 
 function providerFrom(value: string): ConnectionProvider | null {
-  return value === "slack" || value === "notion" || value === "google"
+  return value === "airtable" || value === "slack" || value === "notion" || value === "google"
     ? value
     : null;
 }
@@ -51,6 +57,7 @@ function safeAccountLabel(provider: ConnectionProvider, value: string | null): s
   if (provider === "slack" && /^T[A-Z0-9]{8,}$/i.test(label)) return details.fallbackLabel;
   if (provider === "notion" && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(label)) return details.fallbackLabel;
   if (provider === "google" && !label.includes("@")) return details.fallbackLabel;
+  if (provider === "airtable") return details.fallbackLabel;
   return label;
 }
 
@@ -119,6 +126,7 @@ export async function listConnectionViews(userId: string): Promise<ConnectionVie
       lastCheckedAt: row.last_refreshed_at ?? row.updated_at,
       usedByWorkflows: workflowCounts.get(row.id) ?? 0,
       permissionSummary: details.permissionSummary,
+      verification: provider === "airtable" ? "locally_configured" : "provider_verified",
     }];
   });
 }

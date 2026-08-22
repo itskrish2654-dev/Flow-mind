@@ -26,6 +26,7 @@ export default async function DashboardPage() {
         providerName: connection.providerName,
         accountLabel: connection.accountLabel,
         status: connection.status,
+        verification: connection.verification,
       }))}
     />
   );

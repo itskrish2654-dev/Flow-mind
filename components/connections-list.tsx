@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import {
   AlertCircle,
   ArrowRight,
@@ -15,6 +15,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 
+import { connectAirtable } from "@/app/actions/airtable-connections";
 import { disconnectConnector } from "@/app/actions/connections";
 import { AccessibleDialog } from "@/components/accessible-dialog";
 import type { ConnectionProvider, ConnectionView } from "@/lib/connectors/connection-view";
@@ -45,6 +46,12 @@ const providerCopy: Record<ConnectionProvider, {
     connectLabel: "Google Early Access",
     operation: "",
   },
+  airtable: {
+    name: "Airtable",
+    description: "Save a personal access token for future Airtable record actions.",
+    connectLabel: "Connect Airtable",
+    operation: "",
+  },
 };
 
 function ProviderIcon({ provider }: { provider: ConnectionProvider }) {
@@ -63,6 +70,11 @@ function ProviderIcon({ provider }: { provider: ConnectionProvider }) {
       <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-xl border-2 border-slate-900 bg-white font-serif text-xl font-black text-slate-950 shadow-sm">N</span>
     );
   }
+  if (provider === "airtable") {
+    return (
+      <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-[#e4ddd2] bg-white text-lg font-bold text-[#176b87] shadow-sm">A</span>
+    );
+  }
   return (
     <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-[#e4ddd2] bg-white text-xl font-bold shadow-sm">
       <span className="bg-gradient-to-br from-blue-600 via-red-500 to-amber-500 bg-clip-text text-transparent">G</span>
@@ -70,7 +82,15 @@ function ProviderIcon({ provider }: { provider: ConnectionProvider }) {
   );
 }
 
-function statusDetails(status: ConnectionView["status"]) {
+function statusDetails(status: ConnectionView["status"], verification: ConnectionView["verification"] = "provider_verified") {
+  if (status === "connected" && verification === "locally_configured") {
+    return {
+      label: "Connected",
+      health: "Locally configured",
+      classes: "border-sky-200 bg-sky-50 text-sky-700",
+      dot: "bg-sky-500",
+    };
+  }
   if (status === "connected") {
     return {
       label: "Connected",
@@ -98,6 +118,14 @@ function checkedDate(value: string) {
   }).format(date)}`;
 }
 
+function connectionFreshness(connection: ConnectionView) {
+  if (connection.verification === "locally_configured") {
+    const checked = checkedDate(connection.lastCheckedAt).replace(/^Checked /, "Saved ");
+    return checked === "Recently checked" ? "Saved recently" : checked;
+  }
+  return checkedDate(connection.lastCheckedAt);
+}
+
 function connectHref(provider: "slack" | "notion", connectionId?: string) {
   const operation = providerCopy[provider].operation;
   const query = new URLSearchParams({ operation, return: "/connections" });
@@ -107,6 +135,7 @@ function connectHref(provider: "slack" | "notion", connectionId?: string) {
 }
 
 function providerFromConnector(connector: string | null): ConnectionProvider | null {
+  if (connector === "airtable") return "airtable";
   if (connector === "slack" || connector === "notion") return connector;
   if (connector === "google" || connector?.startsWith("google_")) return "google";
   return null;
@@ -130,6 +159,10 @@ export function ConnectionsList({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [connectingProvider, setConnectingProvider] = useState<ConnectionProvider | null>(null);
+  const [airtableDialogOpen, setAirtableDialogOpen] = useState(false);
+  const [airtablePat, setAirtablePat] = useState("");
+  const [airtableSubmitting, setAirtableSubmitting] = useState(false);
+  const [airtableError, setAirtableError] = useState<string | null>(null);
 
   const byProvider = useMemo(() => {
     const result = new Map<ConnectionProvider, ConnectionView[]>();
@@ -140,8 +173,28 @@ export function ConnectionsList({
   }, [connections]);
   const successProvider = providerFromConnector(successConnector);
   const successConnection = successProvider ? byProvider.get(successProvider)?.[0] : null;
-  const providers = (["slack", "notion", "google"] as const).filter((provider) => byProvider.has(provider));
-  const availableProviders = (["slack", "notion"] as const).filter((provider) => !byProvider.has(provider));
+  const providers = (["airtable", "slack", "notion", "google"] as const).filter((provider) => byProvider.has(provider));
+  const availableProviders = (["airtable", "slack", "notion"] as const).filter((provider) => !byProvider.has(provider));
+
+  async function submitAirtable(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (airtableSubmitting) return;
+    setAirtableSubmitting(true);
+    setAirtableError(null);
+    setMessage(null);
+    const token = airtablePat;
+    setAirtablePat("");
+    const result = await connectAirtable(token);
+    if (!result.ok) {
+      setAirtableError(result.error === "Unauthorized" ? "Sign in again before connecting Airtable." : result.error);
+      setAirtableSubmitting(false);
+      return;
+    }
+    setAirtableDialogOpen(false);
+    setAirtableSubmitting(false);
+    setMessage("Airtable was saved securely. The token will be verified when an Airtable action runs.");
+    router.refresh();
+  }
 
   async function confirmDisconnect() {
     if (!managed || disconnecting) return;
@@ -206,7 +259,7 @@ export function ConnectionsList({
           <div className="mt-4 space-y-5">
             {providers.map((provider) => {
               const items = byProvider.get(provider) ?? [];
-              const canAddAnother = provider !== "google" && providerAvailability[provider];
+              const canAddAnother = (provider === "slack" || provider === "notion") && providerAvailability[provider];
               return (
                 <div key={provider} className="overflow-hidden rounded-2xl border border-[#ded6ca] bg-[#fffdfa] shadow-[0_10px_32px_rgba(39,37,54,.035)]">
                   <div className="flex items-center gap-3 border-b border-[#eee8de] px-4 py-3.5 sm:px-5">
@@ -229,7 +282,7 @@ export function ConnectionsList({
                   </div>
                   <div className="divide-y divide-[#eee8de]">
                     {items.map((connection) => {
-                      const details = statusDetails(connection.status);
+                      const details = statusDetails(connection.status, connection.verification);
                       return (
                         <article key={connection.id} className="flex flex-col gap-3 px-4 py-4 transition hover:bg-[#fffaf0] sm:flex-row sm:items-center sm:px-5">
                           <div className="min-w-0 flex-1">
@@ -238,7 +291,7 @@ export function ConnectionsList({
                               <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${details.classes}`}>
                                 <span className={`size-1.5 rounded-full ${details.dot}`} aria-hidden="true" />{details.label}
                               </span>
-                              <span className="text-[10px] text-slate-500">{checkedDate(connection.lastCheckedAt)}</span>
+                              <span className="text-[10px] text-slate-500">{connectionFreshness(connection)}</span>
                               {connection.usedByWorkflows > 0 && <span className="text-[10px] text-slate-500">Used by {connection.usedByWorkflows} workflow{connection.usedByWorkflows === 1 ? "" : "s"}</span>}
                             </div>
                           </div>
@@ -272,7 +325,7 @@ export function ConnectionsList({
           <h2 id="available-apps-title" className="mt-1 text-lg font-semibold tracking-[-0.02em] text-slate-950">Connect an app</h2>
           <div className="mt-4 divide-y divide-[#e8e1d7] overflow-hidden rounded-2xl border border-[#ded6ca] bg-[#fffdfa]">
             {availableProviders.map((provider) => {
-              const available = providerAvailability[provider];
+              const available = provider === "airtable" || providerAvailability[provider];
               return (
                 <article key={provider} className="flex flex-col gap-4 px-4 py-4 transition hover:bg-[#fffaf0] sm:flex-row sm:items-center sm:px-5">
                   <div className="flex min-w-0 flex-1 items-center gap-3">
@@ -282,7 +335,15 @@ export function ConnectionsList({
                       <p className="mt-1 text-xs leading-5 text-slate-500">{providerCopy[provider].description}</p>
                     </div>
                   </div>
-                  {available ? (
+                  {provider === "airtable" ? (
+                    <button
+                      type="button"
+                      onClick={() => { setAirtableDialogOpen(true); setAirtableError(null); setMessage(null); }}
+                      className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#d7aa2f] bg-[#fff7dc] px-4 text-xs font-semibold text-[#6f5100] transition hover:bg-[#fff2bd] focus-visible:ring-4 focus-visible:ring-[#f1c94b]/40"
+                    >
+                      <Plus className="size-3.5" aria-hidden="true" /> {providerCopy[provider].connectLabel}
+                    </button>
+                  ) : available ? (
                     <a
                       href={connectHref(provider)}
                       onClick={() => setConnectingProvider(provider)}
@@ -342,9 +403,9 @@ export function ConnectionsList({
                   <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Status</p>
                   <p className="mt-2 flex items-center gap-2 text-sm font-semibold text-slate-900">
                     {managed.status === "connected" ? <CheckCircle2 className="size-4 text-emerald-600" /> : <AlertCircle className="size-4 text-amber-600" />}
-                    {statusDetails(managed.status).health}
+                    {statusDetails(managed.status, managed.verification).health}
                   </p>
-                  <p className="mt-1 text-xs text-slate-500">{checkedDate(managed.lastCheckedAt)}</p>
+                  <p className="mt-1 text-xs text-slate-500">{connectionFreshness(managed)}</p>
                 </div>
                 <div className="rounded-xl bg-[#f8f4ec] p-4">
                   <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Used by</p>
@@ -358,7 +419,7 @@ export function ConnectionsList({
                 <p className="mt-2 text-xs leading-5 text-slate-600">{managed.permissionSummary}</p>
               </div>
 
-              {managed.provider !== "google" && providerAvailability[managed.provider] && (
+              {(managed.provider === "slack" || managed.provider === "notion") && providerAvailability[managed.provider] && (
                 <a
                   href={connectHref(managed.provider, managed.id)}
                   aria-label={`Reconnect ${managed.providerName} account ${managed.accountLabel}`}
@@ -397,6 +458,65 @@ export function ConnectionsList({
             </div>
           </div>
         )}
+      </AccessibleDialog>
+
+      <AccessibleDialog
+        open={airtableDialogOpen}
+        onOpenChange={(open) => {
+          if (airtableSubmitting) return;
+          setAirtableDialogOpen(open);
+          if (!open) {
+            setAirtablePat("");
+            setAirtableError(null);
+          }
+        }}
+        title="Connect Airtable"
+        description="Securely save an Airtable personal access token for your account."
+        contentClassName="max-w-xl"
+      >
+        <form onSubmit={(event) => void submitAirtable(event)} className="flex min-h-0 flex-1 flex-col">
+          <div className="border-b border-[#e4ddd2] px-6 pb-5 pt-6 pr-16">
+            <div className="flex items-center gap-3">
+              <ProviderIcon provider="airtable" />
+              <div>
+                <p className="text-xs font-semibold text-slate-500">API key connection</p>
+                <h2 className="text-lg font-semibold text-slate-950">Connect Airtable</h2>
+              </div>
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+            <label htmlFor="airtable-personal-access-token" className="text-sm font-semibold text-slate-900">Personal access token</label>
+            <p className="mt-1 text-xs leading-5 text-slate-500">Create a token in Airtable with record-write access only to the bases you want CrazyLoops to use.</p>
+            <input
+              id="airtable-personal-access-token"
+              name="airtable-personal-access-token"
+              type="password"
+              value={airtablePat}
+              onChange={(event) => setAirtablePat(event.target.value)}
+              autoComplete="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              maxLength={512}
+              required
+              disabled={airtableSubmitting}
+              aria-describedby="airtable-token-guidance"
+              className="mt-3 min-h-12 w-full rounded-xl border border-[#d9d1c5] bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-[#c49a25] focus:ring-2 focus:ring-[#f1c94b]/25 disabled:opacity-60"
+              placeholder="pat…"
+            />
+            <div id="airtable-token-guidance" className="mt-4 rounded-xl border border-[#e4ddd2] bg-[#f8f4ec] p-4">
+              <p className="flex items-center gap-2 text-xs font-semibold text-slate-900"><ShieldCheck className="size-4 text-[#8a6200]" />Stored securely</p>
+              <p className="mt-2 text-xs leading-5 text-slate-600">The token is encrypted in the CrazyLoops credential vault. It is not sent to Airtable during setup, so this connection is locally configured until its first action runs.</p>
+            </div>
+            {airtableError && <p role="alert" className="mt-4 text-xs font-medium text-rose-700">{airtableError}</p>}
+          </div>
+          <div className="flex flex-wrap justify-end gap-2 border-t border-[#e4ddd2] px-6 py-4">
+            <button type="button" onClick={() => setAirtableDialogOpen(false)} disabled={airtableSubmitting} className="min-h-11 rounded-xl px-4 text-xs font-semibold text-slate-600 hover:bg-[#f8f4ec] disabled:opacity-50">Cancel</button>
+            <button type="submit" disabled={airtableSubmitting || !airtablePat} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-[#d7aa2f] bg-[#fff7dc] px-4 text-xs font-semibold text-[#6f5100] hover:bg-[#fff2bd] disabled:opacity-50">
+              {airtableSubmitting && <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />}
+              {airtableSubmitting ? "Saving…" : "Save connection"}
+            </button>
+          </div>
+        </form>
       </AccessibleDialog>
     </>
   );

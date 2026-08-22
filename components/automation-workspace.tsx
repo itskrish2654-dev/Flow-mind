@@ -98,10 +98,11 @@ type AutomationWorkspaceProps = {
   initialSetupConfig?: InputValues;
   initialConnections?: Array<{
     id: string;
-    provider: "google" | "slack" | "notion";
+    provider: "airtable" | "google" | "slack" | "notion";
     providerName: string;
     accountLabel: string;
     status: "connected" | "expired" | "error";
+    verification: "provider_verified" | "locally_configured";
   }>;
 };
 
@@ -295,7 +296,11 @@ function DashboardConnections({
               <span className="block truncate text-[9px] text-slate-500">{connection.accountLabel}</span>
             </span>
             <span className={`shrink-0 text-[9px] font-semibold ${connection.status === "connected" ? "text-emerald-700" : "text-amber-700"}`}>
-              {connection.status === "connected" ? "● Connected" : "● Reconnect required"}
+              {connection.status !== "connected"
+                ? "● Reconnect required"
+                : connection.verification === "locally_configured"
+                  ? "● Configured"
+                  : "● Connected"}
             </span>
           </div>
         ))}
