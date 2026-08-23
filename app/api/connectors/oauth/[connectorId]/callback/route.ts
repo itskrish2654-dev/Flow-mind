@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { storeConnectionSecret } from "@/lib/connectors/connection-vault";
-import { consumeOAuthState } from "@/lib/connectors/oauth";
+import { consumeOAuthState, withOAuthResult } from "@/lib/connectors/oauth";
 import { exchangeAuthorizationCode } from "@/lib/connectors/oauth-exchange";
 import { getConnector } from "@/lib/connectors/registry";
 import { revokeGoogleToken } from "@/lib/connectors/google/oauth-provider";
@@ -13,10 +13,14 @@ import { getSiteOrigin, getSiteUrl } from "@/lib/site-origin";
 export async function GET(request: Request, { params }: { params: Promise<{ connectorId: string }> }) {
   const { connectorId } = await params; const supabase = await createClient(); const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.redirect(getSiteUrl("/login?next=/connections", new URL(request.url).origin));
-  const url = new URL(request.url); const code = url.searchParams.get("code"); const state = url.searchParams.get("state"); const connector = getConnector(connectorId);
-  if (!code || !state || !connector || connector.manifest.auth.type !== "oauth2" || (connector.manifest.status === "INTERNAL" && process.env.NODE_ENV === "production")) return NextResponse.redirect(getSiteUrl("/connections?error=invalid_callback", url.origin));
+  const url = new URL(request.url); const code = url.searchParams.get("code"); const state = url.searchParams.get("state"); const providerError = url.searchParams.get("error"); const oauthCancelled = providerError === "access_denied" || providerError === "user_cancelled"; const connector = getConnector(connectorId);
+  if (!state || !connector || connector.manifest.auth.type !== "oauth2" || (connector.manifest.status === "INTERNAL" && process.env.NODE_ENV === "production")) return NextResponse.redirect(getSiteUrl("/connections?error=invalid_callback", url.origin));
+  let returnPath = "/connections";
   try {
-    const oauth = await consumeOAuthState({ userId: user.id, connectorId, state }); const redirectUri = new URL(`/api/connectors/oauth/${connectorId}/callback`, getSiteOrigin(url.origin)).toString(); const tokens = await exchangeAuthorizationCode({ connectorId, code, verifier: oauth.verifier, redirectUri, scopes: oauth.scopes }); const admin = createAdminClient();
+    const oauth = await consumeOAuthState({ userId: user.id, connectorId, state });
+    returnPath = oauth.returnPath;
+    if (providerError || !code) throw new Error("OAuth authorization was cancelled.");
+    const redirectUri = new URL(`/api/connectors/oauth/${connectorId}/callback`, getSiteOrigin(url.origin)).toString(); const tokens = await exchangeAuthorizationCode({ connectorId, code, verifier: oauth.verifier, redirectUri, scopes: oauth.scopes }); const admin = createAdminClient();
     if (connector.manifest.providerFamily === "google" && tokens.scopes.includes(GOOGLE_LEGACY_SHEETS_SCOPE)) {
       await revokeGoogleToken(tokens.refreshToken ?? tokens.accessToken);
       throw new Error("The previous broad Google Sheets permission must be removed before reconnecting.");
@@ -33,6 +37,6 @@ export async function GET(request: Request, { params }: { params: Promise<{ conn
     if (tokens.refreshToken) await storeConnectionSecret({ userId: user.id, connectionId: connection.id, credentialKey: "refresh_token", credentialType: "oauth_refresh_token", plaintext: tokens.refreshToken });
     const connectionSuccessEvent = connector.manifest.providerFamily === "google" ? "google_connection_success" : connector.manifest.providerFamily === "slack" ? "slack_connection_success" : "notion_connection_success";
     await captureOperationalEvent({ level: "info", event: connectionSuccessEvent, userId: user.id, status: "connected", metadata: { connector: connectorId } });
-    return NextResponse.redirect(getSiteUrl(`${oauth.returnPath}${oauth.returnPath.includes("?") ? "&" : "?"}connected=${encodeURIComponent(connectorId)}`, url.origin));
-  } catch { const connectionFailureEvent = connector?.manifest.providerFamily === "google" ? "google_connection_failure" : connector?.manifest.providerFamily === "slack" ? "slack_connection_failure" : "notion_connection_failure"; await captureOperationalEvent({ level: "warn", event: connectionFailureEvent, userId: user.id, status: "failed", errorCategory: "oauth" }); return NextResponse.redirect(getSiteUrl("/connections?error=oauth_callback_failed", url.origin)); }
+    return NextResponse.redirect(getSiteUrl(withOAuthResult(returnPath, "connected", connectorId), url.origin));
+  } catch { const connectionFailureEvent = connector?.manifest.providerFamily === "google" ? "google_connection_failure" : connector?.manifest.providerFamily === "slack" ? "slack_connection_failure" : "notion_connection_failure"; await captureOperationalEvent({ level: "warn", event: connectionFailureEvent, userId: user.id, status: "failed", errorCategory: "oauth" }); return NextResponse.redirect(getSiteUrl(withOAuthResult(returnPath, "connection_error", oauthCancelled ? "oauth_cancelled" : "oauth_callback_failed"), url.origin)); }
 }

@@ -59,9 +59,11 @@ test("Google remains Early Access while built-in capabilities are clearly accoun
 
 test("workflow missing-connection CTAs preserve the originating project route", async () => {
   const workspace = await readFile("components/automation-workspace.tsx", "utf8");
-  const oauth = await readFile("lib/connectors/oauth.ts", "utf8");
+  const oauth = await readFile("lib/connectors/oauth-return.ts", "utf8");
   assert.match(workspace, /needs to be connected/);
-  assert.match(workspace, /return=\$\{encodeURIComponent\(`\/dashboard\/projects\/\$\{workflowId\}`\)\}/);
+  assert.match(workspace, /workflowReturnPath = workflowId/);
+  assert.match(workspace, /step=\$\{encodeURIComponent\(step\.id\)\}/);
+  assert.match(workspace, /return=\$\{encodeURIComponent\(workflowReturnPath\)\}/);
   assert.match(oauth, /return "\/connections"/);
 });
 

@@ -10,6 +10,7 @@ import {
 
 import { ConnectionsList } from "@/components/connections-list";
 import { listConnectionViews } from "@/lib/connectors/connection-view";
+import { oauthReturnWorkflowId, safeOAuthReturnPath } from "@/lib/connectors/oauth-return";
 import { createClient } from "@/lib/supabase/server";
 
 const builtInCapabilities = [
@@ -24,16 +25,29 @@ const builtInCapabilities = [
 export default async function ConnectionsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ connected?: string | string[]; error?: string | string[] }>;
+  searchParams: Promise<{
+    connected?: string | string[];
+    error?: string | string[];
+    connection_error?: string | string[];
+    return?: string | string[];
+  }>;
 }) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const connections = await listConnectionViews(user.id);
   const params = await searchParams;
+  const requestedReturnPath = safeOAuthReturnPath(typeof params.return === "string" ? params.return : null);
+  const returnWorkflowId = oauthReturnWorkflowId(requestedReturnPath);
+  const { data: ownedReturnWorkflow } = returnWorkflowId
+    ? await supabase.from("workflows").select("id").eq("id", returnWorkflowId).eq("user_id", user.id).maybeSingle()
+    : { data: null };
+  const returnPath = returnWorkflowId && !ownedReturnWorkflow ? "/connections" : requestedReturnPath;
+  const connections = await listConnectionViews(user.id);
   const connected = typeof params.connected === "string" ? params.connected : null;
-  const error = typeof params.error === "string" ? params.error : null;
+  const error = typeof params.connection_error === "string"
+    ? params.connection_error
+    : typeof params.error === "string" ? params.error : null;
   const slackAvailable = Boolean(
     process.env.FLOWMIND_CONNECTOR_SLACK_CLIENT_ID
     && process.env.FLOWMIND_CONNECTOR_SLACK_CLIENT_SECRET,
@@ -65,6 +79,7 @@ export default async function ConnectionsPage({
         successConnector={connected}
         errorCode={error}
         providerAvailability={{ slack: slackAvailable, notion: notionAvailable }}
+        returnPath={returnPath}
       />
 
       <section className="mt-10" aria-labelledby="built-in-title">

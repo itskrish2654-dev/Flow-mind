@@ -126,12 +126,18 @@ function connectionFreshness(connection: ConnectionView) {
   return checkedDate(connection.lastCheckedAt);
 }
 
-function connectHref(provider: "slack" | "notion", connectionId?: string) {
+function connectHref(provider: "slack" | "notion", returnPath: string, connectionId?: string) {
   const operation = providerCopy[provider].operation;
-  const query = new URLSearchParams({ operation, return: "/connections" });
+  const query = new URLSearchParams({ operation, return: returnPath });
   if (connectionId) query.set("connection", connectionId);
   else query.set("account", "add");
   return `/api/connectors/oauth/${provider}/start?${query.toString()}`;
+}
+
+function withConnectionResult(returnPath: string, connector: string) {
+  const target = new URL(returnPath, "https://crazyloops.invalid");
+  target.searchParams.set("connected", connector);
+  return `${target.pathname}${target.search}`;
 }
 
 function providerFromConnector(connector: string | null): ConnectionProvider | null {
@@ -146,11 +152,13 @@ export function ConnectionsList({
   successConnector,
   errorCode,
   providerAvailability,
+  returnPath,
 }: {
   connections: ConnectionView[];
   successConnector: string | null;
   errorCode: string | null;
   providerAvailability: ProviderAvailability;
+  returnPath: string;
 }) {
   const router = useRouter();
   const [managed, setManaged] = useState<ConnectionView | null>(null);
@@ -172,7 +180,8 @@ export function ConnectionsList({
     return result;
   }, [connections]);
   const successProvider = providerFromConnector(successConnector);
-  const successConnection = successProvider ? byProvider.get(successProvider)?.[0] : null;
+  const successItems = successProvider ? byProvider.get(successProvider) ?? [] : [];
+  const successConnection = successItems.length === 1 ? successItems[0] : null;
   const providers = (["airtable", "slack", "notion", "google"] as const).filter((provider) => byProvider.has(provider));
   const availableProviders = (["airtable", "slack", "notion"] as const).filter((provider) => !byProvider.has(provider));
 
@@ -192,6 +201,10 @@ export function ConnectionsList({
     }
     setAirtableDialogOpen(false);
     setAirtableSubmitting(false);
+    if (returnPath.startsWith("/dashboard/projects/")) {
+      router.push(withConnectionResult(returnPath, "airtable"));
+      return;
+    }
     setMessage("Airtable was saved securely. The token will be verified when an Airtable action runs.");
     router.refresh();
   }
@@ -222,7 +235,7 @@ export function ConnectionsList({
             <p className="text-sm font-semibold text-emerald-950">{providerCopy[successProvider].name} connected</p>
             <p className="mt-0.5 truncate text-xs text-emerald-800">{successConnection?.accountLabel ?? "Your account"} is ready to use in your loops.</p>
           </div>
-          <Link href="/dashboard" className="inline-flex min-h-11 items-center gap-1.5 text-xs font-semibold text-emerald-900 hover:text-emerald-700">Use it in a workflow <ArrowRight className="size-3.5" aria-hidden="true" /></Link>
+           <Link href={returnPath.startsWith("/dashboard/projects/") ? returnPath : "/dashboard"} className="inline-flex min-h-11 items-center gap-1.5 text-xs font-semibold text-emerald-900 hover:text-emerald-700">{returnPath.startsWith("/dashboard/projects/") ? "Continue workflow" : "Use it in a workflow"} <ArrowRight className="size-3.5" aria-hidden="true" /></Link>
         </div>
       )}
 
@@ -270,7 +283,7 @@ export function ConnectionsList({
                     </div>
                     {canAddAnother && (
                       <a
-                        href={connectHref(provider)}
+                        href={connectHref(provider, returnPath)}
                         onClick={() => setConnectingProvider(provider)}
                         aria-label={`Connect another ${providerCopy[provider].name} account`}
                         className="hidden min-h-11 items-center gap-1.5 rounded-xl px-3 text-xs font-semibold text-slate-700 transition hover:bg-[#fff7dc] hover:text-slate-950 sm:inline-flex"
@@ -308,7 +321,7 @@ export function ConnectionsList({
                     })}
                   </div>
                   {canAddAnother && (
-                    <a href={connectHref(provider)} aria-label={`Connect another ${providerCopy[provider].name} account`} className="flex min-h-12 items-center justify-center gap-2 border-t border-[#eee8de] text-xs font-semibold text-slate-700 hover:bg-[#fff7dc] sm:hidden">
+                    <a href={connectHref(provider, returnPath)} aria-label={`Connect another ${providerCopy[provider].name} account`} className="flex min-h-12 items-center justify-center gap-2 border-t border-[#eee8de] text-xs font-semibold text-slate-700 hover:bg-[#fff7dc] sm:hidden">
                       <Plus className="size-3.5" aria-hidden="true" /> Connect another {providerCopy[provider].name} account
                     </a>
                   )}
@@ -345,7 +358,7 @@ export function ConnectionsList({
                     </button>
                   ) : available ? (
                     <a
-                      href={connectHref(provider)}
+                      href={connectHref(provider, returnPath)}
                       onClick={() => setConnectingProvider(provider)}
                       className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#d7aa2f] bg-[#fff7dc] px-4 text-xs font-semibold text-[#6f5100] transition hover:bg-[#fff2bd] focus-visible:ring-4 focus-visible:ring-[#f1c94b]/40"
                     >
@@ -421,7 +434,7 @@ export function ConnectionsList({
 
               {(managed.provider === "slack" || managed.provider === "notion") && providerAvailability[managed.provider] && (
                 <a
-                  href={connectHref(managed.provider, managed.id)}
+                  href={connectHref(managed.provider, returnPath, managed.id)}
                   aria-label={`Reconnect ${managed.providerName} account ${managed.accountLabel}`}
                   className="mt-6 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#d8caa8] bg-white px-4 text-xs font-semibold text-slate-700 transition hover:bg-[#fff8e3]"
                 >
