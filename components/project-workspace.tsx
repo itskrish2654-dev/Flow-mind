@@ -9,6 +9,7 @@ import { ExecutionsDataTable } from "@/components/executions-data-table";
 import { WorkflowVersionHistory } from "@/components/workflow-version-history";
 import type { WorkflowVersionSummary } from "@/app/actions/versions";
 import type { CompiledWorkflow } from "@/lib/schemas/workflow";
+import type { ConnectionView } from "@/lib/connectors/connection-view";
 import { getDataTableDefinition } from "@/lib/workflow-customization";
 
 export function ProjectWorkspace({
@@ -20,6 +21,9 @@ export function ProjectWorkspace({
   initialExecutionCursor,
   initialSetupConfig,
   versions,
+  connections,
+  initialSelectedStepId,
+  connectionNotice,
 }: {
   workflowId: string;
   workflow: CompiledWorkflow;
@@ -29,6 +33,9 @@ export function ProjectWorkspace({
   initialExecutionCursor: string | null;
   initialSetupConfig: Record<string, string>;
   versions: WorkflowVersionSummary[];
+  connections: ConnectionView[];
+  initialSelectedStepId: string | null;
+  connectionNotice: { tone: "success" | "error"; message: string } | null;
 }) {
   const [view, setView] = useState<"workflow" | "activity">("workflow");
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -116,6 +123,9 @@ export function ProjectWorkspace({
             initialPublished={published}
             initialHasUnpublishedChanges={hasUnpublishedChanges}
             initialSetupConfig={initialSetupConfig}
+            initialConnections={connections}
+            initialSelectedStepId={initialSelectedStepId}
+            initialConnectionNotice={connectionNotice}
           />
         ) : (
           <ExecutionsDataTable

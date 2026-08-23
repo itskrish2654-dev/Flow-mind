@@ -22,6 +22,7 @@ import {
   LockKeyhole,
   Network,
   PlugZap,
+  RefreshCw,
   RotateCcw,
   Send,
   SlidersHorizontal,
@@ -105,6 +106,8 @@ type AutomationWorkspaceProps = {
     status: "connected" | "expired" | "error";
     verification: "provider_verified" | "locally_configured";
   }>;
+  initialSelectedStepId?: string | null;
+  initialConnectionNotice?: { tone: "success" | "error"; message: string } | null;
 };
 
 const examples = [
@@ -330,6 +333,7 @@ function Inspector({
   published,
   connectorEndpoint,
   onSaveWebhook,
+  onResourceAvailabilityChange,
   className = "hidden w-[288px] shrink-0 flex-col border-l border-[#e4ddd2] bg-[#fffdfa] xl:flex 2xl:w-[320px]",
 }: {
   workflow: CompiledWorkflow | null;
@@ -364,6 +368,7 @@ function Inspector({
   published: boolean;
   connectorEndpoint: string | null;
   onSaveWebhook: (stepId: string, endpoint: string) => Promise<string | null>;
+  onResourceAvailabilityChange: (inputId: string, unavailable: boolean) => void;
   className?: string;
 }) {
   const [copied, setCopied] = useState<string | null>(null);
@@ -377,32 +382,62 @@ function Inspector({
   );
   const [credentialBusy, setCredentialBusy] = useState<string | null>(null);
   const [credentialError, setCredentialError] = useState<string | null>(null);
-  const [connectorConnections, setConnectorConnections] = useState<
-    Array<{ id: string; label: string; status: string; scopes: string[] }>
-  >([]);
+  const [connectorConnectionResult, setConnectorConnectionResult] = useState<{
+    key: string;
+    connections: Array<{ id: string; label: string; status: string; scopes: string[] }>;
+    error: string | null;
+  } | null>(null);
+  const [connectionRefreshKey, setConnectionRefreshKey] = useState(0);
   const [connectorConnectionMessage, setConnectorConnectionMessage] = useState<
     string | null
   >(null);
   const [pendingConnectionId, setPendingConnectionId] = useState<string | null>(
     null,
   );
-  const [slackChannels, setSlackChannels] = useState<
-    Array<{ id: string; name: string; isMember: boolean }>
-  >([]);
-  const [notionResources, setNotionResources] = useState<
-    Array<{
+  const [resourceOptionResult, setResourceOptionResult] = useState<{
+    key: string;
+    slackChannels: Array<{ id: string; name: string; isMember: boolean }>;
+    notionResources: Array<{
       id: string;
       type: "page" | "data_source";
       title: string;
       url?: string;
-    }>
-  >([]);
+    }>;
+    error: string | null;
+  } | null>(null);
+  const [resourceRefreshKey, setResourceRefreshKey] = useState(0);
   const [googleSheetInfo, setGoogleSheetInfo] = useState<{
     title: string;
     worksheets: Array<{ id: number; title: string }>;
   } | null>(null);
   const [notionSourceInfo, setNotionSourceInfo] = useState<{ properties: Array<{ id: string; name: string; type: string; supported: boolean }> } | null>(null);
   const [notionSourceBusy, setNotionSourceBusy] = useState(false);
+  const setupConnectorId = step?.config?.connector?.connectorId ?? null;
+  const setupProviderFamily = setupConnectorId?.startsWith("google_") ? "google" : setupConnectorId;
+  const connectorConnectionsRequestKey = setupProviderFamily && ["airtable", "google", "slack", "notion"].includes(setupProviderFamily)
+    ? `${setupProviderFamily}:${connectionRefreshKey}`
+    : null;
+  const connectorConnections = connectorConnectionResult?.key === connectorConnectionsRequestKey
+    ? connectorConnectionResult.connections
+    : [];
+  const connectorConnectionsBusy = Boolean(connectorConnectionsRequestKey && connectorConnectionResult?.key !== connectorConnectionsRequestKey);
+  const connectorConnectionsError = connectorConnectionResult?.key === connectorConnectionsRequestKey
+    ? connectorConnectionResult.error
+    : null;
+  const resourceConnectionId = step?.config?.connector?.connectionId ?? null;
+  const resourceOptionsRequestKey = resourceConnectionId && (setupConnectorId === "slack" || setupConnectorId === "notion")
+    ? `${setupConnectorId}:${resourceConnectionId}:${resourceRefreshKey}`
+    : null;
+  const slackChannels = useMemo(
+    () => resourceOptionResult?.key === resourceOptionsRequestKey ? resourceOptionResult.slackChannels : [],
+    [resourceOptionResult, resourceOptionsRequestKey],
+  );
+  const notionResources = useMemo(
+    () => resourceOptionResult?.key === resourceOptionsRequestKey ? resourceOptionResult.notionResources : [],
+    [resourceOptionResult, resourceOptionsRequestKey],
+  );
+  const resourceOptionsBusy = Boolean(resourceOptionsRequestKey && resourceOptionResult?.key !== resourceOptionsRequestKey);
+  const resourceOptionsError = resourceOptionResult?.key === resourceOptionsRequestKey ? resourceOptionResult.error : null;
 
   useEffect(() => {
     if (!workflowId) return;
@@ -424,42 +459,68 @@ function Inspector({
   }, [workflowId]);
 
   useEffect(() => {
-    const connectorId = step?.config?.connector?.connectorId;
-    if (
-      !connectorId ||
-      !["airtable", "google_gmail", "google_sheets", "slack", "notion"].includes(
-        connectorId,
-      )
-    )
-      return;
-    const providerFamily = connectorId.startsWith("google_")
-      ? "google"
-      : connectorId;
+    if (!connectorConnectionsRequestKey || !setupProviderFamily) return;
     let active = true;
-    void getConnectorConnectionOptions(providerFamily).then((result) => {
-      if (active && result.ok) setConnectorConnections(result.connections);
+    void getConnectorConnectionOptions(setupProviderFamily).then((result) => {
+      if (!active) return;
+      setConnectorConnectionResult({
+        key: connectorConnectionsRequestKey,
+        connections: result.ok ? result.connections : [],
+        error: result.ok ? null : "Connected accounts couldn’t be loaded. Try again.",
+      });
     });
     return () => {
       active = false;
     };
-  }, [step]);
+  }, [connectorConnectionsRequestKey, setupProviderFamily]);
 
   useEffect(() => {
     const connector = step?.config?.connector;
-    if (!connector?.connectionId) return;
+    if (!connector?.connectionId || !resourceOptionsRequestKey) return;
     let active = true;
     if (connector.connectorId === "slack")
       void getSlackChannelOptions(connector.connectionId).then((result) => {
-        if (active && result.ok) setSlackChannels(result.channels);
+        if (!active) return;
+        setResourceOptionResult({
+          key: resourceOptionsRequestKey,
+          slackChannels: result.ok ? result.channels : [],
+          notionResources: [],
+          error: result.ok ? null : "Slack channels couldn’t be loaded. Check the connection and try again.",
+        });
       });
     if (connector.connectorId === "notion")
       void getNotionResourceOptions(connector.connectionId).then((result) => {
-        if (active && result.ok) setNotionResources(result.resources);
+        if (!active) return;
+        setResourceOptionResult({
+          key: resourceOptionsRequestKey,
+          slackChannels: [],
+          notionResources: result.ok ? result.resources : [],
+          error: result.ok ? null : "Notion pages couldn’t be loaded. Check the connection and try again.",
+        });
       });
     return () => {
       active = false;
     };
-  }, [step]);
+  }, [resourceOptionsRequestKey, step]);
+
+  useEffect(() => {
+    if (!step || resourceOptionsBusy || resourceOptionsError) return;
+    const connectorId = step.config?.connector?.connectorId;
+    for (const input of inputs) {
+      const id = inputId(step.id, input.key);
+      const value = values[id] ?? input.value ?? "";
+      if (connectorId === "slack" && input.key === "channel") {
+        onResourceAvailabilityChange(id, Boolean(value && !slackChannels.some((channel) => channel.id === value)));
+      } else if (connectorId === "notion" && ["resourceId", "parentPageId", "dataSourceId", "pageId"].includes(input.key)) {
+        const matchingResources = notionResources.filter((resource) => input.key === "dataSourceId"
+          ? resource.type === "data_source"
+          : input.key === "parentPageId" || input.key === "pageId"
+            ? resource.type === "page"
+            : true);
+        onResourceAvailabilityChange(id, Boolean(value && !matchingResources.some((resource) => resource.id === value)));
+      }
+    }
+  }, [inputs, notionResources, onResourceAvailabilityChange, resourceOptionsBusy, resourceOptionsError, slackChannels, step, values]);
 
   async function copyValue(id: string, value: string) {
     if (!value) return;
@@ -493,6 +554,12 @@ function Inspector({
   const publicFormPath = workflowId ? getPublicFormPath(workflowId) : null;
   const publicForm = workflow?.publicForm;
   const documentVariables = workflowVariables(publicForm);
+  const workflowReturnPath = workflowId
+    ? `/dashboard/projects/${workflowId}?step=${encodeURIComponent(step.id)}`
+    : "/connections";
+  const selectedConnectorConnection = connectorConnections.find(
+    (connection) => connection.id === step.config?.connector?.connectionId,
+  );
   return (
     <aside
       className={className}
@@ -550,34 +617,54 @@ function Inspector({
                 Choose the exact account for this step. CrazyLoops never selects
                 the first connected account automatically.
               </p>
-              {connectorConnections.length ? (
-                <select
-                  aria-label="Connected account for this step"
-                  value={step.config.connector.connectionId ?? ""}
-                  onChange={async (event) => {
-                    const selectedId = event.target.value;
-                    setPendingConnectionId(selectedId);
-                    setConnectorConnectionMessage(null);
-                    const result = await configureConnectorWorkflowStep(
-                      workflowId,
-                      step.id,
-                      selectedId,
-                    );
-                    if (!result.ok) {
-                      setConnectorConnectionMessage(result.error);
-                      return;
-                    }
-                    window.location.reload();
-                  }}
-                  className="mt-3 h-10 w-full rounded-lg border border-[#d8caa8] bg-white px-3 text-xs text-slate-800"
-                >
-                  <option value="">Choose connected account</option>
-                  {connectorConnections.map((connection) => (
-                    <option key={connection.id} value={connection.id}>
-                      {connection.label} · {connection.status}
-                    </option>
-                  ))}
-                </select>
+              {connectorConnectionsBusy ? (
+                <p role="status" className="mt-3 flex min-h-10 items-center gap-2 text-[10px] font-semibold text-slate-600">
+                  <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" /> Loading connected accounts…
+                </p>
+              ) : connectorConnections.length ? (
+                <>
+                  <select
+                    aria-label="Connected account for this step"
+                    value={step.config.connector.connectionId ?? ""}
+                    onChange={async (event) => {
+                      const selectedId = event.target.value;
+                      if (!selectedId) return;
+                      setPendingConnectionId(selectedId);
+                      setConnectorConnectionMessage(null);
+                      const result = await configureConnectorWorkflowStep(
+                        workflowId,
+                        step.id,
+                        selectedId,
+                      );
+                      if (!result.ok) {
+                        setConnectorConnectionMessage(result.error);
+                        return;
+                      }
+                      window.location.reload();
+                    }}
+                    className="mt-3 h-10 w-full min-w-0 rounded-lg border border-[#d8caa8] bg-white px-3 text-xs text-slate-800"
+                  >
+                    <option value="">Choose connected account</option>
+                    {connectorConnections.map((connection) => (
+                      <option key={connection.id} value={connection.id} disabled={connection.status !== "connected"}>
+                        {connection.label} · {connection.status === "connected" ? "Connected" : "Needs attention"}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedConnectorConnection && selectedConnectorConnection.status !== "connected" && step.config.connector.connectorId !== "airtable" && (
+                    <a
+                      href={`/api/connectors/oauth/${step.config.connector.connectorId}/start?operation=${step.config.connector.operationKey}&connection=${selectedConnectorConnection.id}&return=${encodeURIComponent(workflowReturnPath)}`}
+                      className="mt-2 flex min-h-10 items-center justify-center rounded-lg border border-amber-300 bg-white px-3 text-[10px] font-semibold text-amber-800 hover:bg-amber-50"
+                    >
+                      Reconnect this account
+                    </a>
+                  )}
+                </>
+              ) : connectorConnectionsError ? (
+                <div role="alert" className="mt-3 rounded-lg border border-rose-200 bg-white p-3 text-[10px] text-rose-700">
+                  <p>{connectorConnectionsError}</p>
+                  <button type="button" onClick={() => setConnectionRefreshKey((value) => value + 1)} className="mt-2 min-h-9 font-semibold text-rose-800">Try again</button>
+                </div>
               ) : (
                 <div className="mt-3">
                   <p className="text-[10px] font-semibold text-slate-800">
@@ -590,7 +677,7 @@ function Inspector({
                           : "Notion"} needs to be connected.
                   </p>
                   <a
-                    href={step.config.connector.connectorId === "airtable" ? "/connections" : `/api/connectors/oauth/${step.config.connector.connectorId}/start?operation=${step.config.connector.operationKey}&return=${encodeURIComponent(`/dashboard/projects/${workflowId}`)}`}
+                    href={step.config.connector.connectorId === "airtable" ? `/connections?return=${encodeURIComponent(workflowReturnPath)}` : `/api/connectors/oauth/${step.config.connector.connectorId}/start?operation=${step.config.connector.operationKey}&return=${encodeURIComponent(workflowReturnPath)}`}
                     className="mt-2 flex min-h-11 items-center justify-center rounded-lg border border-[#d7aa2f] bg-white text-[10px] font-semibold text-[#6f5100] hover:bg-[#fffaf0]"
                   >
                     Connect {step.config.connector.connectorId.startsWith("google_")
@@ -610,7 +697,7 @@ function Inspector({
                   </p>
                   {step.config.connector.connectorId !== "airtable" && (
                     <a
-                      href={`/api/connectors/oauth/${step.config.connector.connectorId}/start?operation=${step.config.connector.operationKey}&connection=${pendingConnectionId ?? step.config.connector.connectionId ?? ""}&return=${encodeURIComponent(`/dashboard/projects/${workflowId}`)}`}
+                      href={`/api/connectors/oauth/${step.config.connector.connectorId}/start?operation=${step.config.connector.operationKey}&connection=${pendingConnectionId ?? step.config.connector.connectionId ?? ""}&return=${encodeURIComponent(workflowReturnPath)}`}
                       className="mt-2 block text-[9px] font-semibold text-[#795700]"
                     >
                       Approve the additional permission
@@ -907,6 +994,13 @@ function Inspector({
             {inputs.map((input) => {
               const id = inputId(step.id, input.key);
               const value = values[id] ?? input.value ?? "";
+              const notionChoices = notionResources.filter((resource) => input.key === "dataSourceId"
+                ? resource.type === "data_source"
+                : input.key === "parentPageId" || input.key === "pageId"
+                  ? resource.type === "page"
+                  : true);
+              const staleSlackChannel = Boolean(value && !resourceOptionsBusy && !resourceOptionsError && !slackChannels.some((channel) => channel.id === value));
+              const staleNotionResource = Boolean(value && !resourceOptionsBusy && !resourceOptionsError && !notionChoices.some((resource) => resource.id === value));
               return (
                 <div key={id}>
                   {!(
@@ -988,38 +1082,55 @@ function Inspector({
                   ) : (
                     <>
                       <div className="relative mt-2">
-                        {step.config?.connector?.connectorId === "slack" &&
-                        input.key === "channel" &&
-                        slackChannels.length ? (
-                          <select
-                            id={id}
-                            value={value}
-                            onChange={(event) => onChange(id, event.target.value)}
-                            className="h-10 w-full rounded-lg border border-[#ded6ca] bg-[#f8f4ec] px-3 text-[10px] text-slate-800 outline-none focus:border-[#d7aa2f] focus:bg-white focus:ring-4 focus:ring-[#f4e5ad]"
-                          >
-                            <option value="">Choose Slack channel</option>
-                            {slackChannels.map((channel) => (
-                              <option key={channel.id} value={channel.id}>
-                                #{channel.name}{channel.isMember ? "" : " · invite CrazyLoops first"}
-                              </option>
-                            ))}
-                          </select>
+                        {step.config?.connector?.connectorId === "slack" && input.key === "channel" ? (
+                          <div className="space-y-2">
+                            <select
+                              id={id}
+                              value={value}
+                              disabled={resourceOptionsBusy || !step.config.connector.connectionId}
+                              onChange={(event) => onChange(id, event.target.value)}
+                              className="h-10 w-full min-w-0 rounded-lg border border-[#ded6ca] bg-[#f8f4ec] px-3 text-[10px] text-slate-800 outline-none focus:border-[#d7aa2f] focus:bg-white focus:ring-4 focus:ring-[#f4e5ad] disabled:opacity-60"
+                            >
+                              <option value="">{resourceOptionsBusy ? "Loading Slack channels…" : "Choose Slack channel"}</option>
+                              {staleSlackChannel && <option value={value}>Previously selected channel — choose another</option>}
+                              {slackChannels.map((channel) => (
+                                <option key={channel.id} value={channel.id}>
+                                  #{channel.name}{channel.isMember ? "" : " · invite CrazyLoops first"}
+                                </option>
+                              ))}
+                            </select>
+                            {staleSlackChannel && <p role="alert" className="text-[9px] leading-4 text-amber-700">The selected Slack channel is no longer available. Choose another channel.</p>}
+                            {!resourceOptionsBusy && !resourceOptionsError && step.config.connector.connectionId && slackChannels.length === 0 && <p className="text-[9px] leading-4 text-slate-500">No accessible Slack channels were found.</p>}
+                            {resourceOptionsError && <p role="alert" className="text-[9px] leading-4 text-rose-700">{resourceOptionsError}</p>}
+                            <button type="button" disabled={resourceOptionsBusy || !step.config.connector.connectionId} onClick={() => setResourceRefreshKey((key) => key + 1)} className="inline-flex min-h-9 items-center gap-1.5 px-1 text-[9px] font-semibold text-[#795700] disabled:opacity-50">
+                              <RefreshCw className={`size-3 ${resourceOptionsBusy ? "animate-spin" : ""}`} aria-hidden="true" /> Refresh channels
+                            </button>
+                          </div>
                         ) : step.config?.connector?.connectorId === "notion" &&
-                          ["resourceId", "parentPageId", "dataSourceId", "pageId"].includes(input.key) &&
-                          notionResources.length ? (
-                          <select
-                            id={id}
-                            value={value}
-                            onChange={(event) => onChange(id, event.target.value)}
-                            className="h-10 w-full rounded-lg border border-[#ded6ca] bg-[#f8f4ec] px-3 text-[10px] text-slate-800 outline-none focus:border-[#d7aa2f] focus:bg-white focus:ring-4 focus:ring-[#f4e5ad]"
-                          >
-                            <option value="">Choose Notion {input.key === "dataSourceId" ? "data source" : "resource"}</option>
-                            {notionResources.filter((resource) => input.key === "dataSourceId" ? resource.type === "data_source" : input.key === "parentPageId" || input.key === "pageId" ? resource.type === "page" : true).map((resource) => (
-                              <option key={resource.id} value={resource.id}>
-                                {resource.title} · {resource.type === "data_source" ? "data source" : "page"}
-                              </option>
-                            ))}
-                          </select>
+                          ["resourceId", "parentPageId", "dataSourceId", "pageId"].includes(input.key) ? (
+                          <div className="space-y-2">
+                            <select
+                              id={id}
+                              value={value}
+                              disabled={resourceOptionsBusy || !step.config.connector.connectionId}
+                              onChange={(event) => onChange(id, event.target.value)}
+                              className="h-10 w-full min-w-0 rounded-lg border border-[#ded6ca] bg-[#f8f4ec] px-3 text-[10px] text-slate-800 outline-none focus:border-[#d7aa2f] focus:bg-white focus:ring-4 focus:ring-[#f4e5ad] disabled:opacity-60"
+                            >
+                              <option value="">{resourceOptionsBusy ? "Loading Notion resources…" : `Choose Notion ${input.key === "dataSourceId" ? "data source" : "resource"}`}</option>
+                              {staleNotionResource && <option value={value}>Previously selected resource — choose another</option>}
+                              {notionChoices.map((resource) => (
+                                <option key={resource.id} value={resource.id}>
+                                  {resource.title} · {resource.type === "data_source" ? "data source" : "page"}
+                                </option>
+                              ))}
+                            </select>
+                            {staleNotionResource && <p role="alert" className="text-[9px] leading-4 text-amber-700">The selected Notion resource is no longer available. Choose another resource.</p>}
+                            {!resourceOptionsBusy && !resourceOptionsError && step.config.connector.connectionId && notionChoices.length === 0 && <p className="text-[9px] leading-4 text-slate-500">No matching Notion resources were found.</p>}
+                            {resourceOptionsError && <p role="alert" className="text-[9px] leading-4 text-rose-700">{resourceOptionsError}</p>}
+                            <button type="button" disabled={resourceOptionsBusy || !step.config.connector.connectionId} onClick={() => setResourceRefreshKey((key) => key + 1)} className="inline-flex min-h-9 items-center gap-1.5 px-1 text-[9px] font-semibold text-[#795700] disabled:opacity-50">
+                              <RefreshCw className={`size-3 ${resourceOptionsBusy ? "animate-spin" : ""}`} aria-hidden="true" /> Refresh resources
+                            </button>
+                          </div>
                         ) : step.config?.connector?.connectorId === "google_sheets" &&
                           input.key === "spreadsheetId" &&
                           workflowId ? (
@@ -1249,6 +1360,8 @@ export function AutomationWorkspace({
   initialHasUnpublishedChanges = false,
   initialSetupConfig = {},
   initialConnections = [],
+  initialSelectedStepId = null,
+  initialConnectionNotice = null,
 }: AutomationWorkspaceProps) {
   const router = useRouter();
   const initialSteps = initialWorkflow
@@ -1269,12 +1382,15 @@ export function AutomationWorkspace({
     null,
   );
   const [selectedStepId, setSelectedStepId] = useState<string | null>(
-    initialSteps[0]?.id ?? null,
+    initialSelectedStepId && initialSteps.some((step) => step.id === initialSelectedStepId)
+      ? initialSelectedStepId
+      : initialSteps[0]?.id ?? null,
   );
   const [values, setValues] = useState<InputValues>(() => ({
     ...defaultInputValues(initialWorkflow, initialWorkflowId),
     ...initialSetupConfig,
   }));
+  const [unavailableResourceInputs, setUnavailableResourceInputs] = useState<Set<string>>(new Set());
   const [isBuilding, setIsBuilding] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1333,13 +1449,12 @@ export function AutomationWorkspace({
   );
   const selectedStep =
     steps.find((step) => step.id === selectedStepId) ?? steps[0] ?? null;
-  const selectedInputs =
-    selectedStep &&
-    !["public_form_trigger", "webhook_trigger", "store_data"].includes(
-      selectedStep.type,
-    )
+  const selectedInputs = useMemo(
+    () => selectedStep && !["public_form_trigger", "webhook_trigger", "store_data"].includes(selectedStep.type)
       ? getStepInputs(selectedStep, workflowId)
-      : [];
+      : [],
+    [selectedStep, workflowId],
+  );
 
   const readiness = useMemo(
     () =>
@@ -1348,8 +1463,10 @@ export function AutomationWorkspace({
         workflowId,
         values,
         configuredCredentialKeys,
+        connections: initialConnections,
+        invalidInputIds: unavailableResourceInputs,
       }),
-    [configuredCredentialKeys, values, workflow, workflowId],
+    [configuredCredentialKeys, initialConnections, unavailableResourceInputs, values, workflow, workflowId],
   );
   const workflowReady = readiness.testReady;
 
@@ -1357,6 +1474,15 @@ export function AutomationWorkspace({
     setLogs([]);
     setDelivered(null);
     setTestSucceeded(null);
+  }, []);
+  const updateResourceAvailability = useCallback((id: string, unavailable: boolean) => {
+    setUnavailableResourceInputs((current) => {
+      if (current.has(id) === unavailable) return current;
+      const next = new Set(current);
+      if (unavailable) next.add(id);
+      else next.delete(id);
+      return next;
+    });
   }, []);
 
   const resetBuilder = useCallback(() => {
@@ -1784,6 +1910,15 @@ export function AutomationWorkspace({
               </div>
             ) : (
               <div className="mx-auto w-full max-w-6xl px-5 py-6 sm:px-7">
+                {initialConnectionNotice && (
+                  <div
+                    role={initialConnectionNotice.tone === "error" ? "alert" : "status"}
+                    aria-live="polite"
+                    className={`mb-4 rounded-xl border px-4 py-3 text-[11px] leading-5 ${initialConnectionNotice.tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-900"}`}
+                  >
+                    {initialConnectionNotice.message}
+                  </div>
+                )}
                 <section aria-labelledby="current-workflow-title" className="mb-5 rounded-2xl border border-[#e4ddd2] bg-white p-4 shadow-[0_10px_30px_rgba(39,37,54,.05)] sm:p-5">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="max-w-2xl">
@@ -2042,6 +2177,7 @@ export function AutomationWorkspace({
         published={published}
         connectorEndpoint={connectorEndpoint}
         onSaveWebhook={persistWebhookEndpoint}
+        onResourceAvailabilityChange={updateResourceAvailability}
         onChange={(id, value) => {
           setValues((current) => ({ ...current, [id]: value }));
           setError(null);
@@ -2072,6 +2208,7 @@ export function AutomationWorkspace({
           published={published}
           connectorEndpoint={connectorEndpoint}
           onSaveWebhook={persistWebhookEndpoint}
+          onResourceAvailabilityChange={updateResourceAvailability}
           className="flex min-h-0 w-full flex-1 flex-col bg-[#fffdfa] pt-12"
           onChange={(id, value) => {
             setValues((current) => ({ ...current, [id]: value }));

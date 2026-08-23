@@ -3,6 +3,11 @@ import { getStepInputs, orderWorkflowSteps, toPlainEnglish } from "@/lib/workflo
 
 type WorkflowStep = CompiledWorkflow["steps"][number];
 type InputValues = Record<string, string>;
+export type WorkflowConnectionReadiness = {
+  id: string;
+  provider: "airtable" | "google" | "slack" | "notion";
+  status: "connected" | "expired" | "error";
+};
 
 export type WorkflowAttentionItem = {
   key: string;
@@ -86,11 +91,15 @@ export function getWorkflowReadiness({
   workflowId,
   values,
   configuredCredentialKeys,
+  connections,
+  invalidInputIds,
 }: {
   workflow: CompiledWorkflow | null;
   workflowId: string | null;
   values: InputValues;
   configuredCredentialKeys: ReadonlySet<string>;
+  connections?: readonly WorkflowConnectionReadiness[];
+  invalidInputIds?: ReadonlySet<string>;
 }): WorkflowReadiness {
   const steps = workflow ? orderWorkflowSteps(workflow.steps) : [];
   const attention: WorkflowAttentionItem[] = [];
@@ -130,20 +139,37 @@ export function getWorkflowReadiness({
     }
 
     const connector = step.config?.connector;
-    if (
-      connector &&
-      !connector.connectorId.startsWith("flowmind_") &&
-      !connector.connectionId
-    ) {
+    if (connector && !connector.connectorId.startsWith("flowmind_")) {
       const name = connectorName(connector.connectorId);
-      addAttention({
-        key: `${step.id}:connection`,
-        title: `Connect ${name}`,
-        description: `${toPlainEnglish(step.title)} needs your ${name} account. Your workflow draft will stay here while you connect it.`,
-        actionLabel: `Connect ${name}`,
-        blocksTest: true,
-        blocksActivation: true,
-      });
+      const provider = connector.connectorId.startsWith("google_")
+        ? "google"
+        : connector.connectorId as WorkflowConnectionReadiness["provider"];
+      const providerConnections = connections?.filter((connection) => connection.provider === provider) ?? [];
+      const selectedConnection = connector.connectionId
+        ? connections?.find((connection) => connection.id === connector.connectionId)
+        : null;
+      if (!connector.connectionId) {
+        const hasUsableAccount = providerConnections.some((connection) => connection.status === "connected");
+        addAttention({
+          key: `${step.id}:connection`,
+          title: hasUsableAccount ? `Choose ${name} account` : `Connect ${name}`,
+          description: hasUsableAccount
+            ? `${toPlainEnglish(step.title)} needs the exact ${name} account you want this step to use.`
+            : `${toPlainEnglish(step.title)} needs your ${name} account. Your workflow draft will stay here while you connect it.`,
+          actionLabel: hasUsableAccount ? `Choose ${name} account` : `Connect ${name}`,
+          blocksTest: true,
+          blocksActivation: true,
+        });
+      } else if (connections && (!selectedConnection || selectedConnection.status !== "connected")) {
+        addAttention({
+          key: `${step.id}:connection`,
+          title: `Reconnect ${name}`,
+          description: `${toPlainEnglish(step.title)} is still bound to its saved ${name} account, but that connection needs attention.`,
+          actionLabel: `Reconnect ${name}`,
+          blocksTest: true,
+          blocksActivation: true,
+        });
+      }
     }
 
     const inputs = ["public_form_trigger", "webhook_trigger", "store_data"].includes(
@@ -176,6 +202,18 @@ export function getWorkflowReadiness({
         ["webhook_post", "http_request"].includes(step.type) &&
         input.key === "destination_url"
       ) {
+        continue;
+      }
+      if (invalidInputIds?.has(inputValueId(step.id, input.key))) {
+        const actionLabel = inputActionLabel(input.key, input.label);
+        addAttention({
+          key: `${step.id}:${input.key}:unavailable`,
+          title: actionLabel,
+          description: `${toPlainEnglish(step.title)} uses a saved resource that is no longer available. Choose another one before this step runs.`,
+          actionLabel,
+          blocksTest: true,
+          blocksActivation: true,
+        });
         continue;
       }
       if (

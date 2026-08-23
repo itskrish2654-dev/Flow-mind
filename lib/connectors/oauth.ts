@@ -5,6 +5,9 @@ import { createHash, randomBytes } from "node:crypto";
 import { getConnector } from "@/lib/connectors/registry";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { decryptCredential, encryptCredential } from "@/lib/security/credential-crypto";
+import { safeOAuthReturnPath } from "@/lib/connectors/oauth-return";
+
+export { oauthReturnWorkflowId, safeOAuthReturnPath, withOAuthResult } from "@/lib/connectors/oauth-return";
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1_000;
 
@@ -12,11 +15,6 @@ export function createPkcePair() {
   const verifier = randomBytes(32).toString("base64url");
   const challenge = createHash("sha256").update(verifier).digest("base64url");
   return { verifier, challenge };
-}
-
-export function safeOAuthReturnPath(value: string | null | undefined): string {
-  if (!value || !/^\/[A-Za-z0-9/_?=&.%-]*$/.test(value) || value.startsWith("//")) return "/connections";
-  return value;
 }
 
 function stateHash(state: string) { return createHash("sha256").update(state).digest("hex"); }
