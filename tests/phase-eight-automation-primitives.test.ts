@@ -153,12 +153,15 @@ test("8C-1. Preview has no execution path and Live Test is durable and marked TE
 });
 
 test("8C-2. Live Test warns about side effects, reports outcomes, and offers activation", async () => {
-  const ui = await readFile("components/automation-workspace.tsx", "utf8");
+  const [ui, journey] = await Promise.all([
+    readFile("components/automation-workspace.tsx", "utf8"),
+    readFile("components/workflow-journey-panel.tsx", "utf8"),
+  ]);
   assert.match(ui, /This live test will run/);
   assert.match(ui, /Continue with the live test/);
-  assert.match(ui, /YOUR LOOP WORKS/);
-  assert.match(ui, /Activate →/);
-  assert.match(ui, /aria-live="polite"/);
+  assert.match(journey, /Test successful/);
+  assert.match(journey, /Turn on workflow/);
+  assert.match(journey, /aria-live="polite"/);
 });
 
 test("8C-3. failed-step retry preserves condition decisions and completed AI", async () => {

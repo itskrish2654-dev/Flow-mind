@@ -26,8 +26,9 @@ test("workflow canvas owns scrolling and does not clip the node stack", async ()
     source,
     /workflow-canvas relative min-h-0 flex-1 overflow-y-auto/,
   );
-  assert.match(source, /flex w-full max-w-\[420px\] flex-col items-stretch/);
-  assert.match(source, /relative flex h-10 w-full items-center justify-center/);
+  assert.match(source, /flex w-full flex-col items-stretch/);
+  assert.match(source, /relative flex h-6 w-full items-center justify-center/);
+  assert.doesNotMatch(source, /min-h-\[420px\]/);
   assert.doesNotMatch(source, /workflow-canvas relative h-\[44%\]/);
 });
 

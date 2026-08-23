@@ -10,7 +10,6 @@ import {
   Check,
   CheckCircle2,
   CircleDot,
-  CirclePlay,
   Copy,
   Database,
   ExternalLink,
@@ -22,7 +21,6 @@ import {
   GlobeLock,
   LockKeyhole,
   Network,
-  Play,
   PlugZap,
   RotateCcw,
   Send,
@@ -65,6 +63,7 @@ import { AccessibleDialog } from "@/components/accessible-dialog";
 import { FormBuilder } from "@/components/form-builder";
 import { GoogleSpreadsheetPicker } from "@/components/google-spreadsheet-picker";
 import { AiCustomizationBar } from "@/components/ai-customization-bar";
+import { WorkflowJourneyPanel } from "@/components/workflow-journey-panel";
 import { getPublicFormPath, getPublicFormUrl } from "@/lib/public-form";
 import { isSensitiveFieldName } from "@/lib/security/redaction";
 import type {
@@ -84,6 +83,7 @@ import {
   orderWorkflowSteps,
   toPlainEnglish,
 } from "@/lib/workflow-setup";
+import { getWorkflowReadiness } from "@/lib/workflow-readiness";
 
 type Step = CompiledWorkflow["steps"][number];
 type InputValues = Record<string, string>;
@@ -197,6 +197,7 @@ function WorkflowNode({
     <button
       type="button"
       onClick={onSelect}
+      aria-pressed={selected}
       className={`w-full max-w-[360px] shrink-0 rounded-xl border bg-[#fffdfa] p-3.5 text-left shadow-[0_14px_34px_rgba(39,37,54,.08)] transition hover:-translate-y-0.5 hover:border-[#d7aa2f] ${selected ? "border-[#d7aa2f] ring-2 ring-[#f4e5ad]" : "border-[#e4ddd2]"}`}
     >
       <span className="flex items-center gap-2.5">
@@ -209,10 +210,13 @@ function WorkflowNode({
           <span className="block text-[9px] uppercase tracking-[0.1em] text-slate-400">
             Step {index + 1} · {visual.label}
           </span>
-          <span className="mt-1 block truncate text-[12px] font-semibold text-slate-900">
+          <span className="mt-1 block text-[12px] font-semibold leading-4 text-slate-900">
             {toPlainEnglish(step.title)}
           </span>
         </span>
+      </span>
+      <span className="mt-2 block text-[10px] leading-4 text-slate-500">
+        {toPlainEnglish(step.description)}
       </span>
       <span
         className={`mt-3 flex items-center gap-1.5 text-[10px] ${step.capabilityStatus === "unsupported" || step.capabilityStatus === "test_only" ? "text-rose-500" : ready ? "text-emerald-500" : "text-amber-500"}`}
@@ -237,19 +241,19 @@ function WorkflowNode({
 function EmptyCanvas({ draftReady = false }: { draftReady?: boolean }) {
   return (
     <div className="flex h-full items-center justify-center px-6 text-center">
-      <div>
+      <div className="max-w-xl">
         <span className="mx-auto flex size-12 items-center justify-center rounded-2xl border border-[#e7c75f] bg-[#fff3c8] text-[#9a7007]">
           <Network className="size-5" />
         </span>
-        <h2 className="mt-4 text-[13px] font-semibold text-slate-900">
+        <h1 className="mt-4 text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">
           {draftReady
             ? "Your loop is ready to finish."
-            : "Your workflow will appear here"}
-        </h2>
-        <p className="mx-auto mt-1.5 max-w-sm text-[11px] leading-5 text-slate-500">
+            : "What do you want CrazyLoops to do?"}
+        </h1>
+        <p className="mx-auto mt-2 max-w-md text-[11px] leading-5 text-slate-500">
           {draftReady
             ? "Your homepage description is restored below. Review it, then build the real workflow when you’re ready."
-            : "Describe what you want below. The generated steps will become a real, selectable workflow."}
+            : "Describe the outcome in everyday language. CrazyLoops will show each step and point out anything you need to finish."}
         </p>
       </div>
     </div>
@@ -324,7 +328,6 @@ function Inspector({
   onRestoreDocument,
   published,
   connectorEndpoint,
-  onPublicationChange,
   onSaveWebhook,
   className = "hidden w-[288px] shrink-0 flex-col border-l border-[#e4ddd2] bg-[#fffdfa] xl:flex 2xl:w-[320px]",
 }: {
@@ -359,7 +362,6 @@ function Inspector({
   ) => Promise<string | null>;
   published: boolean;
   connectorEndpoint: string | null;
-  onPublicationChange: (publish: boolean) => Promise<string | null>;
   onSaveWebhook: (stepId: string, endpoint: string) => Promise<string | null>;
   className?: string;
 }) {
@@ -505,7 +507,7 @@ function Inspector({
           <span className="block text-[9px] uppercase tracking-[0.1em] text-slate-400">
             {visual.label}
           </span>
-          <span className="block truncate text-[12px] font-semibold text-slate-900">
+          <span className="block text-[12px] font-semibold leading-4 text-slate-900">
             {toPlainEnglish(step.title)}
           </span>
         </span>
@@ -621,10 +623,7 @@ function Inspector({
           <div className="mb-4 rounded-xl border border-[#e7c75f] bg-[#fff7dc] p-3.5">
             <p className="text-[10px] font-semibold text-slate-900">{step.config.schedule.humanLabel}</p>
             <p className="mt-1 text-[9px] leading-4 text-slate-600">{step.config.schedule.timezone}</p>
-            <p className="mt-2 text-[9px] leading-4 text-slate-500">Run a safe manual live test first. Activation starts future occurrences; it never waits for the next occurrence to test.</p>
-            <button type="button" onClick={() => void onPublicationChange(!published)} className="mt-3 flex h-9 w-full items-center justify-center rounded-lg border border-[#d7aa2f] bg-white text-[10px] font-semibold text-[#6f5100]">
-              {published ? "Disable schedule" : "Activate schedule"}
-            </button>
+            <p className="mt-2 text-[9px] leading-4 text-slate-500">Run a safe manual test first. Use the main Activation panel when you are ready to start future occurrences.</p>
           </div>
         )}
         {step.type === "filter_condition" && step.config?.condition && (
@@ -638,8 +637,10 @@ function Inspector({
           <div className="mb-4 rounded-xl border border-[#e7c75f] bg-[#fff7dc] p-3.5">
             <p className="flex items-center gap-2 text-[10px] font-semibold text-slate-900">
               <SlidersHorizontal className="size-3.5 text-[#9a7007]" />
-              Deterministic Formatter
+              Format data
             </p>
+            <details className="mt-3 rounded-lg border border-[#ead89e] bg-white px-3 py-2">
+              <summary className="cursor-pointer text-[9px] font-semibold text-slate-600">Advanced format details</summary>
             <dl className="mt-3 grid gap-2 text-[9px]">
               <div className="flex items-start justify-between gap-3">
                 <dt className="text-slate-500">Operation</dt>
@@ -681,13 +682,14 @@ function Inspector({
                 <div className="flex items-start justify-between gap-3"><dt className="text-slate-500">Timezone</dt><dd className="font-semibold text-slate-800">{step.config.formatter.timezone}</dd></div>
               )}
             </dl>
-            <p className="mt-3 border-t border-[#ead89e] pt-3 text-[9px] leading-4 text-slate-500">Runs locally in the CrazyLoops execution engine. No AI or external request is used.</p>
+            </details>
+            <p className="mt-3 text-[9px] leading-4 text-slate-500">Formats the value consistently without using AI.</p>
           </div>
         )}
         {step.type === "public_form_trigger" && workflow?.publicForm && (
           <div className="mb-4 rounded-xl border border-[#ded6ca] bg-white p-3.5">
             <p className="text-[10px] font-semibold text-slate-900">Safe sample input</p>
-            <p className="mt-1 text-[9px] leading-4 text-slate-500">Used only for Live Test. It does not publish or submit the hosted form.</p>
+            <p className="mt-1 text-[9px] leading-4 text-slate-500">Used only for a test. It does not publish or submit the hosted form.</p>
             <div className="mt-3 grid gap-3">
               {workflow.publicForm.fields.map((field) => {
                 const key = `test_input:${field.key}`;
@@ -759,18 +761,6 @@ function Inspector({
                   </a>
                 </>
               )}
-              <button
-                type="button"
-                onClick={() => void onPublicationChange(!published)}
-                className="flex h-9 items-center justify-center gap-2 rounded-lg border border-[#d7aa2f] bg-white text-[10px] font-semibold text-[#6f5100] transition hover:bg-[#fff0b9]"
-              >
-                {published ? (
-                  <GlobeLock className="size-3.5" />
-                ) : (
-                  <Globe2 className="size-3.5" />
-                )}
-                {published ? "Unpublish & Revoke" : "Publish Form"}
-              </button>
               {publicForm && (
                 <FormBuilder
                   form={publicForm}
@@ -831,18 +821,7 @@ function Inspector({
                   </button>
                 </>
               )}
-              <button
-                type="button"
-                onClick={() => void onPublicationChange(!published)}
-                className="flex h-9 items-center justify-center gap-2 rounded-lg border border-[#d7aa2f] bg-white text-[10px] font-semibold text-[#6f5100] hover:bg-[#fff0b9]"
-              >
-                {published ? (
-                  <GlobeLock className="size-3.5" />
-                ) : (
-                  <Globe2 className="size-3.5" />
-                )}
-                {published ? "Unpublish & Revoke" : "Publish Webhook"}
-              </button>
+              <p className="text-[9px] leading-4 text-slate-500">Use the main Activation panel to turn this webhook on or off.</p>
             </div>
           </div>
         )}
@@ -1300,8 +1279,11 @@ export function AutomationWorkspace({
   const [planning, setPlanning] = useState<WorkflowPlan | null>(null);
   const [connectorRequestMessage, setConnectorRequestMessage] = useState<string | null>(null);
   const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false);
+  const [editChoiceOpen, setEditChoiceOpen] = useState(false);
+  const [pendingEditPrompt, setPendingEditPrompt] = useState<string | null>(null);
   const [configuredCredentialKeys, setConfiguredCredentialKeys] = useState<Set<string>>(new Set());
   const buildRequestInFlight = useRef(false);
+  const pauseRequestInFlight = useRef<Promise<string | null> | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -1355,35 +1337,23 @@ export function AutomationWorkspace({
       ? getStepInputs(selectedStep, workflowId)
       : [];
 
-  function inputsFor(step: Step) {
-    if (
-      ["public_form_trigger", "webhook_trigger", "store_data"].includes(
-        step.type,
-      )
-    )
-      return [];
-    return getStepInputs(step, workflowId);
-  }
+  const readiness = useMemo(
+    () =>
+      getWorkflowReadiness({
+        workflow,
+        workflowId,
+        values,
+        configuredCredentialKeys,
+      }),
+    [configuredCredentialKeys, values, workflow, workflowId],
+  );
+  const workflowReady = readiness.testReady;
 
-  function stepIsReady(step: Step) {
-    if (step.capabilityStatus === "unsupported") return false;
-    if (step.config?.connector && !step.config.connector.connectorId.startsWith("flowmind_") && !step.config.connector.connectionId) return false;
-    if (step.capabilityId === "http.request") {
-      const endpoint = values[inputId(step.id, "destination_url")] ?? step.config?.http?.url ?? step.config?.endpoint ?? "";
-      return Boolean(endpoint.trim()) && inputsFor(step).every((input) => {
-        if (input.required === false) return true;
-        if (input.type === "secret" && configuredCredentialKeys.has(`${step.capabilityId ?? step.type}:${input.key}`)) return true;
-        return Boolean((values[inputId(step.id, input.key)] ?? input.value ?? "").trim());
-      });
-    }
-    if (["webhook_post", "http_request"].includes(step.type)) {
-      return Boolean(step.config?.endpoint?.trim());
-    }
-    return inputsFor(step).every((input) => input.required === false || Boolean((values[inputId(step.id, input.key)] ?? input.value ?? "").trim()));
-  }
-
-  const readySteps = steps.filter(stepIsReady).length;
-  const workflowReady = steps.length > 0 && readySteps === steps.length;
+  const resetTestResult = useCallback(() => {
+    setLogs([]);
+    setDelivered(null);
+    setTestSucceeded(null);
+  }, []);
 
   const resetBuilder = useCallback(() => {
     setWorkflow(null);
@@ -1392,9 +1362,7 @@ export function AutomationWorkspace({
     setSelectedStepId(null);
     setValues({});
     setPrompt("");
-    setLogs([]);
-    setDelivered(null);
-    setTestSucceeded(null);
+    resetTestResult();
     setPlanning(null);
     setError(null);
     window.dispatchEvent(
@@ -1403,7 +1371,7 @@ export function AutomationWorkspace({
     if (window.location.pathname !== "/dashboard") {
       router.push("/dashboard");
     }
-  }, [router]);
+  }, [resetTestResult, router]);
 
   useEffect(() => {
     if (!initialWorkflow || !initialWorkflowId) return;
@@ -1447,39 +1415,47 @@ export function AutomationWorkspace({
 
   useEffect(() => {
     if (!workflowId || !workflow) return;
-    const status = workflowReady ? "Ready" : "Draft";
+    const status = published ? "Working" : workflowReady ? "Ready" : "Draft";
     window.dispatchEvent(
       new CustomEvent("flowmind:status-changed", {
         detail: { id: workflowId, status },
       }),
     );
-  }, [values, workflow, workflowId, workflowReady]);
+  }, [published, values, workflow, workflowId, workflowReady]);
 
   async function buildAutomation() {
     const description = prompt.trim();
     if (!description || isBuilding || buildRequestInFlight.current) return;
+    if (workflowId) {
+      setPendingEditPrompt(description);
+      setEditChoiceOpen(true);
+      return;
+    }
+    await performBuild(description);
+  }
+
+  async function performBuild(
+    description: string,
+    editIntent?: "modify" | "replace",
+  ) {
+    if (isBuilding || buildRequestInFlight.current) return;
     buildRequestInFlight.current = true;
     setIsBuilding(true);
+    setEditChoiceOpen(false);
     setError(null);
-    setLogs([]);
-    setDelivered(null);
-    setTestSucceeded(null);
+    resetTestResult();
     setPlanning(null);
     try {
-      let editIntent: "modify" | "replace" | undefined;
-      if (workflowId) {
-        const modify = window.confirm(
-          "Modify the current automation? Choose OK to preserve its saved setup and create a new version. Choose Cancel to keep it unchanged or replace it instead.",
-        );
-        if (modify) {
-          editIntent = "modify";
-        } else {
-          const replace = window.confirm(
-            "Replace the current automation completely? This clears its saved setup, but change history and restore remain available. Choose Cancel to make no change.",
+      if (workflowId && published) {
+        const publication = await setWorkflowPublication(workflowId, false);
+        if (!publication.ok) {
+          setError(
+            `CrazyLoops couldn’t pause this active workflow safely. ${publication.error}`,
           );
-          if (!replace) return;
-          editIntent = "replace";
+          return;
         }
+        setPublished(false);
+        setConnectorEndpoint(null);
       }
       const result = await compileWorkflow(description, workflowId, editIntent);
       if (!result.success) {
@@ -1495,6 +1471,7 @@ export function AutomationWorkspace({
       setValues(initialValues);
       setSelectedStepId(ordered[0]?.id ?? null);
       setPrompt("");
+      setPendingEditPrompt(null);
       setPlanning(result.planning);
       window.dispatchEvent(
         new CustomEvent("flowmind:active-workflow", { detail: result.id }),
@@ -1530,6 +1507,7 @@ export function AutomationWorkspace({
     setIsTesting(true);
     setError(null);
     setLogs([]);
+    setDelivered(null);
     try {
       const result = await runTestWorkflow(
         workflowId,
@@ -1540,7 +1518,6 @@ export function AutomationWorkspace({
       if (!result.ok) {
         setLogs(result.logs ?? []);
         setTestSucceeded(false);
-        setError(result.error);
         return;
       }
       setLogs(result.logs);
@@ -1551,11 +1528,13 @@ export function AutomationWorkspace({
       );
       window.dispatchEvent(
         new CustomEvent("flowmind:status-changed", {
-          detail: { id: workflowId, status: "Ready" },
+          detail: { id: workflowId, status: published ? "Working" : "Ready" },
         }),
       );
     } catch {
-      setError("The test couldn’t run. Please try again.");
+      setLogs([]);
+      setDelivered(null);
+      setTestSucceeded(false);
     } finally {
       setIsTesting(false);
     }
@@ -1567,6 +1546,8 @@ export function AutomationWorkspace({
     try {
       if (!workflowId)
         return "Create the workflow before customizing its form.";
+      const pauseError = await pauseForChanges();
+      if (pauseError) return pauseError;
       let result = await saveWorkflowCustomization(workflowId, { publicForm });
       if (!result.ok && result.impact) {
         const confirmed = window.confirm(
@@ -1581,6 +1562,7 @@ export function AutomationWorkspace({
       }
       if (!result.ok) return result.error;
       setWorkflow(result.workflow);
+      resetTestResult();
       window.dispatchEvent(
         new CustomEvent("flowmind:workflow-customized", {
           detail: result.workflow,
@@ -1598,9 +1580,12 @@ export function AutomationWorkspace({
     try {
       if (!workflowId)
         return "Create the workflow before customizing its data table.";
+      const pauseError = await pauseForChanges();
+      if (pauseError) return pauseError;
       const result = await saveWorkflowCustomization(workflowId, { dataTable });
       if (!result.ok) return result.error;
       setWorkflow(result.workflow);
+      resetTestResult();
       window.dispatchEvent(
         new CustomEvent("flowmind:workflow-customized", {
           detail: result.workflow,
@@ -1617,6 +1602,8 @@ export function AutomationWorkspace({
     template: string,
   ): Promise<string | null> {
     if (!workflowId) return "Create the workflow before changing its document.";
+    const pauseError = await pauseForChanges();
+    if (pauseError) return pauseError;
     const result = await saveDocumentTemplate(workflowId, stepId, template);
     if (!result.ok) return result.error;
     adoptCustomizedWorkflow(result.workflow);
@@ -1640,11 +1627,23 @@ export function AutomationWorkspace({
     return null;
   }
 
+  async function pauseForChanges(): Promise<string | null> {
+    if (!published) return null;
+    if (pauseRequestInFlight.current) return pauseRequestInFlight.current;
+    const request = changePublication(false).finally(() => {
+      pauseRequestInFlight.current = null;
+    });
+    pauseRequestInFlight.current = request;
+    return request;
+  }
+
   async function persistWebhookEndpoint(
     stepId: string,
     endpoint: string,
   ): Promise<string | null> {
     if (!workflowId) return "Create the workflow before configuring delivery.";
+    const pauseError = await pauseForChanges();
+    if (pauseError) return pauseError;
     const result = await saveWebhookEndpoint(workflowId, stepId, endpoint);
     if (!result.ok) {
       setError(result.error);
@@ -1657,6 +1656,7 @@ export function AutomationWorkspace({
 
   function adoptCustomizedWorkflow(customizedWorkflow: CompiledWorkflow) {
     setWorkflow(customizedWorkflow);
+    resetTestResult();
     window.dispatchEvent(
       new CustomEvent("flowmind:workflow-customized", {
         detail: customizedWorkflow,
@@ -1667,6 +1667,8 @@ export function AutomationWorkspace({
   async function aiCustomizeForm(instruction: string) {
     if (!workflowId)
       return { error: "Create the workflow before customizing its form." };
+    const pauseError = await pauseForChanges();
+    if (pauseError) return { error: pauseError };
     const result = await customizeFormWithAi(workflowId, instruction);
     if (!result.ok) return { error: result.error };
     adoptCustomizedWorkflow(result.workflow);
@@ -1681,6 +1683,8 @@ export function AutomationWorkspace({
       return {
         error: "Create the workflow before customizing its data table.",
       };
+    const pauseError = await pauseForChanges();
+    if (pauseError) return { error: pauseError };
     const result = await customizeDataTableWithAi(workflowId, instruction);
     if (!result.ok) return { error: result.error };
     adoptCustomizedWorkflow(result.workflow);
@@ -1693,6 +1697,8 @@ export function AutomationWorkspace({
   async function aiCustomizeDocument(stepId: string, instruction: string) {
     if (!workflowId)
       return { error: "Create the workflow before customizing its document." };
+    const pauseError = await pauseForChanges();
+    if (pauseError) return { error: pauseError };
     const result = await customizeDocumentWithAi(
       workflowId,
       stepId,
@@ -1736,28 +1742,15 @@ export function AutomationWorkspace({
           </div>
           {workflow && (
             <span
-              className={`hidden rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.08em] sm:block ${workflowReady ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"}`}
+              className={`ml-auto rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.08em] sm:block ${published ? "bg-emerald-50 text-emerald-700" : workflowReady ? "bg-[#f8f4ec] text-slate-600" : "bg-[#fff2bd] text-[#765600]"}`}
             >
-              {workflowReady
-                ? "Ready"
-                : `${steps.length - readySteps} steps need setup`}
+              {published
+                ? "Active"
+                : workflowReady
+                  ? "Ready to test"
+                  : `${readiness.attention.length} to finish`}
             </span>
           )}
-          <div className="ml-auto flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void runTest()}
-              disabled={!workflow || isTesting}
-              className="flex h-8 items-center gap-2 rounded-lg border border-[#dcd4c8] bg-transparent px-3 text-[10px] font-semibold text-[#272536] transition hover:border-[#d7aa2f] hover:bg-[#fff8e3] disabled:cursor-not-allowed disabled:opacity-35"
-            >
-              {isTesting ? (
-                <LoaderCircle className="size-3 animate-spin text-[#9a7007]" />
-              ) : (
-                <Play className="size-3 fill-current text-[#b18410]" />
-              )}{" "}
-              Test this loop
-            </button>
-          </div>
         </header>
 
         <section className="flex min-h-0 flex-1 flex-col bg-[#fffdfa]">
@@ -1767,6 +1760,36 @@ export function AutomationWorkspace({
                 <div className="min-h-[220px] flex-1">
                   <EmptyCanvas draftReady={initialDraftReady} />
                 </div>
+                {planning && planning.status !== "READY_TO_COMPILE" && (
+                  <div className="mx-auto mb-4 w-full max-w-2xl rounded-2xl border border-[#e7c75f] bg-[#fff7dc] p-4 text-[11px] leading-5 text-slate-700">
+                    <p className="font-semibold text-slate-900">
+                      {planning.status === "NEEDS_CLARIFICATION"
+                        ? "Tell me a little more"
+                        : planning.status === "UNSUPPORTED"
+                          ? "That connection is not available yet"
+                          : "These instructions need one clear choice"}
+                    </p>
+                    {planning.clarificationQuestions.map((question) => (
+                      <p key={question} className="mt-1.5">{question}</p>
+                    ))}
+                    {planning.requestedUnsupportedCapabilities.map((capability) => (
+                      <div key={capability.capabilityId} className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                        <p>{capability.displayName} isn’t available yet.</p>
+                        <button
+                          type="button"
+                          className="min-h-10 rounded-lg border border-[#d7aa2f] bg-white px-3 font-semibold text-[#6f5100]"
+                          onClick={async () => {
+                            const response = await requestConnectorCapability({ capabilityId: capability.capabilityId, source: "workflow_builder" });
+                            setConnectorRequestMessage(response.ok ? response.message : response.error);
+                          }}
+                        >
+                          Request {capability.displayName}
+                        </button>
+                      </div>
+                    ))}
+                    {connectorRequestMessage && <p role="status" className="mt-2 font-medium text-emerald-700">{connectorRequestMessage}</p>}
+                  </div>
+                )}
                 {!isBuilding && !error && (
                   <div className="mx-auto w-full max-w-2xl pb-2">
                     <div className="flex items-start gap-3">
@@ -1783,13 +1806,36 @@ export function AutomationWorkspace({
                 )}
               </div>
             ) : (
-              <div className="mx-auto grid min-h-full w-full max-w-5xl gap-6 px-5 py-6 sm:px-7 md:grid-cols-[minmax(280px,1fr)_minmax(250px,.9fr)] md:items-center">
-                <div className="flex min-h-[420px] min-w-0 flex-col items-center justify-center py-2">
-                  <div className="flex w-full max-w-[420px] flex-col items-stretch">
+              <div className="mx-auto w-full max-w-6xl px-5 py-6 sm:px-7">
+                <section aria-labelledby="current-workflow-title" className="mb-5 rounded-2xl border border-[#e4ddd2] bg-white p-4 shadow-[0_10px_30px_rgba(39,37,54,.05)] sm:p-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="max-w-2xl">
+                      <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#805b00]">Current workflow</p>
+                      <h1 id="current-workflow-title" className="mt-1 text-lg font-semibold tracking-tight text-[#272536]">
+                        {toPlainEnglish(workflow.workflowName)}
+                      </h1>
+                      <p className="mt-1 text-[11px] leading-5 text-slate-500">{toPlainEnglish(workflow.summary)}</p>
+                    </div>
+                    <span className={`inline-flex min-h-8 w-fit items-center rounded-full px-3 text-[9px] font-bold uppercase tracking-[0.08em] ${published ? "bg-emerald-50 text-emerald-700" : "bg-[#f8f4ec] text-slate-600"}`}>
+                      {published ? "Active" : "Draft"}
+                    </span>
+                  </div>
+                </section>
+
+                <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(300px,1.05fr)_minmax(280px,.95fr)] lg:items-start">
+                  <section aria-label="Workflow steps" className="min-w-0 rounded-2xl border border-[#e4ddd2] bg-[#f8f4ec]/70 p-4 sm:p-5">
+                    <div className="mb-4 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-slate-500">What will happen</p>
+                        <p className="mt-1 text-[10px] text-slate-500">Select a step to review or finish its setup.</p>
+                      </div>
+                      <span className="shrink-0 text-[10px] font-semibold text-slate-500">{readiness.readySteps}/{steps.length} ready</span>
+                    </div>
+                    <div className="flex w-full flex-col items-stretch">
                     {steps.map((step, index) => (
                       <div key={step.id} className="flex w-full flex-col items-center">
                         {index > 0 && (
-                          <div className="relative flex h-10 w-full items-center justify-center" aria-hidden="true">
+                          <div className="relative flex h-6 w-full items-center justify-center" aria-hidden="true">
                             <div className="h-full w-px bg-[#d7aa2f]" />
                             {step.config?.branch && (
                               <span className="absolute left-1/2 ml-3 rounded-full bg-[#fff2bd] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-[#765600]">
@@ -1802,7 +1848,7 @@ export function AutomationWorkspace({
                           step={step}
                           index={index}
                           selected={selectedStep?.id === step.id}
-                          ready={stepIsReady(step)}
+                          ready={readiness.stepReady[step.id] ?? false}
                           onSelect={() => {
                             setSelectedStepId(step.id);
                             if (window.innerWidth < 1280) setMobileInspectorOpen(true);
@@ -1810,12 +1856,9 @@ export function AutomationWorkspace({
                         />
                       </div>
                     ))}
-                  </div>
-                  <div className="mt-5 flex w-full max-w-[360px] items-center justify-between gap-3 text-[10px] text-slate-500">
-                    <span className="flex items-center gap-3">
+                    </div>
+                    <div className="mt-4 flex items-center justify-between gap-3 border-t border-[#e4ddd2] pt-3 text-[10px] text-slate-500">
                       <span className="flex items-center gap-1.5"><Network className="size-3" />{steps.length} steps</span>
-                      <span>{readySteps}/{steps.length} ready</span>
-                    </span>
                     <button
                       type="button"
                       onClick={() => setMobileInspectorOpen(true)}
@@ -1824,29 +1867,26 @@ export function AutomationWorkspace({
                       <SlidersHorizontal className="size-4" />
                       Configure step
                     </button>
-                  </div>
-                </div>
+                    </div>
+                  </section>
 
-                <div className="flex min-w-0 flex-col justify-center gap-3 pb-2 md:pb-0">
-                  <div className="rounded-2xl border border-[#e4ddd2] bg-[#fffdfa]/95 px-4 py-4 shadow-[0_10px_30px_rgba(39,37,54,.06)]">
-                    <div className="flex items-start gap-3">
-                      <span className="flex size-8 shrink-0 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd]">
-                        <Sparkles className="size-4 text-[#8a6200]" />
-                      </span>
-                      <div className="min-w-0">
-                        <p className="text-[11px] font-semibold text-slate-900">{toPlainEnglish(workflow.workflowName)}</p>
-                        <p className="mt-1 text-[10px] leading-5 text-slate-500">{toPlainEnglish(workflow.summary)}</p>
-                      </div>
-                    </div>
-                    <p className="mt-4 text-[9px] font-bold uppercase tracking-[0.12em] text-[#805b00]">What will happen</p>
-                    <div className="mt-2 grid gap-1.5">
-                      {steps.map((step, index) => (
-                        <p key={step.id} className="text-[10px] leading-4 text-slate-600">
-                          <span className="font-semibold text-slate-800">{index + 1}. {stepVisuals[step.type].label}:</span>{" "}
-                          {toPlainEnglish(step.title)}
-                        </p>
-                      ))}
-                    </div>
+                  <div className="min-w-0">
+                    <WorkflowJourneyPanel
+                      workflow={workflow}
+                      steps={steps}
+                      readiness={readiness}
+                      published={published}
+                      isTesting={isTesting}
+                      testSucceeded={testSucceeded}
+                      logs={logs}
+                      delivered={delivered}
+                      onSelectStep={(stepId) => {
+                        setSelectedStepId(stepId);
+                        if (window.innerWidth < 1280) setMobileInspectorOpen(true);
+                      }}
+                      onRunTest={() => void runTest()}
+                      onPublicationChange={(publish) => void changePublication(publish)}
+                    />
                   </div>
 
                   {planning && planning.status !== "READY_TO_COMPILE" && (
@@ -1867,31 +1907,17 @@ export function AutomationWorkspace({
                       {connectorRequestMessage && <p role="status" className="mt-2 font-medium text-emerald-700">{connectorRequestMessage}</p>}
                     </div>
                   )}
-
-                  {logs.length > 0 && (
-                    <div role="status" aria-live="polite" className={`rounded-xl border p-3 ${testSucceeded ? "border-emerald-200 bg-emerald-50" : "border-rose-200 bg-rose-50"}`}>
-                      <p className="flex items-center gap-2 text-[11px] font-semibold text-slate-900">
-                        <CirclePlay className={`size-3.5 ${testSucceeded ? "text-emerald-500" : "text-rose-500"}`} />
-                        {testSucceeded ? "YOUR LOOP WORKS." : "Live test needs attention"}
-                        {testSucceeded && delivered ? " · external delivery acknowledged" : ""}
-                      </p>
-                      <div className="mt-2 space-y-1.5">
-                        {logs.map((log, index) => <p key={`${log.message}-${index}`} className="text-[10px] leading-4 text-slate-600">{log.icon} {log.message}</p>)}
-                      </div>
-                      {testSucceeded && !published && (
-                        <button type="button" onClick={() => void changePublication(true)} className="mt-3 inline-flex min-h-10 items-center rounded-lg border border-emerald-300 bg-white px-4 text-[10px] font-semibold text-emerald-700">Activate →</button>
-                      )}
-                    </div>
-                  )}
                 </div>
               </div>
             )}
 
             {isBuilding && (
-              <div className="absolute inset-x-5 bottom-4 flex items-center justify-center gap-3">
-                <span className="flex items-center gap-2 rounded-2xl border border-[#e4ddd2] bg-[#fffdfa] px-4 py-3 text-[11px] text-slate-500 shadow-sm">
-                  <LoaderCircle className="size-3.5 animate-spin text-[#b18410]" />Building your workflow…
-                </span>
+              <div role="status" aria-live="polite" className="absolute inset-0 flex items-center justify-center bg-[#fffdfa]/90 px-5 backdrop-blur-[2px]">
+                <div className="max-w-sm rounded-2xl border border-[#e4ddd2] bg-white px-6 py-5 text-center shadow-xl">
+                  <LoaderCircle className="mx-auto size-5 animate-spin text-[#b18410]" />
+                  <p className="mt-3 text-sm font-semibold text-[#272536]">Building your workflow…</p>
+                  <p className="mt-1 text-[10px] leading-5 text-slate-500">I’ll show the steps and anything you need to finish.</p>
+                </div>
               </div>
             )}
             {error && (
@@ -1902,7 +1928,9 @@ export function AutomationWorkspace({
           <div className="shrink-0 border-t border-[#eee8de] bg-[#fffdfa]/95 px-4 pb-4 pt-3 sm:px-5">
             <div className="workflow-composer flex items-center gap-3 rounded-2xl border border-[#ded6ca] bg-white px-3.5 py-2.5 shadow-[0_8px_30px_rgba(39,37,54,.05)] transition-[border-color,box-shadow] focus-within:border-[#d7aa2f] focus-within:shadow-[0_0_0_3px_rgba(215,170,47,.14)]">
               <textarea
+                aria-label={workflow ? "Describe a change to this workflow" : "Describe the workflow you want to build"}
                 value={prompt}
+                disabled={isBuilding}
                 onChange={(event) => {
                   setPrompt(event.target.value);
                   setError(null);
@@ -1918,7 +1946,7 @@ export function AutomationWorkspace({
                 maxLength={10_000}
                 placeholder={
                   workflow
-                    ? "Describe a different automation to replace this one…"
+                    ? "Describe a change, like “send the summary to Slack too”…"
                     : "Describe the automation you want to build…"
                 }
                 className="max-h-28 min-h-9 flex-1 resize-none appearance-none border-0 bg-transparent px-0 py-1.5 text-[12px] leading-5 text-slate-800 outline-none ring-0 shadow-none [field-sizing:content] placeholder:text-slate-400 focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
@@ -1961,6 +1989,59 @@ export function AutomationWorkspace({
         </section>
       </main>
 
+      <AccessibleDialog
+        open={editChoiceOpen}
+        onOpenChange={(open) => {
+          setEditChoiceOpen(open);
+          if (!open) setPendingEditPrompt(null);
+        }}
+        title="Change this workflow"
+        description="Choose whether to update the current workflow or replace it completely."
+      >
+        <div className="p-5 pr-16 sm:p-6 sm:pr-16">
+          <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#805b00]">Change workflow</p>
+          <h2 className="mt-2 text-lg font-semibold text-[#272536]">How should CrazyLoops apply this change?</h2>
+          <p className="mt-2 text-[11px] leading-5 text-slate-500">
+            {published
+              ? "This workflow is active. CrazyLoops will turn it off first so an unreviewed change never goes live."
+              : "Your current workflow stays available in Change history."}
+          </p>
+          {pendingEditPrompt && (
+            <div className="mt-4 rounded-xl border border-[#e4ddd2] bg-[#f8f4ec] p-3 text-[11px] leading-5 text-slate-700">
+              “{pendingEditPrompt}”
+            </div>
+          )}
+          <div className="mt-5 grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => pendingEditPrompt && void performBuild(pendingEditPrompt, "modify")}
+              className="min-h-12 rounded-xl border border-[#d7aa2f] bg-[#fff9e8] px-4 text-left text-[11px] font-semibold text-[#6f5100] transition hover:bg-[#fff2bd]"
+            >
+              Update this workflow
+              <span className="mt-1 block text-[9px] font-normal leading-4 text-slate-500">Keep useful setup and adjust the steps.</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => pendingEditPrompt && void performBuild(pendingEditPrompt, "replace")}
+              className="min-h-12 rounded-xl border border-[#ded6ca] bg-white px-4 text-left text-[11px] font-semibold text-slate-700 transition hover:border-[#d7aa2f] hover:bg-[#fffaf0]"
+            >
+              Replace the workflow
+              <span className="mt-1 block text-[9px] font-normal leading-4 text-slate-500">Start fresh with the new description.</span>
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setEditChoiceOpen(false);
+              setPendingEditPrompt(null);
+            }}
+            className="mt-3 inline-flex min-h-10 items-center px-2 text-[10px] font-semibold text-slate-500 hover:text-slate-900"
+          >
+            Cancel
+          </button>
+        </div>
+      </AccessibleDialog>
+
       <Inspector
         workflow={workflow}
         workflowId={workflowId}
@@ -1975,12 +2056,12 @@ export function AutomationWorkspace({
         onRestoreDocument={restoreDocumentTemplate}
         published={published}
         connectorEndpoint={connectorEndpoint}
-        onPublicationChange={changePublication}
         onSaveWebhook={persistWebhookEndpoint}
         onChange={(id, value) => {
           setValues((current) => ({ ...current, [id]: value }));
           setError(null);
-          setLogs([]);
+          resetTestResult();
+          if (published && !id.startsWith("test_input:")) void pauseForChanges();
         }}
       />
       <AccessibleDialog
@@ -2005,13 +2086,13 @@ export function AutomationWorkspace({
           onRestoreDocument={restoreDocumentTemplate}
           published={published}
           connectorEndpoint={connectorEndpoint}
-          onPublicationChange={changePublication}
           onSaveWebhook={persistWebhookEndpoint}
           className="flex min-h-0 w-full flex-1 flex-col bg-[#fffdfa] pt-12"
           onChange={(id, value) => {
             setValues((current) => ({ ...current, [id]: value }));
             setError(null);
-            setLogs([]);
+            resetTestResult();
+            if (published && !id.startsWith("test_input:")) void pauseForChanges();
           }}
         />
       </AccessibleDialog>

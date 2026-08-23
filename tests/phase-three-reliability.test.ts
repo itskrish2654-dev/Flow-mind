@@ -130,8 +130,8 @@ test("3-20/21. presentation changes preserve automation steps", () => {
 test("3-22/23. form schema is bounded and destructive replacement is explicit", () => {
   assert.match(source("lib/schemas/workflow.ts"), /fields: z\.array\(PublicFormFieldSchema\)\.min\(1\)\.max\(10\)/);
   assert.match(workflowAction, /Choose Modify current automation or Replace current automation/);
-  assert.match(workspace, /Modify the current automation/);
-  assert.match(workspace, /Replace the current automation completely/);
+  assert.match(workspace, /Update this workflow/);
+  assert.match(workspace, /Replace the workflow/);
   assert.match(workflowAction, /affectedExecutionCount[\s\S]*confirmDestructiveFieldRemoval/);
   assert.match(workflowAction, /Existing execution data will remain recoverable in history/);
 });
