@@ -1,5 +1,6 @@
 const AIRTABLE_BASE_ID = /^app[A-Za-z0-9]{14}$/;
 const AIRTABLE_TABLE_ID = /^tbl[A-Za-z0-9]{14}$/;
+const AIRTABLE_RECORD_ID = /^rec[A-Za-z0-9]{14}$/;
 const SOURCE_PATH = /^(?:trigger\.)?[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*$/;
 const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const MAX_MAPPING_BYTES = 32 * 1024;
@@ -80,6 +81,10 @@ export function validateAirtableDestinationIdentifiers(baseId: string, tableId: 
     throw new AirtableWorkflowConfigurationError("Enter a valid Airtable Table ID (tbl + 14 characters).");
   }
   return { baseId, tableId };
+}
+
+export function isValidAirtableRecordId(value: unknown): value is string {
+  return typeof value === "string" && AIRTABLE_RECORD_ID.test(value);
 }
 
 function readPath(root: Record<string, unknown>, path: string): unknown {

@@ -12,7 +12,7 @@ import { getConnectorOperation } from "@/lib/connectors/registry";
 import { ConnectorError } from "@/lib/connectors/errors";
 import type { ConnectorActionHandler } from "@/lib/connectors/types";
 import { applyFieldMappings, resolveMappingSource, type FieldMapping, type MappingSource } from "@/lib/connectors/mapping";
-import { buildAirtableCreateRecordInput } from "@/lib/connectors/airtable/workflow-configuration";
+import { buildAirtableCreateRecordInput, isValidAirtableRecordId } from "@/lib/connectors/airtable/workflow-configuration";
 import { executeFormatter, FormatterError, type FormatterSource } from "@/lib/formatter";
 import {
   generatePdfBuffer,
@@ -88,6 +88,13 @@ export type WorkflowExecutionResult = {
   failureReason: string | null;
   logs: ExecutionLog[];
   delivered: boolean;
+  providerAcknowledgements: Array<{
+    stepId: string;
+    capabilityId: "airtable.create_record";
+    connectionId: string;
+    acknowledged: true;
+    providerReferenceId: string;
+  }>;
   inputData: Record<string, string>;
   outputData: {
     status: "succeeded" | "failed" | "partial";
@@ -289,6 +296,7 @@ export async function executeWorkflowSteps({
   const connectorStepOutputs: Record<string, Record<string, unknown>> = { ...(resumeState?.stepOutputs ?? {}) };
   const formatterResults: Record<string, { operation: string; outputKey: string; value: unknown }> = {};
   const httpResults: Record<string, Record<string, unknown>> = {};
+  const providerAcknowledgements: WorkflowExecutionResult["providerAcknowledgements"] = [];
   let delivered = false;
   let aiResult: string | null = resumeState?.aiResult ?? null;
   let failureReason: string | null = null;
@@ -330,6 +338,7 @@ export async function executeWorkflowSteps({
       failureReason,
       logs,
       delivered,
+      providerAcknowledgements,
       inputData,
       outputData: {
         status,
@@ -550,13 +559,25 @@ export async function executeWorkflowSteps({
       variables[step.id] = result.output;
       for (const [key, value] of Object.entries(result.output)) variables[key] = value;
       if (capabilityId === "airtable.create_record") {
-        const recordId = typeof result.output.recordId === "string" ? result.output.recordId : null;
+        const recordId = result.output.recordId;
+        if (!isValidAirtableRecordId(recordId)) {
+          const error = new DelegatedExecutionError("DELEGATED_BAD_RESPONSE", false);
+          await fail(error.message, "failed", error, false);
+          break;
+        }
         delivered = true;
         await succeed(
           "Create Airtable record was acknowledged by Airtable.",
-          { provider: "airtable", operation: "create_record", acknowledged: true },
+          { provider: "airtable", operation: "create_record", acknowledged: true, mode: "TEST" },
           recordId,
         );
+        providerAcknowledgements.push({
+          stepId: step.id,
+          capabilityId: "airtable.create_record",
+          connectionId: connectionId!,
+          acknowledged: true,
+          providerReferenceId: recordId,
+        });
       } else {
         await succeed("This step completed.");
       }

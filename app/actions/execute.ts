@@ -6,6 +6,7 @@ import { executeAiText } from "@/lib/ai-execution";
 import { getAuthenticatedContext } from "@/lib/auth";
 import { assessWorkflowCapabilities } from "@/lib/capability-registry";
 import { validateWorkflowConnectorConnections } from "@/lib/connectors/subscriptions";
+import { verifyAirtableCustomerTestExecution } from "@/lib/connectors/airtable/provider-verification";
 import { uploadGeneratedDocument } from "@/lib/document-storage";
 import {
   completeDurableExecution,
@@ -348,6 +349,55 @@ export async function runTestWorkflow(
       error: "The execution is durable, but its final state needs reconciliation.",
       executionId: durable.id,
     };
+  }
+
+  if (execution.ok) {
+    for (const acknowledgement of execution.providerAcknowledgements) {
+      try {
+        const verification = await verifyAirtableCustomerTestExecution({
+          userId: auth.user.id,
+          workflowId: request.data.workflowId,
+          workflowVersionId: snapshot.versionId,
+          executionId: durable.id,
+          stepId: acknowledgement.stepId,
+          connectionId: acknowledgement.connectionId,
+          capabilityId: acknowledgement.capabilityId,
+          mode: "TEST",
+          acknowledged: acknowledgement.acknowledged,
+          providerReferenceId: acknowledgement.providerReferenceId,
+        });
+        await captureOperationalEvent({
+          level: "info",
+          event: "airtable_connection_operation_verified",
+          userId: auth.user.id,
+          workflowId: request.data.workflowId,
+          workflowVersionId: snapshot.versionId,
+          executionId: durable.id,
+          stepId: acknowledgement.stepId,
+          capability: acknowledgement.capabilityId,
+          status: verification.status,
+          metadata: { connectionId: acknowledgement.connectionId },
+        });
+      } catch {
+        execution.logs.push({
+          icon: "⚠️",
+          message: "Airtable created the record, but connection verification needs reconciliation.",
+          stepId: acknowledgement.stepId,
+        });
+        await captureOperationalEvent({
+          level: "warn",
+          event: "airtable_connection_verification_reconciliation_required",
+          userId: auth.user.id,
+          workflowId: request.data.workflowId,
+          workflowVersionId: snapshot.versionId,
+          executionId: durable.id,
+          stepId: acknowledgement.stepId,
+          capability: acknowledgement.capabilityId,
+          status: "reconciliation_required",
+          metadata: { connectionId: acknowledgement.connectionId },
+        });
+      }
+    }
   }
 
   if (!execution.ok) {
