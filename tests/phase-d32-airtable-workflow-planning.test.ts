@@ -204,13 +204,13 @@ test("D3.2 fails closed when a mapped workflow value is missing", () => {
   }), AirtableWorkflowConfigurationError);
 });
 
-test("D3.2 capability is planner-visible and TEST-only", () => {
+test("D3.2 capability remains planner-visible after verified LIVE enablement", () => {
   const capability = CAPABILITY_REGISTRY["airtable.create_record"];
   assert.equal(capability.supported, true);
   assert.equal(capability.internalOnly, false);
   assert.equal(capability.plannerVisible, true);
   assert.equal(capability.availableInTest, true);
-  assert.equal(capability.availableInProduction, false);
+  assert.equal(capability.availableInProduction, true);
   assert.deepEqual(capability.executorVersions, { 1: "connector_runner" });
 });
 
@@ -233,11 +233,11 @@ for (const [label, promptText] of [
   });
 }
 
-test("D3.2 capability assessment blocks production", () => {
+test("D3.2 capability assessment allows production after D3.4 eligibility gates", () => {
   assert.equal(assessCapability("airtable.create_record", "test").available, true);
   const production = assessCapability("airtable.create_record", "production");
-  assert.equal(production.available, false);
-  assert.equal(production.status, "test_only");
+  assert.equal(production.available, true);
+  assert.equal(production.status, "supported");
 });
 
 test("D3.2 deferred Airtable metadata is exact and non-authoritative", () => {
@@ -492,7 +492,7 @@ test("D3.2 invalid Airtable setup is rejected before delegated credential/provid
   assert.equal(calls, 0);
 });
 
-test("D3.2 production runtime rejects Airtable before invoking the runner", async () => {
+test("D3.2 production runtime invokes the runner after D3.4 registry enablement", async () => {
   const { workflow, step } = compiledAirtableWorkflow();
   let calls = 0;
   const result = await executeWorkflowSteps({
@@ -505,11 +505,11 @@ test("D3.2 production runtime rejects Airtable before invoking the runner", asyn
     steps: selectAirtableConnection(workflow, step.id),
     inputValues: { name: "Ada", [`${step.id}-baseId`]: BASE_ID, [`${step.id}-tableId`]: TABLE_ID, [`${step.id}-fields`]: '{"Name":"name"}' },
     mode: "public-form",
-    delegatedExecutor: { kind: "connector_runner", async execute() { calls += 1; return { ok: true, acknowledged: true, output: {} }; } },
+    delegatedExecutor: { kind: "connector_runner", async execute() { calls += 1; return { ok: true, acknowledged: true, output: { recordId: "rec12345678901234" } }; } },
   });
-  assert.equal(result.ok, false);
-  assert.equal(result.delivered, false);
-  assert.equal(calls, 0);
+  assert.equal(result.ok, true);
+  assert.equal(result.delivered, true);
+  assert.equal(calls, 1);
 });
 
 test("D3.2 connection actions remain authenticated, owner-scoped, exact-provider scoped, and secret-free", async () => {

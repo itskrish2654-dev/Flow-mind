@@ -9,6 +9,7 @@ import { assertSelectedGoogleSpreadsheet } from "@/lib/connectors/google/selecte
 import { connectorConnectionIds, matchesOwnedConnectorConnection } from "@/lib/connectors/connection-matching";
 import {
   isDeferredCustomerAirtableConnection,
+  isVerifiedCustomerAirtableCreateRecordConnection,
   parseAirtableFieldMappings,
   validateAirtableDestinationIdentifiers,
 } from "@/lib/connectors/airtable/workflow-configuration";
@@ -28,6 +29,16 @@ export async function validateWorkflowConnectorConnections(input: { userId: stri
     const { data } = await admin.from("connector_connections").select("id,user_id,status,connector_id,provider_family,auth_type,granted_scopes,safe_metadata").eq("id", config.connectionId).eq("user_id", input.userId).eq("provider_family", registered.connector.manifest.providerFamily).in("connector_id", connectorConnectionIds(registered.connector.manifest)).maybeSingle();
     if (!data || !matchesOwnedConnectorConnection({ connection: data, authenticatedUserId: input.userId, connectionId: config.connectionId, manifest: registered.connector.manifest })) return `Reconnect ${registered.connector.manifest.displayName} to continue.`;
     const deferredAirtable = mode === "test" && config.connectorId === "airtable" && config.operationKind === "action" && config.operationKey === "create_record" && config.operationVersion === 1 && isDeferredCustomerAirtableConnection(data);
+    if (
+      mode === "production" &&
+      config.connectorId === "airtable" &&
+      config.operationKind === "action" &&
+      config.operationKey === "create_record" &&
+      config.operationVersion === 1 &&
+      !isVerifiedCustomerAirtableCreateRecordConnection(data)
+    ) {
+      return "This Airtable connection needs a successful test before this loop can be activated.";
+    }
     if (registered.operation.requiredScopes.some((scope) => !data.granted_scopes.includes(scope)) && !deferredAirtable) return `CrazyLoops needs additional ${registered.connector.manifest.displayName} permission for this workflow.`;
     if (config.connectorId === "airtable") {
       try {

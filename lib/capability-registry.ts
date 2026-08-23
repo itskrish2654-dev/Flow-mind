@@ -561,9 +561,9 @@ export const CAPABILITY_REGISTRY = {
     ],
     credentialsRequired: true,
     availableInTest: true,
-    availableInProduction: false,
+    availableInProduction: true,
     limitations: [
-      "Early-access TEST execution only; production publication remains disabled.",
+      "LIVE execution requires an owned customer connection verified by a successful Airtable create-record test.",
       "Airtable create-record has no native idempotency key; ambiguous outcomes require manual verification.",
     ],
     aliases: ["create airtable record", "add to airtable", "save to airtable", "send to airtable"],

@@ -8,6 +8,8 @@ const MAX_FIELDS = 100;
 const MAX_FIELD_NAME_LENGTH = 100;
 const MAX_SOURCE_PATH_LENGTH = 200;
 
+export const AIRTABLE_CREATE_RECORD_SCOPE = "data.records:write";
+
 export type AirtableFieldMappings = Record<string, string>;
 
 export class AirtableWorkflowConfigurationError extends Error {
@@ -142,4 +144,27 @@ export function isDeferredCustomerAirtableConnection(input: {
     !Array.isArray(metadata) &&
     (metadata as Record<string, unknown>).connectionMode === "customer_api_key" &&
     (metadata as Record<string, unknown>).providerVerification === "deferred";
+}
+
+export function isVerifiedCustomerAirtableCreateRecordConnection(input: {
+  connector_id?: unknown;
+  provider_family?: unknown;
+  auth_type?: unknown;
+  status?: unknown;
+  granted_scopes?: unknown;
+  safe_metadata?: unknown;
+}) {
+  const metadata = input.safe_metadata;
+  return input.connector_id === "airtable" &&
+    input.provider_family === "airtable" &&
+    input.auth_type === "api_key" &&
+    input.status === "connected" &&
+    Array.isArray(input.granted_scopes) &&
+    input.granted_scopes.includes(AIRTABLE_CREATE_RECORD_SCOPE) &&
+    Boolean(metadata) &&
+    typeof metadata === "object" &&
+    !Array.isArray(metadata) &&
+    (metadata as Record<string, unknown>).connectionMode === "customer_api_key" &&
+    (metadata as Record<string, unknown>).providerVerification === "operation_verified" &&
+    (metadata as Record<string, unknown>).verifiedOperation === "airtable.create_record";
 }

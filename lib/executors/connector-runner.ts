@@ -1,5 +1,7 @@
 import "@/lib/server-only-runtime";
 
+import { getCapability } from "@/lib/capability-registry";
+
 import {
   CONNECTOR_RUNNER_MAX_REQUEST_BYTES,
   CONNECTOR_RUNNER_MAX_RESPONSE_BYTES,
@@ -254,10 +256,17 @@ export class ConnectorRunnerExecutor implements CapabilityExecutor {
     ) {
       return { ok: false, errorCategory: "DELEGATED_AUTH_FAILED", retryable: false };
     }
+    const capability = getCapability(request.envelope.capabilityId);
+    const modeAvailable = request.envelope.mode === "TEST"
+      ? capability?.availableInTest
+      : capability?.availableInProduction;
     if (
       !SUPPORTED_CAPABILITY_VERSIONS.has(
         `${request.envelope.capabilityId}@${request.envelope.capabilityVersion}`,
-      )
+      ) ||
+      !capability?.supported ||
+      !modeAvailable ||
+      capability.executorVersions?.[request.envelope.capabilityVersion] !== "connector_runner"
     ) {
       return {
         ok: false,

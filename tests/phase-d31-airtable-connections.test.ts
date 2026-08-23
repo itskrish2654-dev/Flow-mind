@@ -259,7 +259,7 @@ test("D3.1 connection safety remains intact after D3.2 test-only planner exposur
   assert.equal(capability.internalOnly, false);
   assert.equal(capability.plannerVisible, true);
   assert.equal(capability.availableInTest, true);
-  assert.equal(capability.availableInProduction, false);
+  assert.equal(capability.availableInProduction, true);
   const plan = planWorkflow("When an incoming webhook arrives, create a record in Airtable.");
   assert.equal(plan.status, "READY_TO_COMPILE");
   assert.equal(plan.destination?.capabilityId, "airtable.create_record");

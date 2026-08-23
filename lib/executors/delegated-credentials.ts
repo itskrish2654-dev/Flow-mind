@@ -3,7 +3,10 @@ import "@/lib/server-only-runtime";
 import { getCapability } from "@/lib/capability-registry";
 import { getConnector } from "@/lib/connectors/registry";
 import type { ConnectorOperation, RegisteredConnector } from "@/lib/connectors/types";
-import { isDeferredCustomerAirtableConnection } from "@/lib/connectors/airtable/workflow-configuration";
+import {
+  isDeferredCustomerAirtableConnection,
+  isVerifiedCustomerAirtableCreateRecordConnection,
+} from "@/lib/connectors/airtable/workflow-configuration";
 import { matchesConnectorManifest, matchesOwnedConnectionIdentity } from "@/lib/connectors/connection-matching";
 
 export const DELEGATED_CREDENTIAL_ERROR_CATEGORIES = [
@@ -170,6 +173,27 @@ export function createDelegatedCredentialResolver(
     }
     if (!matchesConnectorManifest(connection, connector.manifest) || connection.auth_type !== connector.manifest.auth.type) {
       throw new DelegatedCredentialError("DELEGATED_CREDENTIAL_CONNECTOR_MISMATCH");
+    }
+
+    const capability = getCapability(input.capabilityId);
+    if (
+      input.executionMode === "LIVE" &&
+      (!capability?.availableInProduction || !operation.production)
+    ) {
+      throw new DelegatedCredentialError("DELEGATED_CREDENTIAL_UNSUPPORTED");
+    }
+    if (
+      input.executionMode === "TEST" &&
+      (!capability?.availableInTest || !operation.testMode)
+    ) {
+      throw new DelegatedCredentialError("DELEGATED_CREDENTIAL_UNSUPPORTED");
+    }
+    if (
+      input.executionMode === "LIVE" &&
+      input.capabilityId === "airtable.create_record" &&
+      !isVerifiedCustomerAirtableCreateRecordConnection(connection)
+    ) {
+      throw new DelegatedCredentialError("DELEGATED_CREDENTIAL_SCOPE_MISSING");
     }
 
     const missingScope = operation.requiredScopes.some(

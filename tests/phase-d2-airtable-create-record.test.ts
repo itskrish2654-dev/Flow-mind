@@ -160,21 +160,22 @@ function withRunnerEnvironment<T>(run: () => Promise<T>): Promise<T> {
   });
 }
 
-test("D2 runner capability remains versioned and production-disabled while generic Airtable stays unsupported", () => {
+test("D2 runner capability remains versioned while generic Airtable stays unsupported", () => {
   assert.equal(CAPABILITY_REGISTRY.airtable.supported, false);
   const capability = CAPABILITY_REGISTRY["airtable.create_record"];
   assert.equal(capability.internalOnly, false);
   assert.equal(capability.plannerVisible, true);
   assert.equal(capability.availableInTest, true);
-  assert.equal(capability.availableInProduction, false);
+  assert.equal(capability.availableInProduction, true);
   assert.ok(capability.aliases.includes("create airtable record"));
   assert.equal(capability.executionImplementation, "connector:airtable/create_record@1");
   assert.deepEqual(capability.executorVersions, { 1: "connector_runner" });
-  assert.equal(assessCapability("airtable.create_record", "production").available, false);
-  assert.equal(listCustomerConnectors().some((item) => item.id === "airtable"), false);
+  assert.equal(assessCapability("airtable.create_record", "production").available, true);
+  assert.equal(listCustomerConnectors().some((item) => item.id === "airtable"), true);
   const operation = getConnector("airtable")?.manifest.actions[0];
   assert.equal(operation?.key, "create_record");
   assert.equal(operation?.executor, "connector_runner");
+  assert.equal(operation?.production, true);
   assert.deepEqual(operation?.requiredScopes, ["data.records:write"]);
 });
 

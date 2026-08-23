@@ -2,10 +2,13 @@ import "@/lib/server-only-runtime";
 
 import { matchesOwnedConnectorConnection } from "@/lib/connectors/connection-matching";
 import { getConnector } from "@/lib/connectors/registry";
-import { isValidAirtableRecordId } from "@/lib/connectors/airtable/workflow-configuration";
+import {
+  AIRTABLE_CREATE_RECORD_SCOPE,
+  isValidAirtableRecordId,
+} from "@/lib/connectors/airtable/workflow-configuration";
 import type { Json } from "@/lib/supabase/types";
 
-export const AIRTABLE_CREATE_RECORD_SCOPE = "data.records:write";
+export { AIRTABLE_CREATE_RECORD_SCOPE } from "@/lib/connectors/airtable/workflow-configuration";
 
 type ExecutionEvidence = {
   id: string;

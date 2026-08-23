@@ -351,13 +351,13 @@ test("D3.3 workflow and setup evidence contain no credential and tests use no re
   assert.doesNotMatch(source, /fetch\(|api\.airtable\.com/);
 });
 
-test("D3.3 Airtable remains TEST-only and generic Airtable remains unsupported", async () => {
+test("D3.3 Airtable acceptance evidence remains compatible with D3.4 LIVE enablement", async () => {
   const capability = CAPABILITY_REGISTRY["airtable.create_record"];
   assert.equal(capability.supported, true);
   assert.equal(capability.internalOnly, false);
   assert.equal(capability.plannerVisible, true);
   assert.equal(capability.availableInTest, true);
-  assert.equal(capability.availableInProduction, false);
+  assert.equal(capability.availableInProduction, true);
   assert.deepEqual(capability.executorVersions, { 1: "connector_runner" });
   assert.equal(CAPABILITY_REGISTRY.airtable.supported, false);
 
@@ -386,9 +386,9 @@ test("D3.3 Airtable remains TEST-only and generic Airtable remains unsupported",
       },
     },
   });
-  assert.equal(execution.ok, false);
-  assert.equal(execution.delivered, false);
-  assert.equal(calls, 0);
+  assert.equal(execution.ok, true);
+  assert.equal(execution.delivered, true);
+  assert.equal(calls, 1);
 });
 
 test("D3.3 controlled TEST runner gates are explicit and remain environment-owned", async () => {

@@ -477,16 +477,13 @@ export async function executeWorkflowSteps({
     if (executorSelection.kind !== "native") {
       const capability = getCapability(capabilityId);
       const internalAuthorized = Boolean(capability?.internalOnly && allowInternalCapabilities);
-      const customerTestAuthorized = Boolean(
+      const customerDelegatedAuthorized = Boolean(
         capability &&
-        capabilityId === "airtable.create_record" &&
         executorSelection.kind === "connector_runner" &&
         !capability.internalOnly &&
-        mode === "test" &&
-        capability.availableInTest &&
-        !capability.availableInProduction,
+        (mode === "test" ? capability.availableInTest : capability.availableInProduction),
       );
-      if (!internalAuthorized && !customerTestAuthorized) {
+      if (!internalAuthorized && !customerDelegatedAuthorized) {
         const error = new DelegatedExecutionError("DELEGATED_AUTH_FAILED", false);
         await fail(error.message, "failed", error, false);
         break;
@@ -524,9 +521,17 @@ export async function executeWorkflowSteps({
       const connectionId = step.config?.connector?.connectionId;
       if (capabilityId === "airtable.create_record" && !connectionId) {
         const error = new DelegatedExecutionError("DELEGATED_AUTH_FAILED", false);
-        await fail("Choose an Airtable connection before running this TEST.", "failed", error, false);
+        await fail(
+          mode === "test"
+            ? "Choose an Airtable connection before running this TEST."
+            : "Choose a verified Airtable connection before running this loop.",
+          "failed",
+          error,
+          false,
+        );
         break;
       }
+      const delegatedMode = mode === "test" ? "TEST" : "LIVE";
       const result = await executor.execute({
         authenticatedUserId: userId,
         workflowOwnerId,
@@ -544,7 +549,7 @@ export async function executeWorkflowSteps({
           stepId: step.id,
           capabilityId,
           capabilityVersion: executorSelection.capabilityVersion,
-          mode: mode === "test" ? "TEST" : "LIVE",
+          mode: delegatedMode,
           idempotencyKey: logicalIdempotencyKey,
           input: delegatedInput,
         },
@@ -568,7 +573,7 @@ export async function executeWorkflowSteps({
         delivered = true;
         await succeed(
           "Create Airtable record was acknowledged by Airtable.",
-          { provider: "airtable", operation: "create_record", acknowledged: true, mode: "TEST" },
+          { provider: "airtable", operation: "create_record", acknowledged: true, mode: delegatedMode },
           recordId,
         );
         providerAcknowledgements.push({

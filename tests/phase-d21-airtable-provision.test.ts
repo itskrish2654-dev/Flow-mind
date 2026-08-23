@@ -367,8 +367,8 @@ test("D2.1 customer isolation and accepted executor paths remain unchanged after
   assert.equal(capability.internalOnly, false);
   assert.equal(capability.plannerVisible, true);
   assert.equal(capability.availableInTest, true);
-  assert.equal(capability.availableInProduction, false);
-  assert.equal(listCustomerConnectors().some(({ id }) => id === "airtable"), false);
+  assert.equal(capability.availableInProduction, true);
+  assert.equal(listCustomerConnectors().some(({ id }) => id === "airtable"), true);
 
   const runner = readFileSync(join(process.cwd(), "services", "connector-runner", "src", "runner.mjs"), "utf8");
   const activepieces = readFileSync(join(process.cwd(), "lib", "executors", "activepieces.ts"), "utf8");
