@@ -424,7 +424,7 @@ function Inspector({
     const connectorId = step?.config?.connector?.connectorId;
     if (
       !connectorId ||
-      !["google_gmail", "google_sheets", "slack", "notion"].includes(
+      !["airtable", "google_gmail", "google_sheets", "slack", "notion"].includes(
         connectorId,
       )
     )
@@ -529,7 +529,7 @@ function Inspector({
         )}
         <div className="my-4 h-px bg-[#eee8de]" />
         {step.config?.connector &&
-          ["google_gmail", "google_sheets", "slack", "notion"].includes(
+          ["airtable", "google_gmail", "google_sheets", "slack", "notion"].includes(
             step.config.connector.connectorId,
           ) &&
           workflowId && (
@@ -539,7 +539,9 @@ function Inspector({
                   ? "Google account"
                   : step.config.connector.connectorId === "slack"
                     ? "Slack workspace"
-                    : "Notion workspace"}
+                    : step.config.connector.connectorId === "airtable"
+                      ? "Airtable connection"
+                      : "Notion workspace"}
               </p>
               <p className="mt-1 text-[9px] leading-4 text-slate-500">
                 Choose the exact account for this step. CrazyLoops never selects
@@ -580,17 +582,21 @@ function Inspector({
                       ? "Google"
                       : step.config.connector.connectorId === "slack"
                         ? "Slack"
-                        : "Notion"} needs to be connected.
+                        : step.config.connector.connectorId === "airtable"
+                          ? "Airtable"
+                          : "Notion"} needs to be connected.
                   </p>
                   <a
-                    href={`/api/connectors/oauth/${step.config.connector.connectorId}/start?operation=${step.config.connector.operationKey}&return=${encodeURIComponent(`/dashboard/projects/${workflowId}`)}`}
+                    href={step.config.connector.connectorId === "airtable" ? "/connections" : `/api/connectors/oauth/${step.config.connector.connectorId}/start?operation=${step.config.connector.operationKey}&return=${encodeURIComponent(`/dashboard/projects/${workflowId}`)}`}
                     className="mt-2 flex min-h-11 items-center justify-center rounded-lg border border-[#d7aa2f] bg-white text-[10px] font-semibold text-[#6f5100] hover:bg-[#fffaf0]"
                   >
                     Connect {step.config.connector.connectorId.startsWith("google_")
                       ? "Google"
                       : step.config.connector.connectorId === "slack"
                         ? "Slack"
-                        : "Notion"} <ArrowRight className="ml-1.5 size-3" aria-hidden="true" />
+                        : step.config.connector.connectorId === "airtable"
+                          ? "Airtable"
+                          : "Notion"} <ArrowRight className="ml-1.5 size-3" aria-hidden="true" />
                   </a>
                 </div>
               )}
@@ -599,12 +605,14 @@ function Inspector({
                   <p role="alert" className="mt-2 text-[9px] text-rose-700">
                     {connectorConnectionMessage}
                   </p>
-                  <a
-                    href={`/api/connectors/oauth/${step.config.connector.connectorId}/start?operation=${step.config.connector.operationKey}&connection=${pendingConnectionId ?? step.config.connector.connectionId ?? ""}&return=${encodeURIComponent(`/dashboard/projects/${workflowId}`)}`}
-                    className="mt-2 block text-[9px] font-semibold text-[#795700]"
-                  >
-                    Approve the additional permission
-                  </a>
+                  {step.config.connector.connectorId !== "airtable" && (
+                    <a
+                      href={`/api/connectors/oauth/${step.config.connector.connectorId}/start?operation=${step.config.connector.operationKey}&connection=${pendingConnectionId ?? step.config.connector.connectionId ?? ""}&return=${encodeURIComponent(`/dashboard/projects/${workflowId}`)}`}
+                      className="mt-2 block text-[9px] font-semibold text-[#795700]"
+                    >
+                      Approve the additional permission
+                    </a>
+                  )}
                 </>
               )}
             </div>
@@ -1070,6 +1078,16 @@ function Inspector({
                               </option>
                             ))}
                           </select>
+                        ) : step.config?.connector?.connectorId === "airtable" && input.key === "fields" ? (
+                          <textarea
+                            id={id}
+                            value={value}
+                            onChange={(event) => onChange(id, event.target.value)}
+                            placeholder={'{\n  "Name": "name",\n  "Email": "email"\n}'}
+                            rows={6}
+                            spellCheck={false}
+                            className="w-full resize-y rounded-lg border border-[#ded6ca] bg-[#f8f4ec] px-3 py-2 font-mono text-[10px] text-slate-800 outline-none placeholder:text-slate-400 focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200"
+                          />
                         ) : step.capabilityId === "http.request" && ["query_parameters", "request_headers", "json_body"].includes(input.key) ? (
                           <textarea
                             id={id}

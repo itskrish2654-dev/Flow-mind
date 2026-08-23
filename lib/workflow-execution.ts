@@ -12,6 +12,7 @@ import { getConnectorOperation } from "@/lib/connectors/registry";
 import { ConnectorError } from "@/lib/connectors/errors";
 import type { ConnectorActionHandler } from "@/lib/connectors/types";
 import { applyFieldMappings, resolveMappingSource, type FieldMapping, type MappingSource } from "@/lib/connectors/mapping";
+import { buildAirtableCreateRecordInput } from "@/lib/connectors/airtable/workflow-configuration";
 import { executeFormatter, FormatterError, type FormatterSource } from "@/lib/formatter";
 import {
   generatePdfBuffer,
@@ -466,7 +467,17 @@ export async function executeWorkflowSteps({
 
     if (executorSelection.kind !== "native") {
       const capability = getCapability(capabilityId);
-      if (!capability?.internalOnly || !allowInternalCapabilities) {
+      const internalAuthorized = Boolean(capability?.internalOnly && allowInternalCapabilities);
+      const customerTestAuthorized = Boolean(
+        capability &&
+        capabilityId === "airtable.create_record" &&
+        executorSelection.kind === "connector_runner" &&
+        !capability.internalOnly &&
+        mode === "test" &&
+        capability.availableInTest &&
+        !capability.availableInProduction,
+      );
+      if (!internalAuthorized && !customerTestAuthorized) {
         const error = new DelegatedExecutionError("DELEGATED_AUTH_FAILED", false);
         await fail(error.message, "failed", error, false);
         break;
@@ -483,9 +494,39 @@ export async function executeWorkflowSteps({
         break;
       }
       const logicalIdempotencyKey = `${idempotencyKey ?? telemetryExecutionId}:${step.id}:v${executorSelection.capabilityVersion}`;
+      let delegatedInput: Record<string, unknown>;
+      try {
+        delegatedInput = capabilityId === "internal.bridge_echo"
+          ? { message: inputValues.message ?? "" }
+          : capabilityId === "internal.connector_runner_canary"
+            ? { simulation: inputValues.simulation ?? "success" }
+            : capabilityId === "airtable.create_record"
+              ? buildAirtableCreateRecordInput({
+                  baseId: inputValues[`${step.id}-baseId`] ?? "",
+                  tableId: inputValues[`${step.id}-tableId`] ?? "",
+                  fieldMappings: inputValues[`${step.id}-fields`] ?? "",
+                  workflowValues: { ...triggerContext, ...variables, steps: connectorStepOutputs },
+                })
+              : {};
+      } catch (error) {
+        await fail(error instanceof Error ? error.message : "This connector setup is invalid.", "failed", error, false);
+        break;
+      }
+      const connectionId = step.config?.connector?.connectionId;
+      if (capabilityId === "airtable.create_record" && !connectionId) {
+        const error = new DelegatedExecutionError("DELEGATED_AUTH_FAILED", false);
+        await fail("Choose an Airtable connection before running this TEST.", "failed", error, false);
+        break;
+      }
       const result = await executor.execute({
         authenticatedUserId: userId,
         workflowOwnerId,
+        ...(connectionId && step.config?.connector ? {
+          credentialReference: {
+            connectionId,
+            connectorId: step.config.connector.connectorId,
+          },
+        } : {}),
         envelope: {
           protocolVersion: 1,
           requestId: randomUUID(),
@@ -496,22 +537,29 @@ export async function executeWorkflowSteps({
           capabilityVersion: executorSelection.capabilityVersion,
           mode: mode === "test" ? "TEST" : "LIVE",
           idempotencyKey: logicalIdempotencyKey,
-          input: capabilityId === "internal.bridge_echo"
-            ? { message: inputValues.message ?? "" }
-            : capabilityId === "internal.connector_runner_canary"
-              ? { simulation: inputValues.simulation ?? "success" }
-              : {},
+          input: delegatedInput,
         },
       });
       if (!result.ok) {
-        const error = new DelegatedExecutionError(result.errorCategory, result.retryable);
-        await fail(error.message, "failed", error, result.retryable);
+        const retryable = capabilityId === "airtable.create_record" ? false : result.retryable;
+        const error = new DelegatedExecutionError(result.errorCategory, retryable);
+        await fail(error.message, "failed", error, retryable);
         break;
       }
       connectorStepOutputs[step.id] = result.output;
       variables[step.id] = result.output;
       for (const [key, value] of Object.entries(result.output)) variables[key] = value;
-      await succeed("This step completed.");
+      if (capabilityId === "airtable.create_record") {
+        const recordId = typeof result.output.recordId === "string" ? result.output.recordId : null;
+        delivered = true;
+        await succeed(
+          "Create Airtable record was acknowledged by Airtable.",
+          { provider: "airtable", operation: "create_record", acknowledged: true },
+          recordId,
+        );
+      } else {
+        await succeed("This step completed.");
+      }
       continue;
     }
 

@@ -111,6 +111,7 @@ export async function runTestWorkflow(
     if (validationError) return { ok: false, error: validationError };
     const connectorReadiness = await validateWorkflowConnectorConnections({
       userId: auth.user.id,
+      mode: "test",
       setupConfig: request.data.inputValues,
       steps: savedWorkflow.data.steps,
     });

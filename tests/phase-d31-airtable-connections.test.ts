@@ -251,16 +251,16 @@ test("D3.1 database boundary enforces one active Airtable connection per owner",
   assert.match(migration, /status <> 'revoked'/);
 });
 
-test("D3.1 does not product-enable Airtable execution or planner generation", () => {
+test("D3.1 connection safety remains intact after D3.2 test-only planner exposure", () => {
   assert.equal(CAPABILITY_REGISTRY.airtable.supported, false);
   const capability = CAPABILITY_REGISTRY["airtable.create_record"];
   assert.equal(capability.supported, true);
   assert.deepEqual(capability.executorVersions, { 1: "connector_runner" });
-  assert.equal(capability.internalOnly, true);
-  assert.equal(capability.plannerVisible, false);
+  assert.equal(capability.internalOnly, false);
+  assert.equal(capability.plannerVisible, true);
   assert.equal(capability.availableInTest, true);
   assert.equal(capability.availableInProduction, false);
   const plan = planWorkflow("When an incoming webhook arrives, create a record in Airtable.");
-  assert.equal(plan.status, "UNSUPPORTED");
-  assert.deepEqual(plan.requestedUnsupportedCapabilities.map((item) => item.capabilityId), ["airtable"]);
+  assert.equal(plan.status, "READY_TO_COMPILE");
+  assert.equal(plan.destination?.capabilityId, "airtable.create_record");
 });

@@ -361,11 +361,12 @@ test("D2.2 cleanup implementation constrains DELETE and verifies revoke fallback
   assert.doesNotMatch(source, /captureOperationalEvent|operational_events|console\./);
 });
 
-test("D2.1 customer isolation and accepted executor paths remain unchanged", () => {
+test("D2.1 customer isolation and accepted executor paths remain unchanged after D3.2 test-only planning", () => {
   assert.equal(CAPABILITY_REGISTRY.airtable.supported, false);
   const capability = CAPABILITY_REGISTRY["airtable.create_record"];
-  assert.equal(capability.internalOnly, true);
-  assert.equal(capability.plannerVisible, false);
+  assert.equal(capability.internalOnly, false);
+  assert.equal(capability.plannerVisible, true);
+  assert.equal(capability.availableInTest, true);
   assert.equal(capability.availableInProduction, false);
   assert.equal(listCustomerConnectors().some(({ id }) => id === "airtable"), false);
 

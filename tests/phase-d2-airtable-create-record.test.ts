@@ -160,14 +160,14 @@ function withRunnerEnvironment<T>(run: () => Promise<T>): Promise<T> {
   });
 }
 
-test("D2 capability and manifest remain internal while generic Airtable stays unsupported", () => {
+test("D2 runner capability remains versioned and production-disabled while generic Airtable stays unsupported", () => {
   assert.equal(CAPABILITY_REGISTRY.airtable.supported, false);
   const capability = CAPABILITY_REGISTRY["airtable.create_record"];
-  assert.equal(capability.internalOnly, true);
-  assert.equal(capability.plannerVisible, false);
+  assert.equal(capability.internalOnly, false);
+  assert.equal(capability.plannerVisible, true);
   assert.equal(capability.availableInTest, true);
   assert.equal(capability.availableInProduction, false);
-  assert.deepEqual(capability.aliases, []);
+  assert.ok(capability.aliases.includes("create airtable record"));
   assert.equal(capability.executionImplementation, "connector:airtable/create_record@1");
   assert.deepEqual(capability.executorVersions, { 1: "connector_runner" });
   assert.equal(assessCapability("airtable.create_record", "production").available, false);

@@ -31,8 +31,13 @@ test("D1 credential ownership and vault boundary remain the source of truth", ()
     join(root, "lib", "executors", "delegated-credentials.ts"),
     "utf8",
   );
+  const matchingSource = readFileSync(
+    join(root, "lib", "connectors", "connection-matching.ts"),
+    "utf8",
+  );
   assert.match(source, /input\.authenticatedUserId !== input\.workflowOwnerId/);
-  assert.match(source, /connection\.user_id !== input\.authenticatedUserId/);
+  assert.match(source, /matchesOwnedConnectionIdentity/);
+  assert.match(matchingSource, /connection\.user_id === authenticatedUserId/);
   assert.match(source, /connection-vault/);
   assert.doesNotMatch(source, /delegated-capsule/);
 });

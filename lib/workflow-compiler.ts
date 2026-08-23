@@ -121,6 +121,27 @@ function destinationStep(
       : [{ key: "dataSourceId", label: "Notion data source", type: "text" as const }, { key: "pageId", label: "Exact Notion item", type: "text" as const }];
     return { id, type: "connector_action", capabilityId, title: destination.displayName, description: operationKey === "create_page" ? "Creates a page under the selected shared Notion page." : operationKey === "create_data_source_item" ? "Adds one item using the selected Notion data source." : "Updates one exact Notion item.", inputsRequired, config: connectorConfig({ connectorId: "notion", operationKind: "action", operationKey, operationVersion: 1, mappings: [...(operationKey === "create_data_source_item" ? [{ target: "values", source: { kind: "trigger" as const, path: "" } }] : []), ...(operationKey === "update_item" && findStep ? [{ target: "pageId", source: { kind: "step" as const, stepId: findStep.id, path: "page.id" } }] : []), ...(operationKey === "create_page" && aiStep ? [{ target: "content", source: { kind: "ai" as const, stepId: aiStep.id } }] : [])] }, branch) };
   }
+  if (capabilityId === "airtable.create_record") {
+    return {
+      id,
+      type: "connector_action",
+      capabilityId,
+      title: destination.displayName,
+      description: "Creates exactly one record in the configured Airtable base and table during a TEST run.",
+      inputsRequired: [
+        { key: "baseId", label: "Airtable Base ID", type: "text", helpText: "Starts with app and is copied from Airtable's API documentation." },
+        { key: "tableId", label: "Airtable Table ID", type: "text", helpText: "Starts with tbl and identifies the exact destination table." },
+        { key: "fields", label: "Field mapping (JSON)", type: "text", helpText: 'Map Airtable field names to workflow value paths, for example {"Name":"name","Email":"email"}.' },
+      ],
+      config: connectorConfig({
+        connectorId: "airtable",
+        operationKind: "action",
+        operationKey: "create_record",
+        operationVersion: 1,
+        mappings: [],
+      }, branch),
+    };
+  }
   if (capabilityId === "generic_http_action") {
     const endpoint = prompt.match(/https:\/\/[^\s)\]]+/i)?.[0];
     return { id, type: "http_request", capabilityId, title: "Send HTTP request", description: "Posts the workflow result as JSON and waits for acknowledgement.", config: { ...(endpoint ? { endpoint } : {}), method: "POST", ...(branch ? { branch } : {}), connector: { connectorId: "flowmind_http", operationKind: "action", operationKey: "post_json", operationVersion: 1, mappings: [{ target: "url", source: { kind: "literal", value: endpoint ?? "" } }, { target: "body", source: { kind: "trigger", path: "" } }] } } };

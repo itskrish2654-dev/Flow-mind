@@ -2,6 +2,8 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { revokeConnection } from "@/lib/connectors/connection-vault";
+import { isDeferredCustomerAirtableConnection } from "@/lib/connectors/airtable/workflow-configuration";
+import { connectorConnectionIds, matchesOwnedConnectorConnection } from "@/lib/connectors/connection-matching";
 import { getConnectorOperation } from "@/lib/connectors/registry";
 import { inspectGoogleSpreadsheet } from "@/lib/connectors/google/sheets";
 import {
@@ -41,11 +43,13 @@ export async function getGoogleConnectionOptions() {
 }
 
 export async function getConnectorConnectionOptions(providerFamily: string) {
-  const provider = z.enum(["google", "slack", "notion"]).safeParse(providerFamily);
+  const provider = z.enum(["airtable", "google", "slack", "notion"]).safeParse(providerFamily);
   if (!provider.success) return { ok: false as const, error: "Connector provider is invalid.", connections: [] };
   const supabase = await createClient(); const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { ok: false as const, error: "Unauthorized", connections: [] };
-  const { data, error } = await createAdminClient().from("connector_connections").select("id,external_account_label,external_account_id,status,granted_scopes").eq("user_id", user.id).eq("provider_family", provider.data).neq("status", "revoked").order("created_at", { ascending: true });
+  let query = createAdminClient().from("connector_connections").select("id,external_account_label,external_account_id,status,granted_scopes").eq("user_id", user.id).eq("provider_family", provider.data).neq("status", "revoked");
+  if (provider.data === "airtable") query = query.eq("connector_id", "airtable");
+  const { data, error } = await query.order("created_at", { ascending: true });
   if (error) return { ok: false as const, error: "Connections could not be loaded.", connections: [] };
   return { ok: true as const, connections: (data ?? []).map((item) => ({ id: item.id, label: item.external_account_label ?? item.external_account_id, status: item.status, scopes: item.granted_scopes })) };
 }
@@ -84,10 +88,15 @@ export async function configureConnectorWorkflowStep(workflowId: string, stepId:
   if (index < 0 || !connector) return { ok: false as const, error: "This is not a connector step." };
   const registered = getConnectorOperation(connector.connectorId, connector.operationKind, connector.operationKey, connector.operationVersion);
   if (!registered) return { ok: false as const, error: "Connector operation is unavailable." };
-  const { data: connection } = await admin.from("connector_connections").select("id,status,provider_family,granted_scopes").eq("id", request.data.connectionId).eq("user_id", user.id).eq("provider_family", registered.connector.manifest.providerFamily).maybeSingle();
-  if (!connection || connection.status !== "connected") return { ok: false as const, error: `Reconnect ${registered.connector.manifest.displayName} to continue.` };
+  const { data: connection } = await admin.from("connector_connections").select("id,user_id,status,connector_id,provider_family,auth_type,granted_scopes,safe_metadata").eq("id", request.data.connectionId).eq("user_id", user.id).eq("provider_family", registered.connector.manifest.providerFamily).in("connector_id", connectorConnectionIds(registered.connector.manifest)).maybeSingle();
+  if (!connection || !matchesOwnedConnectorConnection({ connection, authenticatedUserId: user.id, connectionId: request.data.connectionId, manifest: registered.connector.manifest })) return { ok: false as const, error: `Reconnect ${registered.connector.manifest.displayName} to continue.` };
   const missing = registered.operation.requiredScopes.filter((scope) => !connection.granted_scopes.includes(scope));
-  if (missing.length) return { ok: false as const, error: `CrazyLoops needs additional ${registered.connector.manifest.displayName} permission for this workflow.`, additionalScopes: missing };
+  const deferredAirtable = connector.connectorId === "airtable" &&
+    connector.operationKind === "action" &&
+    connector.operationKey === "create_record" &&
+    connector.operationVersion === 1 &&
+    isDeferredCustomerAirtableConnection(connection);
+  if (missing.length && !deferredAirtable) return { ok: false as const, error: `CrazyLoops needs additional ${registered.connector.manifest.displayName} permission for this workflow.`, additionalScopes: missing };
   const workflow = structuredClone(parsed.data); workflow.steps[index] = { ...workflow.steps[index], config: { ...workflow.steps[index].config, connector: { ...connector, connectionId: connection.id } } };
   const setupConfig = { ...snapshot.setupConfig };
   if (connector.connectorId === "google_sheets") {

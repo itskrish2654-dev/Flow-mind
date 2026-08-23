@@ -3,6 +3,8 @@ import "@/lib/server-only-runtime";
 import { getCapability } from "@/lib/capability-registry";
 import { getConnector } from "@/lib/connectors/registry";
 import type { ConnectorOperation, RegisteredConnector } from "@/lib/connectors/types";
+import { isDeferredCustomerAirtableConnection } from "@/lib/connectors/airtable/workflow-configuration";
+import { matchesConnectorManifest, matchesOwnedConnectionIdentity } from "@/lib/connectors/connection-matching";
 
 export const DELEGATED_CREDENTIAL_ERROR_CATEGORIES = [
   "DELEGATED_CREDENTIAL_AUTH_FAILED",
@@ -36,6 +38,7 @@ export type ResolveDelegatedCredentialInput = {
   connectionId: string;
   connectorId: string;
   capabilityId: string;
+  executionMode?: "TEST" | "LIVE";
 };
 
 type ConnectionRecord = {
@@ -46,6 +49,7 @@ type ConnectionRecord = {
   auth_type: "none" | "api_key" | "oauth2";
   status: "connected" | "expired" | "revoked" | "error";
   granted_scopes: string[];
+  safe_metadata?: unknown;
 };
 
 type StoredConnectionCredential = {
@@ -123,7 +127,7 @@ const defaultDependencies: DelegatedCredentialResolverDependencies = {
     const { createAdminClient } = await import("@/lib/supabase/admin");
     const { data, error } = await createAdminClient()
       .from("connector_connections")
-      .select("id,user_id,connector_id,provider_family,auth_type,status,granted_scopes")
+      .select("id,user_id,connector_id,provider_family,auth_type,status,granted_scopes,safe_metadata")
       .eq("id", connectionId)
       .eq("user_id", userId)
       .maybeSingle();
@@ -157,27 +161,27 @@ export function createDelegatedCredentialResolver(
       userId: input.authenticatedUserId,
       connectionId: input.connectionId,
     });
-    if (
-      !connection ||
-      connection.id !== input.connectionId ||
-      connection.user_id !== input.authenticatedUserId ||
-      connection.status !== "connected"
-    ) {
+    if (!connection || !matchesOwnedConnectionIdentity({
+      connection,
+      authenticatedUserId: input.authenticatedUserId,
+      connectionId: input.connectionId,
+    })) {
       throw new DelegatedCredentialError("DELEGATED_CREDENTIAL_CONNECTION_UNAVAILABLE");
     }
-
-    const providerMatches = connection.provider_family === connector.manifest.providerFamily;
-    const connectorMatches =
-      connection.connector_id === connector.manifest.id ||
-      connection.connector_id === connector.manifest.providerFamily;
-    if (!providerMatches || !connectorMatches || connection.auth_type !== connector.manifest.auth.type) {
+    if (!matchesConnectorManifest(connection, connector.manifest) || connection.auth_type !== connector.manifest.auth.type) {
       throw new DelegatedCredentialError("DELEGATED_CREDENTIAL_CONNECTOR_MISMATCH");
     }
 
     const missingScope = operation.requiredScopes.some(
       (scope) => !connection.granted_scopes.includes(scope),
     );
-    if (missingScope) {
+    const deferredAirtable = input.executionMode === "TEST" &&
+      input.capabilityId === "airtable.create_record" &&
+      input.connectorId === "airtable" &&
+      operation.key === "create_record" &&
+      operation.version === 1 &&
+      isDeferredCustomerAirtableConnection(connection);
+    if (missingScope && !deferredAirtable) {
       throw new DelegatedCredentialError("DELEGATED_CREDENTIAL_SCOPE_MISSING");
     }
 

@@ -6,21 +6,40 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { activateGmailWatch, stopGmailWatch } from "@/lib/connectors/google/gmail-push";
 import { getConnectorOperation } from "@/lib/connectors/registry";
 import { assertSelectedGoogleSpreadsheet } from "@/lib/connectors/google/selected-spreadsheets";
+import { connectorConnectionIds, matchesOwnedConnectorConnection } from "@/lib/connectors/connection-matching";
+import {
+  isDeferredCustomerAirtableConnection,
+  parseAirtableFieldMappings,
+  validateAirtableDestinationIdentifiers,
+} from "@/lib/connectors/airtable/workflow-configuration";
 import { getSiteOrigin } from "@/lib/site-origin";
 import type { Json } from "@/lib/supabase/types";
 
-export async function validateWorkflowConnectorConnections(input: { userId: string; setupConfig?: Record<string, string>; steps: Array<{ id?: string; config?: { connector?: { connectorId: string; operationKind: "trigger" | "action"; operationKey: string; operationVersion: number; connectionId?: string } } }> }) {
+export async function validateWorkflowConnectorConnections(input: { userId: string; mode?: "test" | "production"; setupConfig?: Record<string, string>; steps: Array<{ id?: string; config?: { connector?: { connectorId: string; operationKind: "trigger" | "action"; operationKey: string; operationVersion: number; connectionId?: string } } }> }) {
   const admin = createAdminClient();
+  const mode = input.mode ?? "production";
   for (const step of input.steps) {
     const config = step.config?.connector;
     if (!config) continue;
     const registered = getConnectorOperation(config.connectorId, config.operationKind, config.operationKey, config.operationVersion);
-    if (!registered || !registered.operation.production) return "This connector operation is unavailable in production.";
+    if (!registered || (mode === "test" ? !registered.operation.testMode : !registered.operation.production)) return `This connector operation is unavailable in ${mode}.`;
     if (!registered.operation.connectionRequired) continue;
     if (!config.connectionId) return `Choose an account for ${registered.connector.manifest.displayName}.`;
-    const { data } = await admin.from("connector_connections").select("id,status,provider_family,granted_scopes").eq("id", config.connectionId).eq("user_id", input.userId).eq("provider_family", registered.connector.manifest.providerFamily).maybeSingle();
-    if (!data || data.status !== "connected") return `Reconnect ${registered.connector.manifest.displayName} to continue.`;
-    if (registered.operation.requiredScopes.some((scope) => !data.granted_scopes.includes(scope))) return `CrazyLoops needs additional ${registered.connector.manifest.displayName} permission for this workflow.`;
+    const { data } = await admin.from("connector_connections").select("id,user_id,status,connector_id,provider_family,auth_type,granted_scopes,safe_metadata").eq("id", config.connectionId).eq("user_id", input.userId).eq("provider_family", registered.connector.manifest.providerFamily).in("connector_id", connectorConnectionIds(registered.connector.manifest)).maybeSingle();
+    if (!data || !matchesOwnedConnectorConnection({ connection: data, authenticatedUserId: input.userId, connectionId: config.connectionId, manifest: registered.connector.manifest })) return `Reconnect ${registered.connector.manifest.displayName} to continue.`;
+    const deferredAirtable = mode === "test" && config.connectorId === "airtable" && config.operationKind === "action" && config.operationKey === "create_record" && config.operationVersion === 1 && isDeferredCustomerAirtableConnection(data);
+    if (registered.operation.requiredScopes.some((scope) => !data.granted_scopes.includes(scope)) && !deferredAirtable) return `CrazyLoops needs additional ${registered.connector.manifest.displayName} permission for this workflow.`;
+    if (config.connectorId === "airtable") {
+      try {
+        validateAirtableDestinationIdentifiers(
+          input.setupConfig?.[`${step.id ?? ""}-baseId`] ?? "",
+          input.setupConfig?.[`${step.id ?? ""}-tableId`] ?? "",
+        );
+        parseAirtableFieldMappings(input.setupConfig?.[`${step.id ?? ""}-fields`] ?? "");
+      } catch (error) {
+        return error instanceof Error ? error.message : "Airtable setup is invalid.";
+      }
+    }
     if (config.connectorId === "google_sheets") {
       const spreadsheetId = input.setupConfig?.[`${step.id ?? ""}-spreadsheetId`];
       if (!spreadsheetId) return "Choose a spreadsheet through Google Picker.";

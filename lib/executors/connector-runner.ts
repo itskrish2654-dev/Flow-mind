@@ -204,6 +204,7 @@ async function defaultCredentialResolver(
     connectionId: reference.connectionId,
     connectorId: reference.connectorId,
     capabilityId: request.envelope.capabilityId,
+    executionMode: request.envelope.mode,
   });
   return Buffer.from(credential.value, "utf8");
 }

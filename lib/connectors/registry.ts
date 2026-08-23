@@ -132,8 +132,8 @@ const internalTestManifest: ConnectorManifest = {
 const internalAirtableManifest: ConnectorManifest = {
   id: "airtable",
   providerFamily: "airtable",
-  displayName: "Airtable internal acceptance",
-  description: "Internal-only create-record capability executed by the isolated connector runner.",
+  displayName: "Airtable",
+  description: "Creates one record through the isolated connector runner during an explicit TEST run.",
   status: "INTERNAL",
   version: 1,
   auth: {
@@ -162,7 +162,7 @@ const internalAirtableManifest: ConnectorManifest = {
     executor: "connector_runner",
   }],
   limitations: [
-    "Internal controlled acceptance only; no customer connection or planner support.",
+    "Early-access TEST execution only; production publication remains disabled.",
     "Airtable create-record does not provide a native idempotency key.",
   ],
   documentationUrl: "https://airtable.com/developers/web/api/create-records",
