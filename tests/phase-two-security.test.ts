@@ -26,6 +26,9 @@ const rateLimitClockMigration = source(
 const ownershipMigration = source(
   "supabase/migrations/20260807000100_workflow_ownership_rls.sql",
 );
+const activeDraftMigration = source(
+  "supabase/migrations/20260823000100_d34b1_active_draft_publication.sql",
+);
 const executionAction = source("app/actions/execute.ts");
 const publicAction = source("app/f/[projectId]/actions.ts");
 const workflowAction = source("app/actions/workflow.ts");
@@ -207,12 +210,13 @@ test("17. new workflows are unpublished by database and server write defaults", 
 test("18. explicit owner publish enables only production-valid hosted forms", () => {
   assert.match(workflowAction, /export async function setWorkflowPublication/);
   assert.match(workflowAction, /assessWorkflowCapabilities\(workflow\.data\.steps, "production"\)/);
-  assert.match(workflowAction, /public_form_enabled: publish/);
+  assert.match(workflowAction, /admin\.rpc\("publish_workflow_version"/);
+  assert.match(activeDraftMigration, /set published_version_id = v_current_version_id,[\s\S]*public_form_enabled = true/i);
 });
 
 test("19. unpublish revokes anonymous form lookup immediately", () => {
-  assert.match(phaseTwoMigration, /where workflow\.id = p_workflow_id[\s\S]*workflow\.public_form_enabled/i);
-  assert.match(workflowAction, /published_at: publish \? new Date\(\)\.toISOString\(\) : null/);
+  assert.match(activeDraftMigration, /where workflow\.id = p_workflow_id[\s\S]*workflow\.public_form_enabled/i);
+  assert.match(activeDraftMigration, /if not p_publish then[\s\S]*public_form_enabled = false,[\s\S]*published_at = null/i);
 });
 
 test("20. generated documents use a private bounded PDF-only bucket", () => {

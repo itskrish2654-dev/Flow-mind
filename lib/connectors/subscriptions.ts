@@ -89,42 +89,89 @@ function providerWebhookUrl(provider: "google_gmail" | "slack" | "notion") {
   return `${siteUrl}/api/connectors/events/${provider}`;
 }
 
-export async function activateWorkflowConnectorSubscriptions(input: { userId: string; workflowId: string; workflowVersionId: string; setupConfig?: Record<string, string>; steps: Array<{ id?: string; config?: { connector?: { connectorId: string; operationKind: "trigger" | "action"; operationKey: string; operationVersion: number; connectionId?: string; settings?: Record<string, unknown> } } }> }) {
+export async function prepareWorkflowConnectorPublication(input: { userId: string; workflowId: string; workflowVersionId: string; setupConfig?: Record<string, string>; steps: Array<{ id?: string; config?: { connector?: { connectorId: string; operationKind: "trigger" | "action"; operationKey: string; operationVersion: number; connectionId?: string; settings?: Record<string, unknown> } } }> }) {
   const admin = createAdminClient();
-  await admin.from("connector_subscriptions").update({ status: "revoked", updated_at: new Date().toISOString() }).eq("workflow_id", input.workflowId).eq("user_id", input.userId).eq("status", "active");
   const triggers = input.steps.flatMap((step) => step.config?.connector?.operationKind === "trigger" ? [{ ...step.config.connector, stepId: step.id ?? "" }] : []);
-  const created: Array<{ id: string; url: string }> = [];
+  const { data: existing, error: existingError } = await admin
+    .from("connector_subscriptions")
+    .select("id,connector_id,operation_key")
+    .eq("workflow_id", input.workflowId)
+    .eq("workflow_version_id", input.workflowVersionId)
+    .eq("user_id", input.userId);
+  if (existingError) throw new Error("Connector publication could not be prepared.");
+  const existingIds = new Map((existing ?? []).map((subscription) => [`${subscription.connector_id}:${subscription.operation_key}`, subscription.id]));
+  const preparedTriggers = triggers.map((trigger) => {
+    const runtimeSettings = {
+      ...(trigger.settings ?? {}),
+      ...Object.fromEntries(Object.entries(input.setupConfig ?? {}).flatMap(([key, value]) => key.startsWith(`${trigger.stepId}-`) && value ? [[key.slice(trigger.stepId.length + 1), value]] : [])),
+    };
+    if (trigger.connectorId === "google_gmail" && !trigger.connectionId) throw new Error("Choose a Google account before activating Gmail.");
+    if (trigger.connectorId === "slack" && !String(runtimeSettings.channel ?? runtimeSettings.channelId ?? "").trim()) throw new Error("Choose a Slack channel before activating this workflow.");
+    if (trigger.connectorId === "notion" && !String(runtimeSettings.resourceId ?? runtimeSettings.pageId ?? runtimeSettings.dataSourceId ?? "").trim()) throw new Error("Choose a Notion page or data source before activating this workflow.");
+    const id = existingIds.get(`${trigger.connectorId}:${trigger.operationKey}`) ?? randomUUID();
+    const token = connectorEndpointToken(id);
+    return {
+      ...trigger,
+      id,
+      runtimeSettings,
+      endpointTokenHash: createHash("sha256").update(token).digest("hex"),
+      url: trigger.connectorId === "google_gmail" || trigger.connectorId === "slack" || trigger.connectorId === "notion" ? providerWebhookUrl(trigger.connectorId) : connectorWebhookUrl(id),
+    };
+  });
+  const gmailWatches = new Map<string, Awaited<ReturnType<typeof activateGmailWatch>>>();
+  const gmailConnectionIds = Array.from(new Set(preparedTriggers.filter((trigger) => trigger.connectorId === "google_gmail").flatMap((trigger) => trigger.connectionId ? [trigger.connectionId] : [])));
   try {
-    for (const trigger of triggers) {
-      const runtimeSettings = {
-        ...(trigger.settings ?? {}),
-        ...Object.fromEntries(Object.entries(input.setupConfig ?? {}).flatMap(([key, value]) => key.startsWith(`${trigger.stepId}-`) && value ? [[key.slice(trigger.stepId.length + 1), value]] : [])),
-      };
-      if (trigger.connectorId === "google_gmail" && !trigger.connectionId) throw new Error("Choose a Google account before activating Gmail.");
-      if (trigger.connectorId === "slack" && !String(runtimeSettings.channel ?? runtimeSettings.channelId ?? "").trim()) throw new Error("Choose a Slack channel before activating this workflow.");
-      if (trigger.connectorId === "notion" && !String(runtimeSettings.resourceId ?? runtimeSettings.pageId ?? runtimeSettings.dataSourceId ?? "").trim()) throw new Error("Choose a Notion page or data source before activating this workflow.");
-      const id = randomUUID();
-      const token = connectorEndpointToken(id);
-      const { error } = await admin.from("connector_subscriptions").insert({
-        id, user_id: input.userId, workflow_id: input.workflowId, workflow_version_id: input.workflowVersionId,
-        ...(trigger.connectionId ? { connection_id: trigger.connectionId } : {}), connector_id: trigger.connectorId,
-        operation_key: trigger.operationKey, operation_version: trigger.operationVersion, endpoint_token_hash: createHash("sha256").update(token).digest("hex"), status: "active",
-        safe_metadata: runtimeSettings as Json,
-      });
-      if (error) throw new Error("Connector subscription could not be activated.");
-      created.push({ id, url: trigger.connectorId === "google_gmail" || trigger.connectorId === "slack" || trigger.connectorId === "notion" ? providerWebhookUrl(trigger.connectorId) : connectorWebhookUrl(id) });
-    }
-    for (const connectionId of Array.from(new Set(triggers.filter((trigger) => trigger.connectorId === "google_gmail").flatMap((trigger) => trigger.connectionId ? [trigger.connectionId] : [])))) {
-      await activateGmailWatch({ userId: input.userId, connectionId });
+    for (const connectionId of gmailConnectionIds) {
+      gmailWatches.set(connectionId, await activateGmailWatch({ userId: input.userId, connectionId, persistActiveSubscriptions: false }));
     }
   } catch (error) {
-    const createdIds = created.map((item) => item.id);
-    if (createdIds.length) {
-      await admin.from("connector_subscriptions").update({ status: "revoked", updated_at: new Date().toISOString() }).eq("user_id", input.userId).in("id", createdIds);
-    }
+    await stopUnusedGmailWatches(input.userId, Array.from(gmailWatches.keys()));
     throw error;
   }
-  return created;
+
+  const subscriptions = preparedTriggers.map((trigger) => {
+    const gmailWatch = trigger.connectionId ? gmailWatches.get(trigger.connectionId) : undefined;
+    return {
+      id: trigger.id,
+      connectionId: trigger.connectionId ?? "",
+      connectorId: trigger.connectorId,
+      operationKey: trigger.operationKey,
+      operationVersion: trigger.operationVersion,
+      endpointTokenHash: trigger.endpointTokenHash,
+      providerSubscriptionId: gmailWatch ? trigger.connectionId ?? "" : "",
+      cursorValue: gmailWatch?.historyId ?? "",
+      renewAfter: gmailWatch?.renewAfter ?? "",
+      expiresAt: gmailWatch?.expiresAt ?? "",
+      safeMetadata: trigger.runtimeSettings as Json,
+      url: trigger.url,
+    };
+  });
+  return {
+    payload: subscriptions.map((subscription) => ({
+      id: subscription.id,
+      connectionId: subscription.connectionId,
+      connectorId: subscription.connectorId,
+      operationKey: subscription.operationKey,
+      operationVersion: subscription.operationVersion,
+      endpointTokenHash: subscription.endpointTokenHash,
+      providerSubscriptionId: subscription.providerSubscriptionId,
+      cursorValue: subscription.cursorValue,
+      renewAfter: subscription.renewAfter,
+      expiresAt: subscription.expiresAt,
+      safeMetadata: subscription.safeMetadata,
+    })) as Json,
+    endpoints: subscriptions.map((subscription) => subscription.url),
+    gmailConnectionIds,
+  };
+}
+
+export async function stopUnusedGmailWatches(userId: string, connectionIds: string[]) {
+  const admin = createAdminClient();
+  for (const connectionId of Array.from(new Set(connectionIds))) {
+    const { count, error } = await admin.from("connector_subscriptions").select("id", { count: "exact", head: true }).eq("connection_id", connectionId).eq("user_id", userId).eq("connector_id", "google_gmail").eq("status", "active");
+    if (error) throw new Error("Gmail watch usage could not be verified safely.");
+    if ((count ?? 0) === 0) await stopGmailWatch({ userId, connectionId });
+  }
 }
 
 export async function deactivateWorkflowConnectorSubscriptions(userId: string, workflowId: string) {
@@ -132,8 +179,5 @@ export async function deactivateWorkflowConnectorSubscriptions(userId: string, w
   const { data: gmail } = await admin.from("connector_subscriptions").select("connection_id").eq("workflow_id", workflowId).eq("user_id", userId).eq("connector_id", "google_gmail").eq("status", "active");
   const { error } = await admin.from("connector_subscriptions").update({ status: "revoked", updated_at: new Date().toISOString() }).eq("workflow_id", workflowId).eq("user_id", userId).eq("status", "active");
   if (error) throw new Error("Connector subscriptions could not be revoked.");
-  for (const connectionId of Array.from(new Set((gmail ?? []).flatMap((item) => item.connection_id ? [item.connection_id] : [])))) {
-    const { count } = await admin.from("connector_subscriptions").select("id", { count: "exact", head: true }).eq("connection_id", connectionId).eq("user_id", userId).eq("connector_id", "google_gmail").eq("status", "active");
-    if ((count ?? 0) === 0) await stopGmailWatch({ userId, connectionId });
-  }
+  await stopUnusedGmailWatches(userId, (gmail ?? []).flatMap((item) => item.connection_id ? [item.connection_id] : []));
 }

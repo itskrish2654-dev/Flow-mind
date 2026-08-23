@@ -30,7 +30,11 @@ export function parseGmailPushPayload(payload: unknown) {
   return { notificationId: envelope.message.messageId.slice(0, 200), emailAddress: decoded.emailAddress.toLowerCase(), historyId: decoded.historyId };
 }
 
-export async function activateGmailWatch(input: { userId: string; connectionId: string }) {
+export async function activateGmailWatch(input: {
+  userId: string;
+  connectionId: string;
+  persistActiveSubscriptions?: boolean;
+}) {
   const topicName = process.env.GOOGLE_GMAIL_PUBSUB_TOPIC;
   if (!topicName?.startsWith("projects/")) throw new Error("Google Gmail Pub/Sub topic is not configured.");
   const response = await googleApiFetch({ userId: input.userId, connectionId: input.connectionId, requiredScopes: [GOOGLE_SCOPES.gmailReadonly], url: "https://gmail.googleapis.com/gmail/v1/users/me/watch", method: "POST", body: { topicName, labelIds: ["INBOX"], labelFilterBehavior: "include" } });
@@ -38,10 +42,12 @@ export async function activateGmailWatch(input: { userId: string; connectionId: 
   if (!watch.historyId || !watch.expiration) throw new Error("Gmail did not acknowledge the mailbox watch.");
   const expiresAt = new Date(Number(watch.expiration)); if (!Number.isFinite(expiresAt.getTime())) throw new Error("Gmail returned an invalid watch expiration.");
   const renewAfter = new Date(expiresAt.getTime() - 24 * 60 * 60_000).toISOString();
-  const { error } = await createAdminClient().from("connector_subscriptions").update({ cursor_value: watch.historyId, provider_subscription_id: input.connectionId, expires_at: expiresAt.toISOString(), renew_after: renewAfter, last_error_category: null, status: "active", updated_at: new Date().toISOString() }).eq("connection_id", input.connectionId).eq("user_id", input.userId).eq("connector_id", "google_gmail").eq("status", "active");
-  if (error) throw new Error("Gmail watch state could not be stored.");
+  if (input.persistActiveSubscriptions !== false) {
+    const { error } = await createAdminClient().from("connector_subscriptions").update({ cursor_value: watch.historyId, provider_subscription_id: input.connectionId, expires_at: expiresAt.toISOString(), renew_after: renewAfter, last_error_category: null, status: "active", updated_at: new Date().toISOString() }).eq("connection_id", input.connectionId).eq("user_id", input.userId).eq("connector_id", "google_gmail").eq("status", "active");
+    if (error) throw new Error("Gmail watch state could not be stored.");
+  }
   await captureOperationalEvent({ level: "info", event: "gmail_watch_created", userId: input.userId, status: "active" });
-  return { historyId: watch.historyId, expiresAt: expiresAt.toISOString() };
+  return { historyId: watch.historyId, expiresAt: expiresAt.toISOString(), renewAfter };
 }
 
 export async function stopGmailWatch(input: { userId: string; connectionId: string }) {

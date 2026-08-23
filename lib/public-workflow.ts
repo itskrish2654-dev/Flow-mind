@@ -60,16 +60,16 @@ export async function getPublicExecutableWorkflow(workflowId: string) {
     const admin = createAdminClient();
     const { data, error } = await admin
       .from("workflows")
-      .select("user_id, current_version_id, lifecycle_state")
+      .select("user_id, published_version_id, lifecycle_state")
       .eq("id", publicWorkflow.id)
       .eq("public_form_enabled", true)
       .maybeSingle();
 
-    if (error || !data?.user_id || !data.current_version_id || data.lifecycle_state !== "active") return null;
+    if (error || !data?.user_id || !data.published_version_id || data.lifecycle_state !== "active") return null;
     const { data: version, error: versionError } = await admin
       .from("workflow_versions")
       .select("id, compiled_workflow, setup_config")
-      .eq("id", data.current_version_id)
+      .eq("id", data.published_version_id)
       .eq("workflow_id", publicWorkflow.id)
       .eq("user_id", data.user_id)
       .maybeSingle();

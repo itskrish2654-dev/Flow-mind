@@ -167,7 +167,7 @@ test("2.1-12. costly public forms automatically require Turnstile", () => {
   assert.match(capabilityRegistry, /COSTLY_PUBLIC_CAPABILITIES[\s\S]*ai_text_transform[\s\S]*generate_pdf/);
   assert.match(
     workflowAction,
-    /public_form_challenge_mode:[\s\S]{0,100}requiresPublicFormTurnstile/,
+    /const challengeMode = workflow\.success && requiresPublicFormTurnstile[\s\S]*p_challenge_mode: challengeMode/,
   );
   assert.match(publicAction, /challengeMode === "turnstile"[\s\S]*verifyTurnstile/);
   assert.match(

@@ -95,6 +95,7 @@ type AutomationWorkspaceProps = {
   initialPrompt?: string;
   initialDraftReady?: boolean;
   initialPublished?: boolean;
+  initialHasUnpublishedChanges?: boolean;
   initialSetupConfig?: InputValues;
   initialConnections?: Array<{
     id: string;
@@ -1245,6 +1246,7 @@ export function AutomationWorkspace({
   initialPrompt = "",
   initialDraftReady = false,
   initialPublished = false,
+  initialHasUnpublishedChanges = false,
   initialSetupConfig = {},
   initialConnections = [],
 }: AutomationWorkspaceProps) {
@@ -1260,6 +1262,9 @@ export function AutomationWorkspace({
     initialWorkflowId,
   );
   const [published, setPublished] = useState(initialPublished);
+  const [hasUnpublishedChanges, setHasUnpublishedChanges] = useState(
+    initialHasUnpublishedChanges,
+  );
   const [connectorEndpoint, setConnectorEndpoint] = useState<string | null>(
     null,
   );
@@ -1283,7 +1288,6 @@ export function AutomationWorkspace({
   const [pendingEditPrompt, setPendingEditPrompt] = useState<string | null>(null);
   const [configuredCredentialKeys, setConfiguredCredentialKeys] = useState<Set<string>>(new Set());
   const buildRequestInFlight = useRef(false);
-  const pauseRequestInFlight = useRef<Promise<string | null> | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -1359,6 +1363,7 @@ export function AutomationWorkspace({
     setWorkflow(null);
     setWorkflowId(null);
     setPublished(false);
+    setHasUnpublishedChanges(false);
     setSelectedStepId(null);
     setValues({});
     setPrompt("");
@@ -1445,18 +1450,8 @@ export function AutomationWorkspace({
     setError(null);
     resetTestResult();
     setPlanning(null);
+    const productionContinues = Boolean(workflowId && published);
     try {
-      if (workflowId && published) {
-        const publication = await setWorkflowPublication(workflowId, false);
-        if (!publication.ok) {
-          setError(
-            `CrazyLoops couldn’t pause this active workflow safely. ${publication.error}`,
-          );
-          return;
-        }
-        setPublished(false);
-        setConnectorEndpoint(null);
-      }
       const result = await compileWorkflow(description, workflowId, editIntent);
       if (!result.success) {
         setPlanning(result.planning ?? null);
@@ -1467,7 +1462,8 @@ export function AutomationWorkspace({
       const initialValues = defaultInputValues(result.workflow, result.id);
       setWorkflow(result.workflow);
       setWorkflowId(result.id);
-      setPublished(false);
+      if (!productionContinues) setPublished(false);
+      setHasUnpublishedChanges(productionContinues);
       setValues(initialValues);
       setSelectedStepId(ordered[0]?.id ?? null);
       setPrompt("");
@@ -1546,8 +1542,6 @@ export function AutomationWorkspace({
     try {
       if (!workflowId)
         return "Create the workflow before customizing its form.";
-      const pauseError = await pauseForChanges();
-      if (pauseError) return pauseError;
       let result = await saveWorkflowCustomization(workflowId, { publicForm });
       if (!result.ok && result.impact) {
         const confirmed = window.confirm(
@@ -1562,6 +1556,7 @@ export function AutomationWorkspace({
       }
       if (!result.ok) return result.error;
       setWorkflow(result.workflow);
+      if (published) setHasUnpublishedChanges(true);
       resetTestResult();
       window.dispatchEvent(
         new CustomEvent("flowmind:workflow-customized", {
@@ -1580,11 +1575,10 @@ export function AutomationWorkspace({
     try {
       if (!workflowId)
         return "Create the workflow before customizing its data table.";
-      const pauseError = await pauseForChanges();
-      if (pauseError) return pauseError;
       const result = await saveWorkflowCustomization(workflowId, { dataTable });
       if (!result.ok) return result.error;
       setWorkflow(result.workflow);
+      if (published) setHasUnpublishedChanges(true);
       resetTestResult();
       window.dispatchEvent(
         new CustomEvent("flowmind:workflow-customized", {
@@ -1602,8 +1596,6 @@ export function AutomationWorkspace({
     template: string,
   ): Promise<string | null> {
     if (!workflowId) return "Create the workflow before changing its document.";
-    const pauseError = await pauseForChanges();
-    if (pauseError) return pauseError;
     const result = await saveDocumentTemplate(workflowId, stepId, template);
     if (!result.ok) return result.error;
     adoptCustomizedWorkflow(result.workflow);
@@ -1622,19 +1614,11 @@ export function AutomationWorkspace({
       return result.error;
     }
     setPublished(result.published);
+    setHasUnpublishedChanges(false);
     setConnectorEndpoint(result.connectorEndpoints[0] ?? null);
     setError(null);
+    router.refresh();
     return null;
-  }
-
-  async function pauseForChanges(): Promise<string | null> {
-    if (!published) return null;
-    if (pauseRequestInFlight.current) return pauseRequestInFlight.current;
-    const request = changePublication(false).finally(() => {
-      pauseRequestInFlight.current = null;
-    });
-    pauseRequestInFlight.current = request;
-    return request;
   }
 
   async function persistWebhookEndpoint(
@@ -1642,8 +1626,6 @@ export function AutomationWorkspace({
     endpoint: string,
   ): Promise<string | null> {
     if (!workflowId) return "Create the workflow before configuring delivery.";
-    const pauseError = await pauseForChanges();
-    if (pauseError) return pauseError;
     const result = await saveWebhookEndpoint(workflowId, stepId, endpoint);
     if (!result.ok) {
       setError(result.error);
@@ -1656,6 +1638,7 @@ export function AutomationWorkspace({
 
   function adoptCustomizedWorkflow(customizedWorkflow: CompiledWorkflow) {
     setWorkflow(customizedWorkflow);
+    if (published) setHasUnpublishedChanges(true);
     resetTestResult();
     window.dispatchEvent(
       new CustomEvent("flowmind:workflow-customized", {
@@ -1667,8 +1650,6 @@ export function AutomationWorkspace({
   async function aiCustomizeForm(instruction: string) {
     if (!workflowId)
       return { error: "Create the workflow before customizing its form." };
-    const pauseError = await pauseForChanges();
-    if (pauseError) return { error: pauseError };
     const result = await customizeFormWithAi(workflowId, instruction);
     if (!result.ok) return { error: result.error };
     adoptCustomizedWorkflow(result.workflow);
@@ -1683,8 +1664,6 @@ export function AutomationWorkspace({
       return {
         error: "Create the workflow before customizing its data table.",
       };
-    const pauseError = await pauseForChanges();
-    if (pauseError) return { error: pauseError };
     const result = await customizeDataTableWithAi(workflowId, instruction);
     if (!result.ok) return { error: result.error };
     adoptCustomizedWorkflow(result.workflow);
@@ -1697,8 +1676,6 @@ export function AutomationWorkspace({
   async function aiCustomizeDocument(stepId: string, instruction: string) {
     if (!workflowId)
       return { error: "Create the workflow before customizing its document." };
-    const pauseError = await pauseForChanges();
-    if (pauseError) return { error: pauseError };
     const result = await customizeDocumentWithAi(
       workflowId,
       stepId,
@@ -1816,9 +1793,16 @@ export function AutomationWorkspace({
                       </h1>
                       <p className="mt-1 text-[11px] leading-5 text-slate-500">{toPlainEnglish(workflow.summary)}</p>
                     </div>
-                    <span className={`inline-flex min-h-8 w-fit items-center rounded-full px-3 text-[9px] font-bold uppercase tracking-[0.08em] ${published ? "bg-emerald-50 text-emerald-700" : "bg-[#f8f4ec] text-slate-600"}`}>
-                      {published ? "Active" : "Draft"}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex min-h-8 w-fit items-center rounded-full px-3 text-[9px] font-bold uppercase tracking-[0.08em] ${published ? "bg-emerald-50 text-emerald-700" : "bg-[#f8f4ec] text-slate-600"}`}>
+                        {published ? "Active" : "Draft"}
+                      </span>
+                      {published && hasUnpublishedChanges && (
+                        <span className="inline-flex min-h-8 w-fit items-center rounded-full bg-[#fff2bd] px-3 text-[9px] font-bold uppercase tracking-[0.08em] text-[#765600]">
+                          Unpublished changes
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </section>
 
@@ -1876,6 +1860,7 @@ export function AutomationWorkspace({
                       steps={steps}
                       readiness={readiness}
                       published={published}
+                      hasUnpublishedChanges={hasUnpublishedChanges}
                       isTesting={isTesting}
                       testSucceeded={testSucceeded}
                       logs={logs}
@@ -2003,7 +1988,7 @@ export function AutomationWorkspace({
           <h2 className="mt-2 text-lg font-semibold text-[#272536]">How should CrazyLoops apply this change?</h2>
           <p className="mt-2 text-[11px] leading-5 text-slate-500">
             {published
-              ? "This workflow is active. CrazyLoops will turn it off first so an unreviewed change never goes live."
+              ? "You’re editing changes. Your current workflow is still running."
               : "Your current workflow stays available in Change history."}
           </p>
           {pendingEditPrompt && (
@@ -2061,7 +2046,7 @@ export function AutomationWorkspace({
           setValues((current) => ({ ...current, [id]: value }));
           setError(null);
           resetTestResult();
-          if (published && !id.startsWith("test_input:")) void pauseForChanges();
+          if (published && !id.startsWith("test_input:")) setHasUnpublishedChanges(true);
         }}
       />
       <AccessibleDialog
@@ -2092,7 +2077,7 @@ export function AutomationWorkspace({
             setValues((current) => ({ ...current, [id]: value }));
             setError(null);
             resetTestResult();
-            if (published && !id.startsWith("test_input:")) void pauseForChanges();
+            if (published && !id.startsWith("test_input:")) setHasUnpublishedChanges(true);
           }}
         />
       </AccessibleDialog>

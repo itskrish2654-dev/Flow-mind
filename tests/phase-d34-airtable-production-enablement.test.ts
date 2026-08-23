@@ -234,17 +234,17 @@ test("D3.4 verified and deferred customer connections remain TEST eligible", asy
   assert.equal(await readiness(deferredConnection(), "test"), null);
 });
 
-test("D3.4 publication validates readiness before mutating or activating subscriptions", async () => {
+test("D3.4 publication validates readiness before preparing and atomically publishing subscriptions", async () => {
   const source = await readFile("app/actions/workflow.ts", "utf8");
   const start = source.indexOf("export async function setWorkflowPublication");
   const end = source.indexOf("export async function getWorkflowConnectorEndpoints", start);
   const publication = source.slice(start, end);
   const readinessIndex = publication.indexOf("validateWorkflowConnectorConnections");
-  const mutationIndex = publication.indexOf('.from("workflows")\n    .update');
-  const activationIndex = publication.indexOf("activateWorkflowConnectorSubscriptions");
+  const preparationIndex = publication.indexOf("prepareWorkflowConnectorPublication");
+  const mutationIndex = publication.indexOf('admin.rpc("publish_workflow_version"');
   assert.ok(readinessIndex > -1);
-  assert.ok(mutationIndex > readinessIndex);
-  assert.ok(activationIndex > mutationIndex);
+  assert.ok(preparationIndex > readinessIndex);
+  assert.ok(mutationIndex > preparationIndex);
 });
 
 test("D3.4 LIVE credential resolution accepts only exact operation-verified Airtable evidence", async () => {

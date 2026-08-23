@@ -47,6 +47,7 @@ export function WorkflowJourneyPanel({
   steps,
   readiness,
   published,
+  hasUnpublishedChanges,
   isTesting,
   testSucceeded,
   logs,
@@ -59,6 +60,7 @@ export function WorkflowJourneyPanel({
   steps: WorkflowStep[];
   readiness: WorkflowReadiness;
   published: boolean;
+  hasUnpublishedChanges: boolean;
   isTesting: boolean;
   testSucceeded: boolean | null;
   logs: TestExecutionLog[];
@@ -217,11 +219,17 @@ export function WorkflowJourneyPanel({
           <div>
             <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-slate-500">Activation</p>
             <h2 id="workflow-activation-title" className="mt-1 text-sm font-semibold text-[#272536]">
-              {published ? "Active — this workflow is running" : "Not active yet"}
+              {published && hasUnpublishedChanges
+                ? "Active — your current workflow is still running"
+                : published
+                  ? "Active — this workflow is running"
+                  : "Not active yet"}
             </h2>
             <p className="mt-1 text-[10px] leading-5 text-slate-500">
-              {published
-                ? "New trigger events can run the current workflow. Turn it off before making structural changes."
+              {published && hasUnpublishedChanges
+                ? "You have unpublished changes. Test this draft, then publish it when you’re ready to switch production safely."
+                : published
+                  ? "New trigger events continue to run the published workflow."
                 : !readiness.activationReady
                   ? "Finish the items above before turning this workflow on."
                   : testSucceeded !== true
@@ -230,14 +238,27 @@ export function WorkflowJourneyPanel({
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => onPublicationChange(!published)}
-          disabled={!published && !readiness.activationReady}
-          className="mt-3 inline-flex min-h-10 items-center rounded-xl border border-[#d7aa2f] bg-transparent px-3.5 text-[10px] font-semibold text-[#6f5100] transition hover:bg-[#fff9e8] disabled:cursor-not-allowed disabled:border-[#ded6ca] disabled:text-slate-400"
-        >
-          {published ? "Turn off workflow" : "Turn on workflow"}
-        </button>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {(!published || hasUnpublishedChanges) && (
+            <button
+              type="button"
+              onClick={() => onPublicationChange(true)}
+              disabled={!readiness.activationReady}
+              className="inline-flex min-h-10 items-center rounded-xl border border-[#d7aa2f] bg-transparent px-3.5 text-[10px] font-semibold text-[#6f5100] transition hover:bg-[#fff9e8] disabled:cursor-not-allowed disabled:border-[#ded6ca] disabled:text-slate-400"
+            >
+              {published ? "Publish changes" : "Turn on workflow"}
+            </button>
+          )}
+          {published && (
+            <button
+              type="button"
+              onClick={() => onPublicationChange(false)}
+              className="inline-flex min-h-10 items-center px-2 text-[10px] font-semibold text-slate-600 hover:text-slate-900"
+            >
+              Turn off workflow
+            </button>
+          )}
+        </div>
       </section>
 
       <p className="sr-only">{workflow.workflowName}</p>

@@ -26,7 +26,7 @@ export async function GET() {
   try {
     const { data: workflows, error: workflowError, count: workflowCount } = await admin
       .from("workflows")
-      .select("id, name, prompt, compiled_steps, public_form_enabled, published_at, public_form_challenge_mode, created_at, updated_at, current_version_id, lifecycle_state, archived_at", { count: "exact" })
+      .select("id, name, prompt, compiled_steps, public_form_enabled, published_at, public_form_challenge_mode, created_at, updated_at, current_version_id, published_version_id, lifecycle_state, archived_at", { count: "exact" })
       .eq("user_id", auth.user.id)
       .order("created_at", { ascending: true })
       .limit(EXPORT_LIMITS.workflows + 1);

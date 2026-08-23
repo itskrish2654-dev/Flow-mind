@@ -5,7 +5,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { annotateWorkflowCapabilities } from "@/lib/capability-registry";
 import { CompiledWorkflowSchema, type CompiledWorkflow } from "@/lib/schemas/workflow";
 import type { Database, Json } from "@/lib/supabase/types";
-import { pinFutureScheduleToVersion } from "@/lib/workflow-schedules";
 
 export type WorkflowChangeScope =
   | "presentation"
@@ -24,6 +23,8 @@ export type WorkflowSnapshot = {
   name: string;
   prompt: string;
   published: boolean;
+  publishedVersionId: string | null;
+  hasUnpublishedChanges: boolean;
   lifecycleState: "active" | "disabled" | "archived";
   workflow: CompiledWorkflow;
   setupConfig: Record<string, string>;
@@ -48,7 +49,7 @@ export async function loadWorkflowSnapshot(
 ): Promise<WorkflowSnapshot | null> {
   const { data: identity, error } = await admin
     .from("workflows")
-    .select("id, name, prompt, public_form_enabled, lifecycle_state, current_version_id")
+    .select("id, name, prompt, public_form_enabled, lifecycle_state, current_version_id, published_version_id")
     .eq("id", workflowId)
     .eq("user_id", userId)
     .maybeSingle();
@@ -71,6 +72,10 @@ export async function loadWorkflowSnapshot(
     name: identity.name,
     prompt: identity.prompt,
     published: identity.public_form_enabled,
+    publishedVersionId: identity.published_version_id,
+    hasUnpublishedChanges:
+      identity.public_form_enabled &&
+      identity.published_version_id !== identity.current_version_id,
     lifecycleState: identity.lifecycle_state,
     workflow: annotateWorkflowCapabilities(parsed.data),
     setupConfig:
@@ -111,11 +116,5 @@ export async function createImmutableWorkflowVersion(
     }
     throw new Error(`Workflow version could not be saved: ${error?.message ?? "unknown error"}`);
   }
-  await pinFutureScheduleToVersion(admin, {
-    userId: input.userId,
-    workflowId: input.workflowId,
-    workflowVersionId: version.version_id,
-    workflow: definition,
-  });
   return { versionId: version.version_id, versionNumber: version.version_number };
 }

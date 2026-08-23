@@ -40,6 +40,7 @@ export default async function ProjectPage({
       workflowId={id}
       workflow={result.workflow}
       published={result.published}
+      hasUnpublishedChanges={result.hasUnpublishedChanges}
       initialExecutions={executionsResult.ok ? executionsResult.executions : []}
       initialExecutionCursor={executionsResult.ok ? executionsResult.nextCursor : null}
       initialSetupConfig={result.setupConfig}

@@ -15,6 +15,7 @@ export function ProjectWorkspace({
   workflowId,
   workflow,
   published,
+  hasUnpublishedChanges,
   initialExecutions,
   initialExecutionCursor,
   initialSetupConfig,
@@ -23,6 +24,7 @@ export function ProjectWorkspace({
   workflowId: string;
   workflow: CompiledWorkflow;
   published: boolean;
+  hasUnpublishedChanges: boolean;
   initialExecutions: WorkflowExecutionRecord[];
   initialExecutionCursor: string | null;
   initialSetupConfig: Record<string, string>;
@@ -112,6 +114,7 @@ export function ProjectWorkspace({
             initialWorkflowId={workflowId}
             initialWorkflow={currentWorkflow}
             initialPublished={published}
+            initialHasUnpublishedChanges={hasUnpublishedChanges}
             initialSetupConfig={initialSetupConfig}
           />
         ) : (

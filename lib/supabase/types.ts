@@ -22,6 +22,7 @@ export type Database = {
           created_at: string;
           updated_at: string;
           current_version_id: string | null;
+          published_version_id: string | null;
           lifecycle_state: "active" | "disabled" | "archived";
           archived_at: string | null;
         };
@@ -37,6 +38,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           current_version_id?: string | null;
+          published_version_id?: string | null;
           lifecycle_state?: "active" | "disabled" | "archived";
           archived_at?: string | null;
         };
@@ -52,6 +54,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           current_version_id?: string | null;
+          published_version_id?: string | null;
           lifecycle_state?: "active" | "disabled" | "archived";
           archived_at?: string | null;
         };
@@ -544,6 +547,21 @@ export type Database = {
           p_source_version_id?: string | null;
         };
         Returns: Array<{ version_id: string; version_number: number }>;
+      };
+      publish_workflow_version: {
+        Args: {
+          p_workflow_id: string;
+          p_user_id: string;
+          p_expected_current_version_id: string;
+          p_publish: boolean;
+          p_challenge_mode: string;
+          p_subscriptions?: Json;
+          p_schedule?: Json | null;
+        };
+        Returns: Array<{
+          published: boolean;
+          published_version_id: string | null;
+        }>;
       };
       create_execution_once: {
         Args: {

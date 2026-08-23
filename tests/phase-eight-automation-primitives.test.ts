@@ -68,14 +68,16 @@ test("8A-6. scheduler persistence is owner-scoped, version-pinned, idempotent, a
   assert.match(dispatcher, /mode: "scheduled"/);
 });
 
-test("8A-7. disable, archive, reconciliation, and future version updates are wired", async () => {
+test("8A-7. schedules remain version-pinned until an atomic publication switch", async () => {
   const workflowAction = await readFile("app/actions/workflow.ts", "utf8");
   const versioning = await readFile("lib/workflow-versioning.ts", "utf8");
   const schedules = await readFile("lib/workflow-schedules.ts", "utf8");
   assert.match(workflowAction, /disableWorkflowSchedule/);
-  assert.match(versioning, /pinFutureScheduleToVersion/);
+  assert.match(workflowAction, /prepareWorkflowSchedule/);
+  assert.match(workflowAction, /publish_workflow_version/);
+  assert.doesNotMatch(versioning, /pinFutureScheduleToVersion/);
   assert.match(schedules, /nextScheduleOccurrence/);
-  assert.match(schedules, /workflow_version_id: input\.workflowVersionId/);
+  assert.match(schedules, /nextRunAt: nextRunAt\.toISOString/);
 });
 
 test("8B-1. structured string, numeric, missing, and boolean conditions are deterministic", () => {

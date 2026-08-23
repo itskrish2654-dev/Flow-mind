@@ -184,8 +184,9 @@ test("workflow UI presents one setup, test, and activation journey", async () =>
   assert.match(workspace, /Current workflow/);
   assert.match(workspace, /Describe a change, like/);
   assert.match(workspace, /How should CrazyLoops apply this change\?/);
-  assert.match(workspace, /will turn it off first/);
-  assert.match(workspace, /setWorkflowPublication\(workflowId, false\)/);
+  assert.match(workspace, /current workflow is still running/);
+  assert.match(workspace, /Unpublished changes/);
+  assert.doesNotMatch(workspace, /pauseForChanges|will turn it off first/);
   assert.doesNotMatch(workspace, /Describe a different automation to replace this one/);
   assert.doesNotMatch(workspace, /create a new version/);
 
@@ -197,6 +198,7 @@ test("workflow UI presents one setup, test, and activation journey", async () =>
     "Test stopped",
     "Review failed step",
     "Turn on workflow",
+    "Publish changes",
     "Active — this workflow is running",
     "View in Activity",
   ]) {
@@ -204,6 +206,6 @@ test("workflow UI presents one setup, test, and activation journey", async () =>
   }
   assert.match(journey, /aria-live="polite"/);
   assert.match(journey, /disabled=\{!readiness\.testReady \|\| isTesting\}/);
-  assert.match(journey, /disabled=\{!published && !readiness\.activationReady\}/);
+  assert.match(journey, /disabled=\{!readiness\.activationReady\}/);
   assert.doesNotMatch(journey, /stack trace|execution_id|provider_status|raw JSON/i);
 });
