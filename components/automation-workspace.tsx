@@ -862,7 +862,7 @@ function Inspector({
               className="mt-3 flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-[#d9cfbf] bg-white text-[10px] font-semibold text-[#272536] transition hover:border-[#d7aa2f] hover:bg-[#fff7dc]"
             >
               <Database className="size-3.5" />
-              View Executions &amp; Data
+              View Activity
             </button>
             {publicForm && workflow && (
               <DataTableBuilder
@@ -1475,7 +1475,7 @@ export function AutomationWorkspace({
           editIntent = "modify";
         } else {
           const replace = window.confirm(
-            "Replace the current automation completely? This clears its saved setup, but version history and rollback remain available. Choose Cancel to make no change.",
+            "Replace the current automation completely? This clears its saved setup, but change history and restore remain available. Choose Cancel to make no change.",
           );
           if (!replace) return;
           editIntent = "replace";

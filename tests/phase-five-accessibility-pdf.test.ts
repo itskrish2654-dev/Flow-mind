@@ -39,10 +39,10 @@ test("5-4. settings navigation is narrow-screen safe", async () => {
 
 test("5-5. execution history has an intentional mobile card layout", async () => {
   const table = await source("components/executions-data-table.tsx");
-  assert.match(table, /space-y-3 md:hidden/);
-  assert.match(table, /hidden overflow-x-auto[\s\S]*md:block/);
+  assert.match(table, /space-y-3 lg:space-y-0/);
+  assert.match(table, /lg:grid-cols-/);
   assert.match(table, /basis-full sm:flex-1 sm:basis-auto/);
-  assert.match(table, /max-w-\[62%\]/);
+  assert.match(table, /min-w-0/);
   assert.match(table, /window\.location\.assign\(result\.url\)/);
   assert.doesNotMatch(table, /window\.open\(result\.url/);
 });
@@ -63,7 +63,9 @@ test("5-7. Turnstile uses a responsive overflow-safe container", async () => {
 
 test("5-8. core mobile project views remain present", async () => {
   const project = await source("components/project-workspace.tsx");
-  for (const view of ["Workflow", "Versions", "Executions &amp; Data"]) assert.match(project, new RegExp(view));
+  for (const view of ["Workflow", "Activity", "Change history"]) assert.match(project, new RegExp(view));
+  assert.doesNotMatch(project, />\s*Versions\s*</);
+  assert.doesNotMatch(project, /Executions &amp; Data/);
   assert.match(project, /overflow-x-auto/);
 });
 

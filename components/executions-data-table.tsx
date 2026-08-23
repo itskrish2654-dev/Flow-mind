@@ -5,7 +5,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock3,
-  Database,
+  Activity,
   Download,
   ExternalLink,
   FileText,
@@ -32,23 +32,6 @@ const executionDateFormatter = new Intl.DateTimeFormat("en-US", {
   dateStyle: "medium",
   timeStyle: "short",
 });
-
-const INTERNAL_OUTPUT_FIELDS = new Set([
-  "documents",
-  "logs",
-  "pdf_url",
-]);
-
-const HANDLED_OUTPUT_FIELDS = new Set([
-  ...INTERNAL_OUTPUT_FIELDS,
-  "ai_result",
-  "ai_metadata",
-  "http_results",
-  "delivered",
-  "steps",
-  "status",
-  "summary",
-]);
 
 function asJsonObject(value: Json | undefined): JsonObject {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -86,40 +69,6 @@ function valueAtPath(data: JsonObject, path: string): Json | undefined {
     if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
     return (value as JsonObject)[segment];
   }, data);
-}
-
-function configuredColumnValue(
-  execution: WorkflowExecutionRecord,
-  column: DataTableColumn,
-): Json | undefined {
-  const source = column.source === "input" ? execution.inputData : execution.outputData;
-  return valueAtPath(asJsonObject(source), column.key);
-}
-
-function ConfiguredValue({
-  execution,
-  column,
-}: {
-  execution: WorkflowExecutionRecord;
-  column: DataTableColumn;
-}) {
-  const value = configuredColumnValue(execution, column);
-  if (column.source === "output" && column.key === "status") {
-    return <StatusBadge value={execution.outputData} />;
-  }
-  if (
-    column.source === "output" &&
-    column.key === "pdf_url" &&
-    typeof value === "string" &&
-    value.startsWith("https://")
-  ) {
-    return (
-      <a href={value} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-[#7f5d00] hover:underline">
-        <FileText className="size-3.5" /> Download PDF
-      </a>
-    );
-  }
-  return <span className="block max-w-[230px] truncate text-[10px] text-slate-600" title={readableValue(value)}>{readableValue(value)}</span>;
 }
 
 function formatJsonToChips(
@@ -168,11 +117,10 @@ function formatJsonToChips(
   );
 }
 
-function executionStatus(value: Json): string {
-  const status = asJsonObject(value).status;
-  return typeof status === "string"
-    ? status.charAt(0).toUpperCase() + status.slice(1)
-    : "Processed";
+function executionStatus(execution: WorkflowExecutionRecord): "Success" | "Failed" | "Running" {
+  if (["queued", "running"].includes(execution.status)) return "Running";
+  if (execution.status === "succeeded") return "Success";
+  return "Failed";
 }
 
 function statusClasses(status: string): string {
@@ -186,10 +134,11 @@ function statusClasses(status: string): string {
   return "bg-[#fff0b9] text-[#7f5d00] ring-[#d7aa2f]/20";
 }
 
-function StatusBadge({ value }: { value: Json }) {
-  const status = executionStatus(value);
+function StatusBadge({ execution }: { execution: WorkflowExecutionRecord }) {
+  const status = executionStatus(execution);
   return (
     <span
+      role={status === "Running" ? "status" : undefined}
       className={`inline-flex rounded-full px-2.5 py-1 text-[9px] font-semibold ring-1 ring-inset ${statusClasses(status)}`}
     >
       {status}
@@ -199,7 +148,86 @@ function StatusBadge({ value }: { value: Json }) {
 
 function ExecutionModeBadge({ triggerType }: { triggerType: string }) {
   const test = triggerType === "manual_test";
-  return <span className={`inline-flex rounded-full px-2 py-0.5 text-[9px] font-bold tracking-[0.08em] ${test ? "bg-sky-50 text-sky-700" : "bg-emerald-50 text-emerald-700"}`}>{test ? "TEST" : "LIVE"}</span>;
+  return <span className={`inline-flex rounded-full px-2 py-0.5 text-[9px] font-semibold ${test ? "bg-sky-50 text-sky-700" : "bg-emerald-50 text-emerald-700"}`}>{test ? "Test run" : "Live run"}</span>;
+}
+
+type CustomerStep = {
+  stepId: string;
+  capabilityId: string;
+  title: string;
+  status: string;
+  message: string;
+};
+
+function executionSteps(value: Json): CustomerStep[] {
+  const steps = asJsonObject(value).steps;
+  if (!Array.isArray(steps)) return [];
+  return steps.flatMap((step) => {
+    if (!step || typeof step !== "object" || Array.isArray(step)) return [];
+    const item = step as JsonObject;
+    if (typeof item.title !== "string" || typeof item.status !== "string") return [];
+    return [{
+      stepId: typeof item.stepId === "string" ? item.stepId : "",
+      capabilityId: typeof item.capabilityId === "string" ? item.capabilityId : "",
+      title: item.title,
+      status: item.status,
+      message: typeof item.message === "string" ? item.message : "",
+    }];
+  });
+}
+
+function customerMessage(message: string): string {
+  return message
+    .replace(/FlowMind/g, "CrazyLoops")
+    .replace(/\bworkflow\b/gi, "loop")
+    .replace(/provider acknowledgement/gi, "destination confirmation")
+    .replace(/^Skipped — condition not matched\.$/i, "Not needed because its condition did not match.");
+}
+
+function triggerDescription(triggerType: string): string {
+  if (triggerType === "manual_test") return "Started manually with test data";
+  if (triggerType === "public_form") return "Started by a public form submission";
+  if (["schedule", "scheduled"].includes(triggerType)) return "Started by its schedule";
+  if (triggerType === "connector_webhook") return "Started by a connected app event";
+  if (triggerType.includes("webhook")) return "Started by an incoming webhook";
+  return "Started automatically";
+}
+
+function resultDescription(execution: WorkflowExecutionRecord): string {
+  const status = executionStatus(execution);
+  if (status === "Running") return "CrazyLoops is working through this loop.";
+  const output = asJsonObject(execution.outputData);
+  const steps = executionSteps(execution.outputData);
+  const stopped = steps.find((step) => ["failed", "unsupported"].includes(step.status));
+  if (status === "Failed") {
+    if (stopped) return `Stopped at: ${stopped.title}. ${customerMessage(stopped.message)}`;
+    const summary = typeof output.summary === "string" ? customerMessage(output.summary) : "This run stopped before it could finish.";
+    return summary;
+  }
+  if (executionDocuments(execution.outputData).length > 0) return "Created a document and completed the loop.";
+  if (output.delivered === true) return "Completed the loop and the destination confirmed receipt.";
+  const lastCompleted = steps.findLast((step) => step.status === "succeeded");
+  if (lastCompleted?.message) return customerMessage(lastCompleted.message);
+  return "Completed the loop successfully.";
+}
+
+function humanTimestamp(value: string): string {
+  return executionDateFormatter.format(new Date(value));
+}
+
+function timelineStatus(status: string): string {
+  if (status === "succeeded") return "Completed";
+  if (status === "running" || status === "pending") return "In progress";
+  if (status === "failed") return "Stopped";
+  if (status === "unsupported") return "Needs attention";
+  return "Not run";
+}
+
+function timelineClasses(status: string): string {
+  if (status === "succeeded") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (["failed", "unsupported"].includes(status)) return "border-rose-200 bg-rose-50 text-rose-700";
+  if (["running", "pending"].includes(status)) return "border-amber-200 bg-amber-50 text-amber-700";
+  return "border-slate-200 bg-slate-50 text-slate-500";
 }
 
 function executionDocuments(value: Json): Array<{ id: string; filename: string }> {
@@ -258,20 +286,6 @@ function SecureDocumentButton({
   );
 }
 
-function executionLogs(value: Json): Array<{ icon: string; message: string }> {
-  const logs = asJsonObject(value).logs;
-  if (!Array.isArray(logs)) return [];
-
-  return logs.flatMap((log) => {
-    if (!log || typeof log !== "object" || Array.isArray(log)) return [];
-    if (typeof log.message !== "string") return [];
-    return [{
-      icon: typeof log.icon === "string" ? log.icon : "•",
-      message: log.message,
-    }];
-  });
-}
-
 function httpExecutionResults(value: Json) {
   const results = asJsonObject(asJsonObject(value).http_results);
   return Object.entries(results).flatMap(([stepId, raw]) => {
@@ -296,38 +310,55 @@ function httpStatusLabel(status: number): string {
 function ExecutionDetailsDrawer({
   execution,
   onClose,
+  onRetry,
+  columns,
 }: {
   execution: WorkflowExecutionRecord | null;
   onClose: () => void;
+  onRetry: (execution: WorkflowExecutionRecord) => void;
+  columns: DataTableColumn[];
 }) {
   if (!execution) return null;
 
   const output = asJsonObject(execution.outputData);
   const summary = typeof output.summary === "string" ? output.summary : null;
   const aiResult = typeof output.ai_result === "string" ? output.ai_result : null;
-  const delivered = typeof output.delivered === "boolean" ? output.delivered : null;
   const documents = executionDocuments(execution.outputData);
-  const logs = executionLogs(execution.outputData);
   const httpResults = httpExecutionResults(execution.outputData);
-  const additionalOutput = Object.fromEntries(
-    Object.entries(output).filter(([key]) => !HANDLED_OUTPUT_FIELDS.has(key)),
-  );
+  const steps = executionSteps(execution.outputData);
+  const status = executionStatus(execution);
+  const submitted = asJsonObject(execution.inputData);
+  const configuredInputEntries = columns
+    .filter((column) => column.source === "input")
+    .flatMap((column) => {
+      const value = valueAtPath(submitted, column.key);
+      return value === undefined ? [] : [[column.label, value] as const];
+    });
+  const configuredKeys = new Set(columns.filter((column) => column.source === "input").map((column) => column.key));
+  const submittedData = Object.fromEntries([
+    ...configuredInputEntries,
+    ...Object.entries(submitted).filter(([key]) => !configuredKeys.has(key)),
+  ]);
+  const startedAt = execution.startedAt ?? execution.createdAt;
+  const durationMs = execution.completedAt
+    ? Math.max(0, new Date(execution.completedAt).getTime() - new Date(startedAt).getTime())
+    : null;
 
   return (
-    <AccessibleDialog open={Boolean(execution)} onOpenChange={(open) => { if (!open) onClose(); }} title="Execution details" description="Submission data, workflow result, documents, and processing log." side="right" showClose={false}>
+    <AccessibleDialog open={Boolean(execution)} onOpenChange={(open) => { if (!open) onClose(); }} title="Run details" description="What started this run, what CrazyLoops did, and the result." side="right" showClose={false}>
       <aside
         className="relative flex h-full w-full max-w-lg flex-col bg-[#fffdfa] shadow-2xl"
       >
         <header className="flex shrink-0 items-start gap-3 border-b border-[#e4ddd2] px-5 py-4 sm:px-6">
           <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd] text-[#8a6200]">
-            <Database className="size-4.5" />
+            <Activity className="size-4.5" />
           </span>
           <div className="min-w-0 flex-1">
             <h3 id="execution-details-title" className="text-sm font-semibold text-slate-950">
-              Execution details
+              Run details
             </h3>
             <p className="mt-1 text-[10px] text-slate-400">
-              {executionDateFormatter.format(new Date(execution.createdAt))}
+              {humanTimestamp(execution.createdAt)}
             </p>
           </div>
           <button
@@ -343,40 +374,61 @@ function ExecutionDetailsDrawer({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
           <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge value={execution.outputData} />
+            <StatusBadge execution={execution} />
             <ExecutionModeBadge triggerType={execution.triggerType} />
-            {delivered !== null && (
-              <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[9px] font-semibold ${delivered ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
-                <CheckCircle2 className="size-3" />
-                {delivered ? "External delivery acknowledged" : "No external delivery"}
-              </span>
-            )}
           </div>
 
-          <section className="mt-6">
+          <section className="mt-6" aria-labelledby="what-happened-heading">
+            <h4 id="what-happened-heading" className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+              What happened
+            </h4>
+            {steps.length > 0 ? (
+              <ol className="mt-3 space-y-2">
+                {steps.map((step, index) => (
+                  <li key={`${step.stepId}-${index}`} className="relative flex gap-3 rounded-xl border border-[#e4ddd2] bg-[#fffdfa] p-3">
+                    <span className={`flex size-7 shrink-0 items-center justify-center rounded-full border ${timelineClasses(step.status)}`} aria-hidden="true">
+                      {step.status === "succeeded" ? <CheckCircle2 className="size-3.5" /> : step.status === "running" || step.status === "pending" ? <LoaderCircle className="size-3.5 animate-spin" /> : <span className="text-[10px] font-bold">{index + 1}</span>}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-[10px] font-semibold text-slate-800">{step.title}</p>
+                        <span className={`text-[9px] font-semibold ${["failed", "unsupported"].includes(step.status) ? "text-rose-700" : step.status === "succeeded" ? "text-emerald-700" : "text-slate-500"}`}>{timelineStatus(step.status)}</span>
+                      </div>
+                      {step.message && <p className="mt-1 text-[10px] leading-5 text-slate-500">{customerMessage(step.message)}</p>}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="mt-3 rounded-xl bg-[#f8f4ec] px-3 py-2.5 text-[10px] text-slate-500">Run details will appear as CrazyLoops processes each step.</p>
+            )}
+          </section>
+
+          <section className="mt-6" aria-labelledby="result-heading">
+            <h4 id="result-heading" className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">Result</h4>
+            <div className={`mt-3 rounded-xl border p-4 ${status === "Success" ? "border-emerald-200 bg-emerald-50" : status === "Failed" ? "border-rose-200 bg-rose-50" : "border-amber-200 bg-amber-50"}`}>
+              <p className={`text-[11px] font-semibold ${status === "Success" ? "text-emerald-800" : status === "Failed" ? "text-rose-800" : "text-amber-800"}`}>{resultDescription(execution)}</p>
+              {status === "Failed" && <p className="mt-2 text-[10px] leading-5 text-rose-700">Check the stopped step’s setup, then retry it when you’re ready.</p>}
+              {status === "Failed" && (
+                <button type="button" onClick={() => onRetry(execution)} className="mt-3 min-h-9 rounded-lg border border-rose-200 bg-white px-3 text-[10px] font-semibold text-rose-700 hover:bg-rose-50">Retry stopped step</button>
+              )}
+            </div>
+          </section>
+
+          <section className="mt-6" aria-labelledby="submitted-data-heading">
             <h4 className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-              Trigger submission
+              <span id="submitted-data-heading">Submitted data</span>
             </h4>
             <div className="mt-3">
-              {formatJsonToChips(asJsonObject(execution.inputData))}
+              {formatJsonToChips(submittedData)}
             </div>
           </section>
 
           {(summary || aiResult) && (
             <section className="mt-6 space-y-3">
               <h4 className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                Generated result
+                AI result
               </h4>
-              {summary && (
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-                  <p className="flex items-center gap-2 text-[10px] font-semibold text-emerald-800">
-                    <CheckCircle2 className="size-3.5" /> Summary
-                  </p>
-                  <p className="mt-2 whitespace-pre-wrap break-words text-[11px] leading-5 text-emerald-900/80">
-                    {summary}
-                  </p>
-                </div>
-              )}
               {aiResult && (
                 <div className="rounded-xl border border-[#e7c75f] bg-[#fff7dc] p-4">
                   <p className="flex items-center gap-2 text-[10px] font-semibold text-[#7f5d00]">
@@ -387,24 +439,11 @@ function ExecutionDetailsDrawer({
                   </p>
                 </div>
               )}
-            </section>
-          )}
-
-          {httpResults.length > 0 && (
-            <section className="mt-6">
-              <h4 className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">HTTP requests</h4>
-              <div className="mt-3 space-y-2">
-                {httpResults.map((result) => (
-                  <div key={result.stepId} className="rounded-xl border border-[#ded6ca] bg-[#f8f4ec] p-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-full bg-white px-2 py-1 text-[9px] font-bold text-slate-700 ring-1 ring-inset ring-[#ded6ca]">{result.method}</span>
-                      <span className={`text-[10px] font-semibold ${result.status >= 400 ? "text-rose-700" : "text-emerald-700"}`}>{httpStatusLabel(result.status)} · {result.acknowledged ? "Succeeded" : "Failed"}</span>
-                      {result.durationMs !== null && <span className="text-[9px] text-slate-400">{result.durationMs} ms</span>}
-                    </div>
-                    {result.body && <p className="mt-2 max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-[9px] leading-4 text-slate-500">{result.body.slice(0, 1_000)}</p>}
-                  </div>
-                ))}
-              </div>
+              {!aiResult && summary && (
+                <div className="rounded-xl border border-[#ded6ca] bg-[#f8f4ec] p-4">
+                  <p className="whitespace-pre-wrap break-words text-[11px] leading-5 text-slate-600">{customerMessage(summary)}</p>
+                </div>
+              )}
             </section>
           )}
 
@@ -425,33 +464,24 @@ function ExecutionDetailsDrawer({
             </section>
           )}
 
-          {Object.keys(additionalOutput).length > 0 && (
-            <section className="mt-6">
-              <h4 className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                Additional output
-              </h4>
-              <div className="mt-3">{formatJsonToChips(additionalOutput)}</div>
-            </section>
-          )}
-
-          {logs.length > 0 && (
-            <section className="mt-6 pb-3">
-              <h4 className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                Processing log
-              </h4>
-              <div className="mt-3 space-y-2">
-                {logs.map((log, index) => (
-                  <div
-                    key={`${log.message}-${index}`}
-                    className="flex gap-2.5 rounded-xl border border-[#ded6ca] bg-[#f8f4ec] px-3 py-2.5"
-                  >
-                    <span className="shrink-0 text-xs">{log.icon}</span>
-                    <p className="text-[10px] leading-5 text-slate-600">{log.message}</p>
-                  </div>
+          <details className="mt-6 rounded-xl border border-[#ded6ca] bg-[#f8f4ec] p-4 text-[10px] text-slate-500">
+            <summary className="cursor-pointer font-semibold text-slate-700">Technical details</summary>
+            <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+              <div><dt className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Run ID</dt><dd className="mt-0.5 break-all">{execution.id}</dd></div>
+              {execution.workflowVersionId && <div><dt className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Setup ID</dt><dd className="mt-0.5 break-all">{execution.workflowVersionId}</dd></div>}
+              <div><dt className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Started</dt><dd className="mt-0.5">{executionDateFormatter.format(new Date(startedAt))}</dd></div>
+              {durationMs !== null && <div><dt className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Duration</dt><dd className="mt-0.5">{durationMs} ms</dd></div>}
+              {execution.failureCategory && <div><dt className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Failure category</dt><dd className="mt-0.5">{cleanExecutionKey(execution.failureCategory)}</dd></div>}
+            </dl>
+            {httpResults.length > 0 && (
+              <div className="mt-4 space-y-2">
+                <p className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Request responses</p>
+                {httpResults.map((result) => (
+                  <p key={result.stepId} className="rounded-lg bg-white px-3 py-2">{result.method} · {httpStatusLabel(result.status)} · {result.acknowledged ? "Confirmed" : "Not confirmed"}{result.durationMs !== null ? ` · ${result.durationMs} ms` : ""}</p>
                 ))}
               </div>
-            </section>
-          )}
+            )}
+          </details>
         </div>
       </aside>
     </AccessibleDialog>
@@ -541,15 +571,15 @@ export function ExecutionsDataTable({
     <section className="flex h-full min-h-0 flex-col bg-[#f8f5ef]">
       <header className="flex min-h-[65px] shrink-0 flex-wrap items-center gap-3 border-b border-[#e4ddd2] bg-[#fffdfa] px-4 py-3 sm:px-6">
         <div className="min-w-0 basis-full sm:flex-1 sm:basis-auto">
-          <h2 className="text-[13px] font-semibold text-slate-950">Execution history</h2>
-          <p className="mt-0.5 text-[10px] text-slate-400">Public form submissions and test runs</p>
+          <h2 className="text-[13px] font-semibold text-slate-950">Activity</h2>
+          <p className="mt-0.5 text-[10px] text-slate-500">See what your loop has done.</p>
         </div>
         <div className="flex w-full items-center gap-2 sm:w-auto">
           <button
             type="button"
             onClick={refresh}
             disabled={isRefreshing}
-            aria-label="Refresh execution history"
+            aria-label="Refresh activity"
             className="flex h-9 items-center gap-2 rounded-lg border border-[#ded6ca] bg-white px-3 text-[10px] font-medium text-slate-600 transition hover:border-[#d7aa2f] hover:bg-[#fff7dc] disabled:opacity-50"
           >
             {isRefreshing ? <LoaderCircle className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
@@ -562,7 +592,7 @@ export function ExecutionsDataTable({
             className="flex h-9 items-center gap-2 rounded-lg border border-[#dcd4c8] bg-transparent px-3 text-[10px] font-semibold text-[#272536] transition hover:border-[#d7aa2f] hover:bg-[#fff8e3] disabled:opacity-40"
           >
             <Download className="size-3.5" />
-            {isExporting ? "Preparing export..." : "Export all (max 10,000)"}
+            {isExporting ? "Preparing export..." : "Export activity (max 10,000)"}
           </button>
         </div>
       </header>
@@ -578,111 +608,57 @@ export function ExecutionsDataTable({
           <div className="flex min-h-[320px] items-center justify-center rounded-2xl border border-dashed border-[#ded6ca] bg-[#fffdfa] text-center">
             <div className="max-w-xs px-6">
               <span className="mx-auto flex size-12 items-center justify-center rounded-2xl border border-[#e4c35d] bg-[#fff2bd] text-[#8a6200]">
-                <Database className="size-5" />
+                <Activity className="size-5" />
               </span>
-              <h3 className="mt-4 text-sm font-semibold text-slate-900">No execution data yet</h3>
+              <h3 className="mt-4 text-sm font-semibold text-slate-900">No activity yet.</h3>
               <p className="mt-2 text-[11px] leading-5 text-slate-500">
-                Submit the public form or run a test. Results will appear here automatically.
+                Test your loop or activate it to see what happens here.
               </p>
             </div>
           </div>
         ) : (
           <>
-            <div className="space-y-3 md:hidden">
+            <div className="hidden grid-cols-[100px_90px_120px_minmax(160px,1fr)_minmax(200px,1.25fr)_auto] gap-3 rounded-t-2xl border border-b-0 border-[#e4ddd2] bg-[#f8f4ec] px-4 py-3 text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-400 lg:grid">
+              <span>Status</span><span>Run</span><span>When</span><span>What started it</span><span>Result</span><span className="text-right">Details</span>
+            </div>
+            <div className="space-y-3 lg:space-y-0 lg:overflow-hidden lg:rounded-b-2xl lg:border lg:border-[#e4ddd2] lg:bg-[#fffdfa] lg:shadow-sm">
               {executions.map((execution) => (
-                <article key={execution.id} className="rounded-2xl border border-[#e4ddd2] bg-[#fffdfa] p-4 shadow-sm">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="flex items-center gap-1.5 text-[10px] text-slate-500">
-                        <Clock3 className="size-3 shrink-0" />
-                        {executionDateFormatter.format(new Date(execution.createdAt))}
-                      </p>
-                      <div className="mt-2 flex items-center gap-2"><StatusBadge value={execution.outputData} /><ExecutionModeBadge triggerType={execution.triggerType} /></div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedExecution(execution)}
-                      className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-[#e1bd4b] bg-[#fff7dc] px-3 text-[10px] font-semibold text-[#7f5d00]"
-                    >
-                      View Details
-                      <ChevronRight className="size-3.5" />
-                    </button>
-                    {(["failed", "partially_failed"] as const).includes(execution.status as "failed" | "partially_failed") && (
-                      <button type="button" onClick={() => retryExecution(execution)} disabled={isRefreshing} className="flex h-9 shrink-0 items-center rounded-lg border border-[#ded6ca] px-3 text-[10px] font-semibold text-slate-600 disabled:opacity-50">
-                        Retry failed step
-                      </button>
-                    )}
+                <article key={execution.id} className="grid min-w-0 gap-4 rounded-2xl border border-[#e4ddd2] bg-[#fffdfa] p-4 shadow-sm lg:grid-cols-[100px_90px_120px_minmax(160px,1fr)_minmax(200px,1.25fr)_auto] lg:items-center lg:gap-3 lg:rounded-none lg:border-0 lg:border-b lg:border-slate-100 lg:shadow-none lg:last:border-b-0">
+                  <div><span className="mb-1 block text-[9px] font-semibold uppercase tracking-wide text-slate-400 lg:hidden">Status</span><StatusBadge execution={execution} /></div>
+                  <div><span className="mb-1 block text-[9px] font-semibold uppercase tracking-wide text-slate-400 lg:hidden">Run</span><ExecutionModeBadge triggerType={execution.triggerType} /></div>
+                  <div className="min-w-0">
+                    <span className="mb-1 block text-[9px] font-semibold uppercase tracking-wide text-slate-400 lg:hidden">When</span>
+                    <p className="flex items-center gap-1.5 text-[10px] text-slate-500" title={executionDateFormatter.format(new Date(execution.createdAt))}><Clock3 className="size-3 shrink-0" />{humanTimestamp(execution.createdAt)}</p>
                   </div>
-                  <div className="mt-4 border-t border-slate-100 pt-3">
-                    <p className="mb-2 text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-400">Saved data</p>
-                    <div className="grid gap-2">
-                      {columns.slice(0, 4).map((column) => (
-                        <div key={`${column.source}-${column.key}`} className="flex min-w-0 items-center justify-between gap-3 rounded-lg bg-[#f8f4ec] px-2.5 py-2">
-                          <span className="shrink-0 text-[9px] font-semibold text-slate-500">{column.label}</span>
-                          <div className="min-w-0 max-w-[62%] text-right [&>*]:max-w-full">
-                            <ConfiguredValue execution={execution} column={column} />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                  <div className="min-w-0">
+                    <span className="mb-1 block text-[9px] font-semibold uppercase tracking-wide text-slate-400 lg:hidden">What started it</span>
+                    <p className="text-[10px] leading-5 text-slate-700">{triggerDescription(execution.triggerType)}</p>
+                  </div>
+                  <div className="min-w-0">
+                    <span className="mb-1 block text-[9px] font-semibold uppercase tracking-wide text-slate-400 lg:hidden">Result</span>
+                    <p className={`line-clamp-2 text-[10px] leading-5 ${executionStatus(execution) === "Failed" ? "text-rose-700" : "text-slate-600"}`} title={resultDescription(execution)}>{resultDescription(execution)}</p>
+                  </div>
+                  <div className="flex items-center justify-end gap-2">
+                    {executionStatus(execution) === "Failed" && (
+                      <button type="button" onClick={() => retryExecution(execution)} disabled={isRefreshing} className="min-h-9 rounded-lg border border-[#ded6ca] px-3 text-[10px] font-semibold text-slate-600 disabled:opacity-50">Retry</button>
+                    )}
+                    <button type="button" onClick={() => setSelectedExecution(execution)} className="flex min-h-9 items-center gap-1.5 rounded-lg border border-[#ded6ca] bg-white px-3 text-[10px] font-semibold text-slate-600 transition hover:border-[#d7aa2f] hover:bg-[#fff7dc] hover:text-[#7f5d00]">
+                      View details <ChevronRight className="size-3.5" />
+                    </button>
                   </div>
                 </article>
               ))}
             </div>
-
-            <div className="hidden overflow-x-auto rounded-2xl border border-[#e4ddd2] bg-[#fffdfa] shadow-sm md:block">
-              <table className="min-w-full border-collapse text-left">
-                <thead className="bg-[#f8f4ec]">
-                  <tr className="border-b border-[#e4ddd2] text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-                    <th className="min-w-44 px-4 py-3">Received Date</th>
-                    {columns.map((column) => (
-                      <th key={`${column.source}-${column.key}`} className="min-w-40 px-4 py-3">{column.label}</th>
-                    ))}
-                    <th className="min-w-36 px-4 py-3 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {executions.map((execution) => (
-                    <tr key={execution.id} className="border-b border-slate-100 align-middle last:border-0">
-                      <td className="px-4 py-4 text-[10px] text-slate-500">
-                        <div>{executionDateFormatter.format(new Date(execution.createdAt))}</div>
-                        <div className="mt-1"><ExecutionModeBadge triggerType={execution.triggerType} /></div>
-                      </td>
-                      {columns.map((column) => (
-                        <td key={`${column.source}-${column.key}`} className="px-4 py-4">
-                          <ConfiguredValue execution={execution} column={column} />
-                        </td>
-                      ))}
-                      <td className="px-4 py-4 text-right">
-                        {(["failed", "partially_failed"] as const).includes(execution.status as "failed" | "partially_failed") && (
-                          <button type="button" onClick={() => retryExecution(execution)} disabled={isRefreshing} className="mr-2 inline-flex h-9 items-center rounded-lg border border-[#ded6ca] px-3 text-[10px] font-semibold text-slate-600 disabled:opacity-50">
-                            Retry failed step
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => setSelectedExecution(execution)}
-                          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#ded6ca] bg-white px-3 text-[10px] font-semibold text-slate-600 transition hover:border-[#d7aa2f] hover:bg-[#fff7dc] hover:text-[#7f5d00]"
-                        >
-                          View Details
-                          <ChevronRight className="size-3.5" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
             {nextCursor && (
               <button type="button" onClick={loadMore} disabled={isRefreshing} className="mx-auto mt-5 flex h-9 items-center rounded-lg border border-[#ded6ca] bg-white px-4 text-[10px] font-semibold text-slate-600 disabled:opacity-50">
-                {isRefreshing ? "Loading..." : "Load older executions"}
+                {isRefreshing ? "Loading..." : "Load older activity"}
               </button>
             )}
           </>
         )}
       </div>
 
-      <ExecutionDetailsDrawer execution={selectedExecution} onClose={closeDetails} />
+      <ExecutionDetailsDrawer execution={selectedExecution} onClose={closeDetails} onRetry={retryExecution} columns={columns} />
     </section>
   );
 }

@@ -167,7 +167,7 @@ test("3-32/33. export batches all rows to a stated cap and prevents spreadsheet 
   assert.match(executionAction, /MAX_EXPORT_ROWS = 10_000/);
   assert.match(executionAction, /while \(rows\.length < MAX_EXPORT_ROWS \+ 1\)/);
   assert.match(executionAction, /\/\^\[=\+\\-@\\t\\r\]\//);
-  assert.match(table, /Export all \(max 10,000\)/);
+  assert.match(table, /Export activity \(max 10,000\)/);
 });
 
 test("3-34/35. duplicate run/save protection is server/database authoritative", () => {

@@ -109,7 +109,7 @@ function destinationStep(
     const reply = capabilityId === "slack_reply_in_thread";
     const aiStep = [...previousSteps].reverse().find((step) => step.type === "ai_transform");
     const triggerPath = previousSteps[0]?.type === "public_form_trigger" ? "details" : "message.text";
-    return { id, type: "connector_action", capabilityId, title: destination.displayName, description: reply ? "Replies in the selected Slack thread after provider acknowledgement." : "Sends to the selected Slack channel after provider acknowledgement.", inputsRequired: [{ key: "channel", label: "Slack channel", type: "text" }, ...(reply ? [{ key: "threadTs", label: "Slack thread", type: "text" as const }] : []), { key: "text", label: reply ? "Reply" : "Message", type: "text" }], config: connectorConfig({ connectorId: "slack", operationKind: "action", operationKey: reply ? "reply_in_thread" : "send_channel_message", operationVersion: 1, mappings: [...(reply ? [{ target: "threadTs", source: { kind: "trigger" as const, path: "message.threadTs" } }] : []), ...(aiStep ? [{ target: "text", source: { kind: "ai" as const, stepId: aiStep.id } }] : [{ target: "text", source: { kind: "trigger" as const, path: triggerPath } }])] }, branch) };
+    return { id, type: "connector_action", capabilityId, title: destination.displayName, description: reply ? "Replies in the selected Slack thread after Slack confirms receipt." : "Sends to the selected Slack channel after Slack confirms receipt.", inputsRequired: [{ key: "channel", label: "Slack channel", type: "text" }, ...(reply ? [{ key: "threadTs", label: "Slack thread", type: "text" as const }] : []), { key: "text", label: reply ? "Reply" : "Message", type: "text" }], config: connectorConfig({ connectorId: "slack", operationKind: "action", operationKey: reply ? "reply_in_thread" : "send_channel_message", operationVersion: 1, mappings: [...(reply ? [{ target: "threadTs", source: { kind: "trigger" as const, path: "message.threadTs" } }] : []), ...(aiStep ? [{ target: "text", source: { kind: "ai" as const, stepId: aiStep.id } }] : [{ target: "text", source: { kind: "trigger" as const, path: triggerPath } }])] }, branch) };
   }
   if (capabilityId.startsWith("notion_")) {
     const operationKey = capabilityId.replace("notion_", "");
@@ -149,7 +149,7 @@ function destinationStep(
   if (capabilityId === "generate_pdf") {
     return { id, type: "generate_pdf", capabilityId, title: "Generate PDF", description: "Creates and stores a downloadable PDF document.", config: { documentTemplate: defaultDocumentTemplate(workflowName, previousSteps.some((step) => step.type === "ai_transform")), ...(branch ? { branch } : {}) } };
   }
-  return { id, type: "store_data", capabilityId: "flowmind_data_store", title: "Store inside CrazyLoops", description: "Stores the submission and completed results in Executions & Data.", ...(branch ? { config: { branch } } : {}) };
+  return { id, type: "store_data", capabilityId: "flowmind_data_store", title: "Store inside CrazyLoops", description: "Stores the submission and completed results in Activity.", ...(branch ? { config: { branch } } : {}) };
 }
 
 export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWorkflow {

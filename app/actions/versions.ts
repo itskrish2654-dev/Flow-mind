@@ -34,7 +34,7 @@ export async function listWorkflowVersions(workflowId: string): Promise<
     .eq("workflow_id", id.data)
     .eq("user_id", auth.user.id)
     .order("version_number", { ascending: false });
-  if (error) return { ok: false, error: "Version history could not be loaded." };
+  if (error) return { ok: false, error: "Change history could not be loaded." };
   return {
     ok: true,
     versions: (data ?? []).map((version) => ({
@@ -77,7 +77,7 @@ export async function rollbackWorkflowVersion(workflowId: string, sourceVersionI
       workflow: workflow.data,
       setupConfig: setup,
       scope: "rollback",
-      summary: `Restored version ${source.version_number}; newer history was preserved.`,
+      summary: "Restored an earlier setup; newer history was preserved.",
       sourceVersionId: request.data.sourceVersionId,
     });
     revalidatePath(`/dashboard/projects/${request.data.workflowId}`);

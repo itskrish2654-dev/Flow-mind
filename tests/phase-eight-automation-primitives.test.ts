@@ -149,7 +149,7 @@ test("8C-1. Preview has no execution path and Live Test is durable and marked TE
   assert.match(action, /triggerType: "manual_test"/);
   assert.match(action, /mode: "test"/);
   assert.match(history, /triggerType === "manual_test"/);
-  assert.match(history, /"TEST"/);
+  assert.match(history, /"Test run"/);
 });
 
 test("8C-2. Live Test warns about side effects, reports outcomes, and offers activation", async () => {
