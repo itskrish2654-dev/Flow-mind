@@ -145,3 +145,21 @@ test("D3.4-C connection changes remain immutable draft changes until explicit pu
   assert.match(workspace, /if \(published && !id\.startsWith\("test_input:"\)\) setHasUnpublishedChanges\(true\)/);
   assert.match(journey, /Publish changes/);
 });
+
+test("D3.4-C publication persists current non-secret setup before the atomic cutover", async () => {
+  const [publication, workspace] = await Promise.all([
+    readFile("app/actions/workflow.ts", "utf8"),
+    readFile("components/automation-workspace.tsx", "utf8"),
+  ]);
+  const action = publication.slice(
+    publication.indexOf("export async function setWorkflowPublication"),
+    publication.indexOf("export async function getWorkflowConnectorEndpoints"),
+  );
+  assert.match(workspace, /setWorkflowPublication\([\s\S]*publish \? values : undefined/);
+  assert.match(action, /sanitizeSetupConfig/);
+  assert.match(action, /!key\.startsWith\("test_input:"\)/);
+  assert.match(action, /createImmutableWorkflowVersion/);
+  assert.match(action, /loadWorkflowSnapshot\(admin, request\.data\.workflowId, auth\.user\.id\)/);
+  assert.match(action, /p_expected_current_version_id: currentVersionId/);
+  assert.match(action, /admin\.rpc\("publish_workflow_version"/);
+});

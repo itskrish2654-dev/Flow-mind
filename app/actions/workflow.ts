@@ -20,11 +20,12 @@ import {
   enforceRateLimit,
 } from "@/lib/security/limits";
 import { resolveTrustedWebhook } from "@/lib/security/outbound-webhook";
-import { securityLog } from "@/lib/security/redaction";
+import { isSensitiveFieldName, securityLog } from "@/lib/security/redaction";
 import { captureOperationalError, trackProductEvent, type ProductEventName } from "@/lib/observability";
 import {
   createImmutableWorkflowVersion,
   loadWorkflowSnapshot,
+  sanitizeSetupConfig,
   type WorkflowChangeScope,
 } from "@/lib/workflow-versioning";
 import { disableWorkflowSchedule, prepareWorkflowSchedule, scheduleStep } from "@/lib/workflow-schedules";
@@ -678,25 +679,58 @@ export async function getWorkflow(workflowId: string): Promise<GetWorkflowResult
 export async function setWorkflowPublication(
   workflowId: string,
   publish: boolean,
+  setupConfig?: Record<string, string>,
 ): Promise<WorkflowPublicationResult> {
-  const parsedId = z.string().uuid().safeParse(workflowId);
-  if (!parsedId.success) return { ok: false, error: "Workflow not found." };
+  const request = z.object({
+    workflowId: z.string().uuid(),
+    publish: z.boolean(),
+    setupConfig: z.record(z.string().max(160), z.string().max(10_000)).refine(
+      (value) => Object.keys(value).length <= 100,
+      "Too many setup values.",
+    ).optional(),
+  }).safeParse({ workflowId, publish, setupConfig });
+  if (!request.success) return { ok: false, error: "Workflow setup is invalid." };
   const auth = await getAuthenticatedContext();
   if (!auth) return { ok: false, error: "Unauthorized" };
   const admin = createAdminClient();
-  const { data, error } = await auth.supabase
-    .from("workflows")
-    .select("compiled_steps, current_version_id")
-    .eq("id", parsedId.data)
-    .eq("user_id", auth.user.id)
-    .maybeSingle();
-  if (error || !data) return { ok: false, error: "Workflow not found." };
-  if (!data.current_version_id) return { ok: false, error: "This workflow has no saved setup to publish." };
-  const workflow = CompiledWorkflowSchema.safeParse(data.compiled_steps);
+  let snapshot = await loadWorkflowSnapshot(admin, request.data.workflowId, auth.user.id);
+  if (!snapshot) return { ok: false, error: "Workflow not found." };
+  let currentVersionId = snapshot.versionId;
+  let workflow = CompiledWorkflowSchema.safeParse(snapshot.workflow);
   let publicationSetupConfig: Record<string, string> = {};
-  if (publish) {
+  if (request.data.publish) {
     if (!workflow.success) {
       return { ok: false, error: "This automation needs to be created again." };
+    }
+    if (request.data.setupConfig) {
+      const submittedSetup = sanitizeSetupConfig(
+        Object.fromEntries(
+          Object.entries(request.data.setupConfig).filter(([key]) => !key.startsWith("test_input:")),
+        ),
+        isSensitiveFieldName,
+      );
+      const normalize = (value: Record<string, string>) => JSON.stringify(
+        Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right))),
+      );
+      if (normalize(submittedSetup) !== normalize(snapshot.setupConfig)) {
+        try {
+          await createImmutableWorkflowVersion(admin, {
+            workflowId: snapshot.workflowId,
+            userId: auth.user.id,
+            expectedVersionId: snapshot.versionId,
+            workflow: snapshot.workflow,
+            setupConfig: submittedSetup,
+            scope: "setup",
+            summary: "Saved non-secret workflow setup before publication.",
+          });
+        } catch (versionError) {
+          return { ok: false, error: versionError instanceof Error ? versionError.message : "Workflow setup could not be saved." };
+        }
+        snapshot = (await loadWorkflowSnapshot(admin, request.data.workflowId, auth.user.id)) ?? snapshot;
+        currentVersionId = snapshot.versionId;
+        workflow = CompiledWorkflowSchema.safeParse(snapshot.workflow);
+        if (!workflow.success) return { ok: false, error: "This automation needs to be created again." };
+      }
     }
     const hasConnectorTrigger = workflow.data.steps.some((step) => step.config?.connector?.operationKind === "trigger");
     const hasSchedule = Boolean(scheduleStep(workflow.data));
@@ -711,15 +745,14 @@ export async function setWorkflowPublication(
         error: unavailable.assessment.message ?? "This workflow cannot be published safely.",
       };
     }
-    const snapshot = await loadWorkflowSnapshot(admin, parsedId.data, auth.user.id);
-    publicationSetupConfig = snapshot?.setupConfig ?? {};
+    publicationSetupConfig = snapshot.setupConfig;
     const incomplete = validateRequiredSetupInputs(workflow.data.steps, publicationSetupConfig);
     if (incomplete) return { ok: false, error: incomplete };
     const connectorReadiness = await validateWorkflowConnectorConnections({ userId: auth.user.id, setupConfig: publicationSetupConfig, steps: workflow.data.steps });
     if (connectorReadiness) return { ok: false, error: connectorReadiness };
-    if (hasSchedule && data.current_version_id) {
+    if (hasSchedule) {
       const { count } = await admin.from("workflow_executions").select("id", { count: "exact", head: true })
-        .eq("workflow_id", parsedId.data).eq("workflow_version_id", data.current_version_id)
+        .eq("workflow_id", request.data.workflowId).eq("workflow_version_id", currentVersionId)
         .eq("user_id", auth.user.id).eq("trigger_type", "manual_test").eq("status", "succeeded");
       if (!count) return { ok: false, error: "Run a successful live test before activating this schedule." };
     }
@@ -727,7 +760,7 @@ export async function setWorkflowPublication(
   const { data: activeGmailSubscriptions } = await admin
     .from("connector_subscriptions")
     .select("connection_id")
-    .eq("workflow_id", parsedId.data)
+    .eq("workflow_id", request.data.workflowId)
     .eq("user_id", auth.user.id)
     .eq("connector_id", "google_gmail")
     .eq("status", "active");
@@ -737,11 +770,11 @@ export async function setWorkflowPublication(
   let subscriptionPayload: Json = [];
   let schedulePayload: Json | null = null;
   try {
-    if (publish && workflow.success) {
+    if (request.data.publish && workflow.success) {
       const prepared = await prepareWorkflowConnectorPublication({
         userId: auth.user.id,
-        workflowId: parsedId.data,
-        workflowVersionId: data.current_version_id,
+        workflowId: request.data.workflowId,
+        workflowVersionId: currentVersionId,
         setupConfig: publicationSetupConfig,
         steps: workflow.data.steps,
       });
@@ -755,20 +788,20 @@ export async function setWorkflowPublication(
       ? "turnstile"
       : "honeypot";
     const { data: publication, error: publicationError } = await admin.rpc("publish_workflow_version", {
-      p_workflow_id: parsedId.data,
+      p_workflow_id: request.data.workflowId,
       p_user_id: auth.user.id,
-      p_expected_current_version_id: data.current_version_id,
-      p_publish: publish,
+      p_expected_current_version_id: currentVersionId,
+      p_publish: request.data.publish,
       p_challenge_mode: challengeMode,
       p_subscriptions: subscriptionPayload,
       p_schedule: schedulePayload,
     });
-    if (publicationError || !publication?.[0] || publication[0].published !== publish) {
+    if (publicationError || !publication?.[0] || publication[0].published !== request.data.publish) {
       if (preparedGmailConnectionIds.length > 0) {
         try {
           await stopUnusedGmailWatches(auth.user.id, preparedGmailConnectionIds);
         } catch (cleanupError) {
-          securityLog("Unused Gmail watch cleanup failed after rejected publication", { error: cleanupError, workflowId: parsedId.data });
+          securityLog("Unused Gmail watch cleanup failed after rejected publication", { error: cleanupError, workflowId: request.data.workflowId });
         }
       }
       if (publicationError?.message.toLowerCase().includes("version conflict")) {
@@ -779,21 +812,21 @@ export async function setWorkflowPublication(
     try {
       await stopUnusedGmailWatches(auth.user.id, priorGmailConnectionIds);
     } catch (cleanupError) {
-      securityLog("Unused Gmail watch cleanup failed after publication", { error: cleanupError, workflowId: parsedId.data });
+      securityLog("Unused Gmail watch cleanup failed after publication", { error: cleanupError, workflowId: request.data.workflowId });
     }
   } catch (publicationFailure) {
-    securityLog("Workflow publication failed", { error: publicationFailure, workflowId: parsedId.data });
+    securityLog("Workflow publication failed", { error: publicationFailure, workflowId: request.data.workflowId });
     return { ok: false, error: "Publication status could not be changed safely." };
   }
-  revalidatePath(`/f/${parsedId.data}`);
-  revalidatePath(`/dashboard/projects/${parsedId.data}`);
+  revalidatePath(`/f/${request.data.workflowId}`);
+  revalidatePath(`/dashboard/projects/${request.data.workflowId}`);
   await trackProductEvent({
-    event: publish ? "workflow_published" : "workflow_unpublished",
+    event: request.data.publish ? "workflow_published" : "workflow_unpublished",
     userId: auth.user.id,
-    workflowId: parsedId.data,
-    properties: { published: publish },
+    workflowId: request.data.workflowId,
+    properties: { published: request.data.publish },
   });
-  return { ok: true, published: publish, connectorEndpoints };
+  return { ok: true, published: request.data.publish, connectorEndpoints };
 }
 
 export async function getWorkflowConnectorEndpoints(workflowId: string) {

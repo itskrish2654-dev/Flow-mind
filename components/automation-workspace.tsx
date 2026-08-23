@@ -1734,7 +1734,11 @@ export function AutomationWorkspace({
 
   async function changePublication(publish: boolean): Promise<string | null> {
     if (!workflowId) return "Create the workflow before publishing it.";
-    const result = await setWorkflowPublication(workflowId, publish);
+    const result = await setWorkflowPublication(
+      workflowId,
+      publish,
+      publish ? values : undefined,
+    );
     if (!result.ok) {
       setError(result.error);
       return result.error;
