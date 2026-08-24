@@ -1,0 +1,7 @@
+FROM docker.io/library/node:24.8.0-bookworm-slim@sha256:cadbfafeb6baf87eaaffa40b3640209c4b7fd38cebde65059d15bc39cd636b85
+WORKDIR /mock
+COPY mock-provider.mjs server.crt server.key ./
+RUN chown -R 65532:65532 /mock && chmod 500 /mock && chmod 400 /mock/server.key && chmod 444 /mock/server.crt /mock/mock-provider.mjs
+ENV NODE_ENV=production
+USER 65532:65532
+ENTRYPOINT ["node", "/mock/mock-provider.mjs"]
