@@ -39,6 +39,15 @@ Generic pieces must therefore execute in a fresh restricted process at minimum,
 with container or equivalent sandbox isolation preferred for community code.
 The current Connector Runner process must not import arbitrary piece packages.
 
+The selected HubSpot SDK follows HTTP redirects and its action context exposes
+no injectable HTTP client or cancellation signal. The adapter can bound elapsed
+time and validate a completed response, but it cannot prevent the SDK from
+following a redirect, cancel the underlying socket after a timeout, limit bytes
+before they are downloaded, or enforce DNS/private-network rules. Those controls
+must be applied by the isolated runtime's network namespace/egress proxy. The
+production design must allow only reviewed HubSpot HTTPS origins and reject
+redirect destinations outside that allowlist.
+
 Before using a piece in production, CrazyLoops needs an allowlisted package,
 version, integrity hash, license, capability/action, provider domains, static
 forbidden-import review, vulnerability review, output schema, timeout policy,

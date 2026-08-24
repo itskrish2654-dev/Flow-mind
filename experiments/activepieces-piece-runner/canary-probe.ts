@@ -51,6 +51,7 @@ async function main() {
       credential,
     });
     normalizedContactId = result.output.contactId;
+    if (!provider.isDone()) throw new Error("The mocked provider request was not completed.");
     if (!credential.every((byte) => byte === 0)) throw new Error("Credential buffer was not cleared.");
 
     nock("https://api.hubapi.com")

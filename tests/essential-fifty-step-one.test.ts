@@ -198,6 +198,29 @@ test("timeout and malformed response fail safely", async () => {
   );
 });
 
+test("selected piece follows redirects, proving provider egress must be enforced outside the piece", async () => {
+  nock.disableNetConnect();
+  let redirectedHostReached = false;
+  nock("https://api.hubapi.com")
+    .get(/\/crm\/v3\/objects\/contacts\/contact-redirect/)
+    .query(true)
+    .reply(302, undefined, { Location: "https://redirect-target.example/contact" });
+  nock("https://redirect-target.example")
+    .get("/contact")
+    .reply(() => {
+      redirectedHostReached = true;
+      return [200, { id: "contact-redirect", properties: {}, archived: false }];
+    });
+
+  const result = await executePinnedHubSpotGetContact({
+    capability: HUBSPOT_GET_CONTACT_CAPABILITY,
+    props: { contactId: "contact-redirect" },
+    credential: Buffer.from("fake-token"),
+  });
+  assert.equal(result.output.contactId, "contact-redirect");
+  assert.equal(redirectedHostReached, true);
+});
+
 test("canary probe uses no Activepieces service/state and persists no plaintext", () => {
   const canary = `CRAZYLOOPS_E50_CANARY_${randomBytes(32).toString("hex")}`;
   const canaryTemp = mkdtempSync(join(tmpdir(), "crazyloops-e50-canary-"));
