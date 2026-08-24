@@ -311,15 +311,36 @@ function runMock(index: number, credential: string, contactId = `contact-${index
       throw new Error("Sandbox runtime timed out without gateway EGRESS_TIMEOUT evidence.");
     }
 
-    const response: Record<string, unknown> = runtimeTimedOut
-      ? {
+    let response: Record<string, unknown>;
+
+    if (runtimeTimedOut) {
+      response = {
+        protocolVersion: SANDBOX_PROTOCOL_VERSION,
+        requestId: topology.requestId,
+        ok: false,
+        errorCategory: "EGRESS_TIMEOUT",
+        retryable: true,
+      };
+    } else {
+      try {
+        response = parseJson(result.stdout);
+      } catch {
+        const gatewayOutcome = gatewayOutcomes.at(-1);
+        if (gatewayOutcome !== "EGRESS_TRANSFER_LIMIT") {
+          throw new Error(
+            "Sandbox returned malformed JSON without authoritative gateway EGRESS_TRANSFER_LIMIT evidence.",
+          );
+        }
+
+        response = {
           protocolVersion: SANDBOX_PROTOCOL_VERSION,
           requestId: topology.requestId,
           ok: false,
-          errorCategory: "EGRESS_TIMEOUT",
-          retryable: true,
-        }
-      : parseJson(result.stdout);
+          errorCategory: "EGRESS_TRANSFER_LIMIT",
+          retryable: false,
+        };
+      }
+    }
 
     if (topology.mock) scanSurfaces.push(dockerOk(["logs", topology.mock], "mock logs").stdout);
     const inspect = dockerOk(["inspect", topology.sandbox], "inspect completed sandbox").stdout;

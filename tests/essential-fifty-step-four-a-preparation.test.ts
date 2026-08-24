@@ -164,6 +164,12 @@ describe("Essential 50 Step 4A.2 Docker real-host preparation", () => {
     assert.match(source, /ETIMEDOUT/);
     assert.match(source, /gatewayOutcomes\.at\(-1\) !== "EGRESS_TIMEOUT"/);
     assert.match(source, /errorCategory: "EGRESS_TIMEOUT"/);
+    assert.match(source, /gatewayOutcome !== "EGRESS_TRANSFER_LIMIT"/);
+    assert.match(source, /errorCategory: "EGRESS_TRANSFER_LIMIT"/);
+    assert.match(
+      source,
+      /malformed JSON without authoritative gateway EGRESS_TRANSFER_LIMIT evidence/,
+    );
     assert.match(source, /runResourceFailure\("crash"\)/);
     assert.match(source, /runResourceFailure\("oom"\)/);
     assert.match(source, /runGatewayFailure/);
