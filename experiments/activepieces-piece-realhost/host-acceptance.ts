@@ -471,13 +471,24 @@ async function main() {
   canaries.push(...fakeCredentials);
   let report: Record<string, unknown> | undefined;
   try {
+    process.stderr.write("STEP 4A PHASE: build-images\n");
     buildImages();
+
+    process.stderr.write("STEP 4A PHASE: real-tls\n");
     const tls = runRealTlsProbe();
+
+    process.stderr.write("STEP 4A PHASE: direct-isolation\n");
     const direct = runDirectMatrix(fakeCredentials[0]);
-    const samples = Array.from({ length: 10 }, (_, index) => runMock(index, fakeCredentials[index + 1]));
+
+    const samples = Array.from({ length: 10 }, (_, index) => {
+      process.stderr.write(`STEP 4A PHASE: mock-performance-${index}\n`);
+      return runMock(index, fakeCredentials[index + 1]);
+    });
     if (!samples.every((sample) => sample.ok)) throw new Error("Mock piece performance run failed.");
     assertContainerHardening(samples[0]);
+    process.stderr.write("STEP 4A PHASE: concurrency\n");
     const concurrent = await runConcurrent([fakeCredentials[12], fakeCredentials[13]]);
+    process.stderr.write("STEP 4A PHASE: timeout-failure\n");
     const timeout = runMock(84, fakeCredentials[14], "timeout");
     const oversized = runMock(85, fakeCredentials[15], "oversized");
     const gatewayFailure = runGatewayFailure(fakeCredentials[16]);
