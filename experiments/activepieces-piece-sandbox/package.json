@@ -1,0 +1,10 @@
+{
+  "name": "crazyloops-e50-piece-sandbox",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@activepieces/piece-hubspot": "0.8.10",
+    "nock": "14.0.17"
+  }
+}

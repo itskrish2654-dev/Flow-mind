@@ -1,0 +1,7 @@
+*
+!Dockerfile
+!package.json
+!package-lock.json
+!manifest.mjs
+!protocol.mjs
+!worker.mjs
