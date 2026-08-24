@@ -89,10 +89,25 @@ describe("Essential 50 Step 4A.2 Docker real-host preparation", () => {
 
   test("real TLS probe sends no application data or authentication", () => {
     const source = readFileSync("experiments/activepieces-piece-realhost/tls-probe.mjs", "utf8");
+    assert.match(source, /E50_TLS_CONNECT_HOST/);
+    assert.match(source, /host: connectHost/);
     assert.match(source, /servername: hostname/);
     assert.match(source, /rejectUnauthorized: true/);
     assert.match(source, /applicationDataSent: false/);
     assert.doesNotMatch(source, /socket\.write\(|authorization|bearer|token/i);
+  });
+
+  test("real provider DNS is separate from the sandbox gateway alias", () => {
+    const source = readFileSync("experiments/activepieces-piece-realhost/host-acceptance.ts", "utf8");
+    assert.match(
+      source,
+      /"--alias", "e50-hubspot-gateway", internal, gateway\], "connect real gateway internal"/,
+    );
+    assert.doesNotMatch(
+      source,
+      /"--alias", "api\.hubapi\.com", internal, gateway\], "connect real gateway internal"/,
+    );
+    assert.match(source, /E50_TLS_CONNECT_HOST=e50-hubspot-gateway/);
   });
 
   test("Docker controls are fixed outside piece code and expose no host mounts/socket", () => {

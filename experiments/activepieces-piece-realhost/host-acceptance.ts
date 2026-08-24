@@ -234,7 +234,7 @@ function setupRealTopology(): Topology {
   dockerOk(["network", "create", "--internal", "--label", LABEL, internal], "create real internal network");
   dockerOk(["network", "create", "--label", LABEL, upstream], "create real egress network");
   dockerOk(["run", "--detach", "--pull=never", "--name", gateway, "--label", LABEL, "--network", upstream, ...securityArgs("gateway"), "--sysctl", "net.ipv4.ip_unprivileged_port_start=0", "--env", `E50_REQUEST_ID=${requestId}`, "--env", "E50_RESOLVER_MODE=real", images.gateway], "start real gateway");
-  dockerOk(["network", "connect", "--alias", "api.hubapi.com", internal, gateway], "connect real gateway internal");
+  dockerOk(["network", "connect", "--alias", "e50-hubspot-gateway", internal, gateway], "connect real gateway internal");
   waitGateway(gateway);
   return { requestId, sandbox, gateway, internal, upstream };
 }
@@ -308,7 +308,7 @@ function runMock(index: number, credential: string, contactId = `contact-${index
 function runRealTlsProbe() {
   const topology = setupRealTopology();
   try {
-    createSandbox(topology, ["node", "/sandbox/tls-probe.mjs"]);
+    createSandbox(topology, ["node", "/sandbox/tls-probe.mjs"], ["E50_TLS_CONNECT_HOST=e50-hubspot-gateway"]);
     const result = startSandbox(topology);
     const response = parseJson(result.stdout);
     const gateway = gatewayEvidence(topology);
