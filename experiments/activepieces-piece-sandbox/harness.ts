@@ -124,8 +124,15 @@ function podman(args: string[], options: { input?: string; timeout?: number; max
   return result;
 }
 
-process.once("exit", () => {
-  rmSync(RUNTIME_WORKING_DIRECTORY, { recursive: true, force: true });
+process.once("beforeExit", () => {
+  setTimeout(() => {
+    rmSync(RUNTIME_WORKING_DIRECTORY, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 100,
+    });
+  }, 250);
 });
 
 export function sandboxRuntimeAvailable() {
