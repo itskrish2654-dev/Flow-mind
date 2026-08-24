@@ -105,7 +105,7 @@ function infrastructureSnapshot() {
   if (!services["activepieces-app"].ports.includes("127.0.0.1:8080")) throw new Error("Activepieces loopback bind changed or is absent.");
   for (const network of ["crazyloops-private", "activepieces_activepieces"]) dockerOk(["network", "inspect", network], `inspect network ${network}`);
   if (dockerOk(["exec", "redis", "redis-cli", "PING"], "Redis PING").stdout.trim() !== "PONG") throw new Error("Redis is not healthy.");
-  const runnerStatus = command("curl", ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "-X", "POST", "http://127.0.0.1:8788/v1/execute"]);
+  const runnerStatus = command("curl", ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "-X", "POST", "-H", "Content-Type: application/json", "--data", "{}", "http://127.0.0.1:8788/v1/execute"]);
   if (runnerStatus.status !== 0 || runnerStatus.stdout.trim() !== "401") throw new Error("Runner unsigned health rejection is not 401.");
   return {
     services,

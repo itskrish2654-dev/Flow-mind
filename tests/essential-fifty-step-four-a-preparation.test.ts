@@ -129,6 +129,17 @@ describe("Essential 50 Step 4A.2 Docker real-host preparation", () => {
     assert.doesNotMatch(source, /Config\.Env|\.env\.local|process\.env\[["']SUPABASE|ACTIVEPIECES_BRIDGE_SECRET/);
   });
 
+  test("Runner precheck sends valid unsigned JSON and requires authentication rejection", () => {
+    const source = readFileSync("experiments/activepieces-piece-realhost/host-acceptance.ts", "utf8");
+    const probe = source.match(/const runnerStatus = command\("curl", \[[\s\S]*?\]\);/)?.[0] ?? "";
+    assert.match(probe, /"-X", "POST"/);
+    assert.match(probe, /"-H", "Content-Type: application\/json"/);
+    assert.match(probe, /"--data", "\{\}"/);
+    assert.match(probe, /http:\/\/127\.0\.0\.1:8788\/v1\/execute/);
+    assert.doesNotMatch(probe, /authorization|x-crazyloops|signature|secret/i);
+    assert.match(source, /runnerStatus\.stdout\.trim\(\) !== "401"/);
+  });
+
   test("fake canaries, two-way concurrency, failures, performance, and sanitized report are mandatory", () => {
     const source = readFileSync("experiments/activepieces-piece-realhost/host-acceptance.ts", "utf8");
     assert.match(source, /E50_HUBSPOT_FAKE_/);
