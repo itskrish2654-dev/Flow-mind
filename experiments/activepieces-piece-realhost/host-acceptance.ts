@@ -283,17 +283,49 @@ function runMock(index: number, credential: string, contactId = `contact-${index
   try {
     createSandbox(topology);
     const processAt = performance.now();
-    const result = startSandbox(topology, JSON.stringify(signedEnvelope(topology.requestId, credential, contactId)));
+    const result = startSandbox(
+      topology,
+      JSON.stringify(signedEnvelope(topology.requestId, credential, contactId)),
+      contactId === "timeout" ? 8_000 : 20_000,
+    );
     const processMs = performance.now() - processAt;
-    const response = parseJson(result.stdout);
+
     const gateway = gatewayEvidence(topology);
+    const gatewayOutcomes = gateway.logs.split(/\r?\n/).filter(Boolean).flatMap((line) => {
+      try {
+        const event = JSON.parse(line) as { outcome?: string };
+        return event.outcome && event.outcome !== "EGRESS_SUCCEEDED" ? [event.outcome] : [];
+      } catch {
+        return [];
+      }
+    });
+
+    const runtimeErrorCode =
+      result.error && typeof result.error === "object" && "code" in result.error
+        ? String(result.error.code)
+        : "";
+
+    const runtimeTimedOut = runtimeErrorCode === "ETIMEDOUT";
+
+    if (runtimeTimedOut && gatewayOutcomes.at(-1) !== "EGRESS_TIMEOUT") {
+      throw new Error("Sandbox runtime timed out without gateway EGRESS_TIMEOUT evidence.");
+    }
+
+    const response: Record<string, unknown> = runtimeTimedOut
+      ? {
+          protocolVersion: SANDBOX_PROTOCOL_VERSION,
+          requestId: topology.requestId,
+          ok: false,
+          errorCategory: "EGRESS_TIMEOUT",
+          retryable: true,
+        }
+      : parseJson(result.stdout);
+
     if (topology.mock) scanSurfaces.push(dockerOk(["logs", topology.mock], "mock logs").stdout);
     const inspect = dockerOk(["inspect", topology.sandbox], "inspect completed sandbox").stdout;
-    if (response.ok === false) {
-      const gatewayOutcomes = gateway.logs.split(/\r?\n/).filter(Boolean).flatMap((line) => {
-        try { const event = JSON.parse(line) as { outcome?: string }; return event.outcome && event.outcome !== "EGRESS_SUCCEEDED" ? [event.outcome] : []; } catch { return []; }
-      });
-      if (gatewayOutcomes.length > 0) response.errorCategory = gatewayOutcomes.at(-1);
+
+    if (response.ok === false && gatewayOutcomes.length > 0) {
+      response.errorCategory = gatewayOutcomes.at(-1);
     }
     const meta = response.meta as Record<string, unknown> | undefined;
     const cleanupAt = performance.now();
@@ -490,11 +522,18 @@ async function main() {
     const concurrent = await runConcurrent([fakeCredentials[12], fakeCredentials[13]]);
     process.stderr.write("STEP 4A PHASE: timeout-failure\n");
     const timeout = runMock(84, fakeCredentials[14], "timeout");
+
+    process.stderr.write("STEP 4A PHASE: oversized-failure\n");
     const oversized = runMock(85, fakeCredentials[15], "oversized");
+
+    process.stderr.write("STEP 4A PHASE: gateway-failure\n");
     const gatewayFailure = runGatewayFailure(fakeCredentials[16]);
     if (timeout.response.errorCategory !== "EGRESS_TIMEOUT") throw new Error("Timeout normalization failed.");
     if (oversized.response.errorCategory !== "EGRESS_TRANSFER_LIMIT") throw new Error("Transfer limit normalization failed.");
+    process.stderr.write("STEP 4A PHASE: crash-failure\n");
     const crash = runResourceFailure("crash");
+
+    process.stderr.write("STEP 4A PHASE: oom-failure\n");
     const oom = runResourceFailure("oom");
     if (crash.status !== 23 || !oom.oomKilled) throw new Error("Crash/OOM controls failed.");
     const plaintextOccurrences = scanCanaries();

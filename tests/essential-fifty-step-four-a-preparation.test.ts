@@ -160,6 +160,10 @@ describe("Essential 50 Step 4A.2 Docker real-host preparation", () => {
     assert.match(source, /E50_HUBSPOT_FAKE_/);
     assert.match(source, /runConcurrent/);
     assert.match(source, /Array\.from\(\{ length: 10 \}/);
+    assert.match(source, /runtimeErrorCode/);
+    assert.match(source, /ETIMEDOUT/);
+    assert.match(source, /gatewayOutcomes\.at\(-1\) !== "EGRESS_TIMEOUT"/);
+    assert.match(source, /errorCategory: "EGRESS_TIMEOUT"/);
     assert.match(source, /runResourceFailure\("crash"\)/);
     assert.match(source, /runResourceFailure\("oom"\)/);
     assert.match(source, /runGatewayFailure/);
