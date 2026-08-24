@@ -144,6 +144,15 @@ describe("Essential 50 Step 4A.2 Docker real-host preparation", () => {
     assert.doesNotMatch(source, /Config\.Env|\.env\.local|process\.env\[["']SUPABASE|ACTIVEPIECES_BRIDGE_SECRET/);
   });
 
+  test("firewall baseline ignores nft runtime counters and handles only", () => {
+    const source = readFileSync("experiments/activepieces-piece-realhost/host-acceptance.ts", "utf8");
+    assert.match(source, /function normalizeNftRuleset/);
+    assert.match(source, /counter packets/);
+    assert.match(source, /# handle/);
+    assert.match(source, /nftHash: normalizedNftHash\(\)/);
+    assert.match(source, /normalized firewall policy baseline changed/);
+  });
+
   test("Runner precheck sends valid unsigned JSON and requires authentication rejection", () => {
     const source = readFileSync("experiments/activepieces-piece-realhost/host-acceptance.ts", "utf8");
     const probe = source.match(/const runnerStatus = command\("curl", \[[\s\S]*?\]\);/)?.[0] ?? "";

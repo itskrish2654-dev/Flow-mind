@@ -75,6 +75,19 @@ function hashCommand(executable: string, args: string[]) {
   return result.status === 0 ? createHash("sha256").update(result.stdout).digest("hex") : "unavailable";
 }
 
+function normalizeNftRuleset(value: string) {
+  return value
+    .replace(/counter packets \d+ bytes \d+/g, "counter")
+    .replace(/# handle \d+/g, "");
+}
+
+function normalizedNftHash() {
+  const result = command("nft", ["list", "ruleset"]);
+  return result.status === 0
+    ? createHash("sha256").update(normalizeNftRuleset(result.stdout)).digest("hex")
+    : "unavailable";
+}
+
 function git(args: string[]) {
   const result = command("git", ["-c", `safe.directory=${ROOT}`, ...args]);
   requireResult(result, `git ${args[0]}`);
@@ -110,7 +123,7 @@ function infrastructureSnapshot() {
   return {
     services,
     listenHash: hashCommand("ss", ["-lnt"]),
-    nftHash: hashCommand("nft", ["list", "ruleset"]),
+    nftHash: normalizedNftHash(),
   };
 }
 
@@ -509,7 +522,7 @@ function compareInfrastructure(before: ReturnType<typeof infrastructureSnapshot>
     const right = after.services[name];
     if (left.id !== right.id || left.restartCount !== right.restartCount || left.status !== right.status || left.ports !== right.ports) throw new Error(`${name} changed during acceptance.`);
   }
-  if (before.listenHash !== after.listenHash || before.nftHash !== after.nftHash) throw new Error("Host listener or firewall baseline changed.");
+  if (before.listenHash !== after.listenHash || before.nftHash !== after.nftHash) throw new Error("Host listener or normalized firewall policy baseline changed.");
   return true;
 }
 
