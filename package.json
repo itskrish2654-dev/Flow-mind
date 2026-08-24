@@ -36,6 +36,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@activepieces/piece-hubspot": "0.8.10",
     "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4",
@@ -45,6 +46,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "^16.3.0",
+    "nock": "14.0.17",
     "tailwindcss": "^4",
     "tsx": "^4.23.12",
     "typescript": "^5"
