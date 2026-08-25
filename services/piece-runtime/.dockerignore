@@ -1,0 +1,6 @@
+*
+!Dockerfile.sandbox
+!package.json
+!package-lock.json
+!src/
+!src/*.mjs

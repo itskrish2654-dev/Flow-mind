@@ -1,0 +1,9 @@
+{
+  "name": "crazyloops-piece-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@activepieces/piece-hubspot": "0.8.10"
+  }
+}
