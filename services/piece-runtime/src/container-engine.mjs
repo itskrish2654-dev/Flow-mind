@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 
+import { REVIEWED_PIECE_BUILDS } from "./build-registry.mjs";
 import { deepFreeze } from "./deep-freeze.mjs";
 import { PieceRuntimeError } from "./errors.mjs";
 import { REVIEWED_MANIFESTS } from "./manifest-registry.mjs";
 import { validateInvocationRequest } from "./protocol.mjs";
 
 export const PIECE_RUNTIME_IMAGES = deepFreeze({
-  sandbox: "crazyloops/piece-runtime-hubspot:0.8.10-step5a",
   gateway: "crazyloops/piece-runtime-gateway:step5a",
 });
 
@@ -18,9 +18,10 @@ export function validateResourceName(value) {
   return typeof value === "string" && /^cl-piece-[a-z]+-[a-f0-9]{16}$/.test(value);
 }
 
-export function buildInvocationPlan(requestValue, manifests = REVIEWED_MANIFESTS) {
+export function buildInvocationPlan(requestValue, manifests = REVIEWED_MANIFESTS, builds = REVIEWED_PIECE_BUILDS) {
   const request = validateInvocationRequest(requestValue);
   const manifest = manifests.get(request.capabilityId, request.capabilityVersion);
+  const build = builds.getForManifest(manifest);
   const id = suffix(request.requestId);
   const names = {
     sandbox: `cl-piece-sandbox-${id}`,
@@ -36,11 +37,19 @@ export function buildInvocationPlan(requestValue, manifests = REVIEWED_MANIFESTS
     names,
     labels: { "crazyloops.runtime": "piece-runtime-step5a", "crazyloops.invocation": id },
     manifestKey: `${manifest.capabilityId}@${manifest.capabilityVersion}`,
-    images: PIECE_RUNTIME_IMAGES,
+    buildId: build.buildId,
+    images: {
+      sandbox: build.sandboxImage,
+      gateway: PIECE_RUNTIME_IMAGES.gateway,
+    },
     sandbox: {
       network: names.internalNetwork,
       internalOnlyNetwork: true,
-      dnsAliases: manifest.destinations.map((destination) => destination.hostname),
+      canonicalHostMappings: manifest.destinations.map((destination) => ({
+        hostname: destination.hostname,
+        target: "gateway_internal_ip",
+        gatewayName: names.gateway,
+      })),
       readOnlyRoot: true,
       tmpfs: "/tmp:rw,noexec,nosuid,nodev,size=4m",
       capDrop: ["ALL"],
@@ -58,6 +67,9 @@ export function buildInvocationPlan(requestValue, manifests = REVIEWED_MANIFESTS
     },
     gateway: {
       networks: [names.internalNetwork, names.egressNetwork],
+      internalAliases: [names.gateway],
+      providerHostAliases: [],
+      resolverHostnames: manifest.destinations.map((destination) => destination.hostname),
       publishedPorts: [],
       readOnlyRoot: true,
       capDrop: ["ALL"],
@@ -93,9 +105,9 @@ export class PieceContainerEngine {
   }
 }
 
-export async function executeWithContainerEngine({ engine, request, credential, manifests = REVIEWED_MANIFESTS }) {
+export async function executeWithContainerEngine({ engine, request, credential, manifests = REVIEWED_MANIFESTS, builds = REVIEWED_PIECE_BUILDS }) {
   if (!(engine instanceof PieceContainerEngine)) throw new PieceRuntimeError("PIECE_RUNTIME_FAILED");
-  const plan = buildInvocationPlan(request, manifests);
+  const plan = buildInvocationPlan(request, manifests, builds);
   try {
     return await engine.runInvocation({ plan, request, credential });
   } finally {

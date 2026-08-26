@@ -1,7 +1,7 @@
 FROM docker.io/library/node:24.8.0-bookworm-slim@sha256:cadbfafeb6baf87eaaffa40b3640209c4b7fd38cebde65059d15bc39cd636b85
 
 WORKDIR /piece-gateway
-COPY src/deep-freeze.mjs src/errors.mjs src/manifest-registry.mjs src/ip-policy.mjs src/dns-policy.mjs src/tls-client-hello.mjs src/gateway.mjs ./
+COPY src/deep-freeze.mjs src/errors.mjs src/build-registry.mjs src/manifest-registry.mjs src/ip-policy.mjs src/dns-policy.mjs src/tls-client-hello.mjs src/gateway.mjs ./
 RUN chown -R 65532:65532 /piece-gateway && chmod -R go-w /piece-gateway
 
 ENV NODE_ENV=production

@@ -1,4 +1,5 @@
 import { REVIEWED_ADAPTERS } from "./adapter-registry.mjs";
+import { REVIEWED_PIECE_BUILDS } from "./build-registry.mjs";
 import { normalizePieceFailure, PieceRuntimeError } from "./errors.mjs";
 import { REVIEWED_MANIFESTS } from "./manifest-registry.mjs";
 import { loadReviewedAction } from "./piece-loader.mjs";
@@ -44,7 +45,7 @@ export async function executeReviewedPiece(
 ) {
   const manifests = dependencies.manifests ?? REVIEWED_MANIFESTS;
   const adapters = dependencies.adapters ?? REVIEWED_ADAPTERS;
-  const loadAction = dependencies.loadAction ?? loadReviewedAction;
+  const builds = dependencies.builds ?? REVIEWED_PIECE_BUILDS;
   const logger = dependencies.logger ?? NOOP_LOGGER;
   let request = null;
   let manifest = null;
@@ -74,7 +75,7 @@ export async function executeReviewedPiece(
 
     const propsValue = adapters.mapInput(manifest.inputMapper, request.input);
     auth = adapters.projectAuth(manifest.authProjection, credentialText);
-    const action = await loadAction(manifest);
+    const action = await loadReviewedAction(manifest, builds);
     if (
       action?.name !== manifest.actionId ||
       action?.classification !== manifest.expectedClassification ||

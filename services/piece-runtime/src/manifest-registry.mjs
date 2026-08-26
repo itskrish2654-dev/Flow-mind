@@ -1,11 +1,13 @@
 import { isIP } from "node:net";
 
+import { REVIEWED_PIECE_BUILDS } from "./build-registry.mjs";
 import { deepFreeze } from "./deep-freeze.mjs";
 import { PieceRuntimeError } from "./errors.mjs";
 
 export const HUBSPOT_GET_CONTACT_MANIFEST = deepFreeze({
   capabilityId: "hubspot.get_contact",
   capabilityVersion: 1,
+  buildId: "activepieces-hubspot-0_8_10",
   providerId: "hubspot",
   piecePackage: "@activepieces/piece-hubspot",
   pieceVersion: "0.8.10",
@@ -75,7 +77,7 @@ function key(capabilityId, capabilityVersion) {
 }
 
 const MANIFEST_KEYS = Object.freeze([
-  "capabilityId", "capabilityVersion", "providerId", "piecePackage", "pieceVersion",
+  "capabilityId", "capabilityVersion", "buildId", "providerId", "piecePackage", "pieceVersion",
   "npmIntegrity", "upstreamSourceCommit", "sourcePath", "license", "actionId",
   "expectedClassification", "operationClassification", "authProjection", "destinations",
   "maximumRequestBytes", "maximumResponseBytes", "maximumProviderUpstreamBytes",
@@ -100,6 +102,7 @@ function validateManifest(manifest) {
   if (
     !/^[a-z][a-z0-9_]{1,79}\.[a-z][a-z0-9_]{1,79}$/.test(manifest.capabilityId) ||
     !boundedInteger(manifest.capabilityVersion, 1, 1_000) ||
+    !/^[a-z][a-z0-9_-]{2,100}$/.test(manifest.buildId) ||
     !/^[a-z][a-z0-9_-]{1,79}$/.test(manifest.providerId) ||
     !/^@[a-z0-9_-]+\/[a-z0-9_-]+$/.test(manifest.piecePackage) ||
     !/^[A-Za-z0-9._-]{1,80}$/.test(manifest.pieceVersion) ||
@@ -157,10 +160,11 @@ function validateManifest(manifest) {
   }
 }
 
-export function createManifestRegistry(manifests) {
+export function createManifestRegistry(manifests, builds = REVIEWED_PIECE_BUILDS) {
   const entries = new Map();
   for (const source of manifests) {
     validateManifest(source);
+    builds.getForManifest(source);
     const manifest = deepFreeze(structuredClone(source));
     const manifestKey = key(manifest.capabilityId, manifest.capabilityVersion);
     if (entries.has(manifestKey)) throw new Error("Duplicate reviewed piece manifest.");

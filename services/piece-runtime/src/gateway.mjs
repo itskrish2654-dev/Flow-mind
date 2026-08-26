@@ -91,6 +91,16 @@ function handleClient(client) {
     clearTimeout(handshakeTimer);
     void resolveManifestDestination(destination, { timeoutMs: limits.connectTimeoutMs })
       .then((resolved) => {
+        emit({
+          event: "piece_gateway_dns",
+          requestId,
+          capabilityId: manifest.capabilityId,
+          hostname: resolved.hostname,
+          port: resolved.port,
+          pinnedFamily: resolved.family,
+          answers: resolved.evidence,
+          outcome: "SAFE",
+        });
         upstream = connectTcp({ host: resolved.pinnedAddress, port: destination.port, family: resolved.family });
         connectTimer = setTimeout(() => finish("PIECE_TIMEOUT", destination.hostname), limits.connectTimeoutMs);
         upstream.setTimeout(limits.idleTimeoutMs, () => finish("PIECE_TIMEOUT", destination.hostname));

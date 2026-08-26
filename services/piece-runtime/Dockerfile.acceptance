@@ -1,0 +1,6 @@
+FROM crazyloops/piece-runtime-hubspot:0.8.10-step5a
+
+USER 0:0
+COPY acceptance /acceptance
+RUN chown -R 65532:65532 /acceptance && chmod -R go-w /acceptance
+USER 65532:65532

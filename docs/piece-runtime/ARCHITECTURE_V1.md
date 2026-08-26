@@ -27,7 +27,8 @@ bounded request + in-memory credential
         v
 immutable reviewed manifest registry
         |
-        +-- exact package/action/classification
+        +-- trusted build ID -> exact package/version/integrity/image
+        +-- static action resolver/classification
         +-- static auth projection
         +-- static input/output adapters
         +-- exact TLS destinations
@@ -63,17 +64,40 @@ The first production registry entry is `hubspot.get_contact@1`:
 - input adapter accepts `contactId` and at most 25 bounded property names
 - output adapter returns only bounded contact fields
 
+The manifest's `buildId` is resolved by a separate static reviewed build
+registry. That registry binds the build ID to the exact package name, package
+version, npm integrity, reviewed upstream commit, sandbox image, action ID,
+classification, and a literal-import resolver. The runtime never constructs an
+import path from invocation data. A future reviewed piece/action is added by
+reviewing and registering new static build metadata; the request cannot provide
+or override a build ID, package, version, action, image, or resolver.
+
+The synthetic second piece exists only in the Step 5A test fixture. It uses the
+same manifest registry, build registry, loader, runtime, and image-selection
+abstractions as HubSpot, but it is not present in the production-candidate
+registry or any customer/product registry.
+
 The runtime deliberately does not copy Activepieces' shared HubSpot OAuth scope
 list. OAuth consent and connection configuration remain outside Step 5A.
 
 ## Network boundary
 
-The sandbox joins only a per-invocation internal network. Only exact manifest
-hostnames are installed as gateway aliases. The gateway receives capability
-metadata from the trusted engine plan, never from the invocation body. It
-parses a bounded TLS ClientHello, requires exact SNI and port 443, resolves the
-manifest hostname itself, rejects the whole A/AAAA set if any address is unsafe,
-then pins one numeric address. Raw IPv4/IPv6, loopback, RFC1918, CGNAT,
+The sandbox joins only a per-invocation internal network. The gateway receives
+only a generated internal alias such as `cl-piece-gateway-<invocation>`; it
+never receives a provider hostname as a Docker alias or `/etc/hosts` override.
+Inside the sandbox namespace only, each exact reviewed provider hostname maps
+to the gateway's internal IP. The sandbox therefore connects to the gateway
+while still using the canonical provider hostname for TLS SNI and certificate
+verification. Inside the gateway namespace, that same canonical hostname is
+resolved through real DNS to the provider's public A/AAAA records. This
+separation prevents the gateway from resolving the provider hostname back to
+itself.
+
+The gateway receives capability metadata from the trusted engine plan, never
+from the invocation body. It parses a bounded TLS ClientHello, requires exact
+canonical SNI and port 443, resolves the manifest hostname itself, rejects the
+whole A/AAAA set if any address is unsafe (including the gateway/private IP),
+then pins one numeric public address. Raw IPv4/IPv6, loopback, RFC1918, CGNAT,
 link-local, metadata, multicast, reserved/bogon, IPv6 ULA/link-local and mapped
 unsafe addresses are rejected.
 
@@ -90,11 +114,31 @@ identities, exact network aliases, and fixed resource controls. It contains no
 credential value and accepts no request-controlled CLI flags. A host Docker
 supervisor is intentionally not accepted or deployed by Step 5A.
 
-The owner-run script `scripts/e50-step5a-host-acceptance.sh` builds the reviewed
-images, checks a hardened one-shot fail-closed sandbox invocation and a
-credential-blind gateway container, scans inspect/history/log/output surfaces,
-and removes only Step 5A-labelled resources. Passing that preparation harness
-does not by itself accept a long-lived production supervisor or provider call.
+The owner-run script `scripts/e50-step5a-host-acceptance.sh` is deliberately
+gated to the reviewed branch/commit, accepted base, unchanged `origin/main`, and
+a clean source tree. On the intended Linux Docker host it builds the pinned
+images with `npm ci`, verifies installed HubSpot package/build metadata, proves
+sandbox and gateway controls through Docker inspect plus `/proc`/cgroup
+evidence, and runs a credential-free TLS-only topology check to real
+`api.hubapi.com:443`. That check sends no HTTP request, authentication, or
+customer data.
+
+The harness also exercises container/kernel negative cases for schema and
+metadata overrides, size ceilings, classification, filesystem, PID, direct
+network, SNI/port, unsafe DNS, timeout, crash/OOM/CPU, concurrent fresh
+containers, and credential/temp crossover. Synthetic high-entropy credentials
+enter workers only over stdin. Their plaintext is scanned across sanitized
+outputs, Docker inspect/history, gateway logs, process arguments, and temporary
+evidence. Success and failure traps remove only Step 5A-labelled containers,
+networks, and images and verify zero remain. Before and after snapshots prove
+the existing Connector Runner, Activepieces containers, and Redis were not
+changed; the Runner must still reject an unsigned JSON request with HTTP 401
+and Redis must still return `PONG`.
+
+This host acceptance is not claimed by repository tests. It remains an owner
+run on the accepted CrazyLoops production-candidate host. Passing it does not
+deploy or product-enable this runtime, does not make a provider API call, and
+does not accept a long-lived production supervisor.
 
 ## Read/write and retry safety
 
@@ -112,10 +156,11 @@ input, and raw output are never logged or returned on failure.
 
 ## Evidence limits
 
-Deterministic unit/static tests cover manifest immutability, schema rejection,
-genericity through a test-only second piece, auth/input/output adapters,
-read-only enforcement, DNS/IP/SNI policy, fixed container plans, cleanup,
-concurrency isolation, and canary absence. Actual container/kernel enforcement
-is not claimed unless the owner-run Docker harness is executed on the intended
-Linux host. Production Vercel, Connector Runner, Activepieces, Redis, Supabase,
-and customer credentials are not touched.
+Deterministic unit/static tests cover manifest/build immutability and binding,
+schema rejection, genericity through a test-only second build using the real
+loader abstraction, auth/input/output adapters, read-only enforcement,
+DNS/IP/SNI namespace policy, fixed image/container plans, cleanup, concurrency
+isolation, and canary absence. Actual container/kernel enforcement is not
+claimed unless the owner-run Docker harness is executed on the intended Linux
+host. Production Vercel, Connector Runner, Activepieces, Redis, Supabase, and
+customer credentials are not touched by repository validation.

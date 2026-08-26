@@ -1,6 +1,9 @@
 *
 !Dockerfile.sandbox
+!Dockerfile.acceptance
 !package.json
 !package-lock.json
 !src/
 !src/*.mjs
+!acceptance/
+!acceptance/*.mjs

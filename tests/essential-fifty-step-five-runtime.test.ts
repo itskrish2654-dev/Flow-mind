@@ -8,6 +8,11 @@ import {
   createAdapterRegistry,
 } from "../services/piece-runtime/src/adapter-registry.mjs";
 import {
+  createPieceBuildRegistry,
+  HUBSPOT_0_8_10_BUILD,
+  REVIEWED_PIECE_BUILDS,
+} from "../services/piece-runtime/src/build-registry.mjs";
+import {
   buildInvocationPlan,
   executeWithContainerEngine,
   PieceContainerEngine,
@@ -21,6 +26,7 @@ import {
   REVIEWED_MANIFESTS,
 } from "../services/piece-runtime/src/manifest-registry.mjs";
 import { validateInvocationRequest } from "../services/piece-runtime/src/protocol.mjs";
+import { loadReviewedAction } from "../services/piece-runtime/src/piece-loader.mjs";
 import { executeReviewedPiece } from "../services/piece-runtime/src/runtime.mjs";
 import { parseTlsClientHello } from "../services/piece-runtime/src/tls-client-hello.mjs";
 
@@ -43,6 +49,7 @@ function request(overrides: Record<string, unknown> = {}) {
 const SYNTHETIC_MANIFEST = {
   ...structuredClone(HUBSPOT_GET_CONTACT_MANIFEST),
   capabilityId: "fixture.echo_read",
+  buildId: "crazyloops-test-piece-1_0_0",
   providerId: "fixture",
   piecePackage: "@crazyloops/test-piece",
   pieceVersion: "1.0.0-test",
@@ -64,7 +71,35 @@ const WRITE_MANIFEST = {
   operationClassification: "WRITE",
 };
 
-const syntheticManifests = createManifestRegistry([SYNTHETIC_MANIFEST]);
+const SYNTHETIC_BUILD = {
+  buildId: "crazyloops-test-piece-1_0_0",
+  packageName: "@crazyloops/test-piece",
+  packageVersion: "1.0.0-test",
+  npmIntegrity: "sha512-test-fixture",
+  upstreamSourceCommit: "0000000000000000000000000000000000000000",
+  sandboxImage: "crazyloops/piece-runtime-fixture:1.0.0-test",
+  actions: {
+    "echo-read": {
+      classification: "READ",
+      resolve: async () => {
+        const loaded = await import("./fixtures/essential-fifty-synthetic-piece.mjs");
+        return loaded.syntheticPiece.actions()["echo-read"];
+      },
+    },
+  },
+};
+
+function hubspotBuildFor(resolveAction: () => Promise<unknown>) {
+  return createPieceBuildRegistry([{
+    ...HUBSPOT_0_8_10_BUILD,
+    actions: {
+      "get-contact": { classification: "READ", resolve: resolveAction },
+    },
+  }]);
+}
+
+const syntheticBuilds = createPieceBuildRegistry([SYNTHETIC_BUILD]);
+const syntheticManifests = createManifestRegistry([SYNTHETIC_MANIFEST], syntheticBuilds);
 const syntheticAdapters = createAdapterRegistry({
   inputMappers: {
     fixture_input_v1(input: unknown) {
@@ -116,6 +151,8 @@ function tlsHello(hostname?: string) {
 describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
   test("reviewed HubSpot manifest is exact, deeply immutable, and pinned", () => {
     const manifest = REVIEWED_MANIFESTS.get("hubspot.get_contact", 1);
+    const build = REVIEWED_PIECE_BUILDS.getForManifest(manifest);
+    assert.equal(manifest.buildId, "activepieces-hubspot-0_8_10");
     assert.equal(manifest.piecePackage, "@activepieces/piece-hubspot");
     assert.equal(manifest.pieceVersion, "0.8.10");
     assert.equal(manifest.npmIntegrity, "sha512-P3svTd/XaaPhYfsOSz6YpgdfNcARRawqAddBGtJUxW/Grbc5InTdsvddlgSdyQtJxH+3UpxrKAR1VjlGJ4hfNA==");
@@ -127,14 +164,26 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
     assert.equal(Object.isFrozen(manifest), true);
     assert.equal(Object.isFrozen(manifest.destinations), true);
     assert.equal(Object.isFrozen(manifest.resourceLimits.sandbox), true);
+    assert.equal(build.sandboxImage, "crazyloops/piece-runtime-hubspot:0.8.10-step5a");
+    assert.equal(build.packageName, manifest.piecePackage);
+    assert.equal(build.packageVersion, manifest.pieceVersion);
+    assert.equal(build.npmIntegrity, manifest.npmIntegrity);
     assert.throws(() => { (manifest.destinations[0] as { hostname: string }).hostname = "attacker.example"; });
     assert.throws(() => createManifestRegistry([{ ...structuredClone(manifest), destinations: [{ hostname: "*.example.com", port: 443, protocol: "tls" }] }]));
     assert.throws(() => createManifestRegistry([{ ...structuredClone(manifest), authProjection: "request_expression" }]));
     assert.throws(() => createManifestRegistry([{ ...structuredClone(manifest), resourceLimits: { ...structuredClone(manifest.resourceLimits), sandbox: { ...structuredClone(manifest.resourceLimits.sandbox), dockerSocket: true } } }]));
+    assert.throws(() => createManifestRegistry([{ ...structuredClone(manifest), buildId: "unknown-reviewed-build" }]));
+  });
+
+  test("real loader resolves the HubSpot action through reviewed static build metadata", async () => {
+    const action = await loadReviewedAction(HUBSPOT_GET_CONTACT_MANIFEST, REVIEWED_PIECE_BUILDS);
+    assert.equal(action.name, "get-contact");
+    assert.equal(action.classification, "READ");
+    assert.equal(typeof action.run, "function");
   });
 
   test("request schema contains business data only and rejects every metadata override", async () => {
-    for (const key of ["piecePackage", "pieceVersion", "npmIntegrity", "actionId", "hostname", "port", "url", "method", "authProjection", "outputMapper", "resourceLimits"]) {
+    for (const key of ["buildId", "sandboxImage", "image", "resolver", "piecePackage", "pieceVersion", "npmIntegrity", "actionId", "hostname", "port", "url", "method", "authProjection", "outputMapper", "resourceLimits"]) {
       const credential = Buffer.from("synthetic-credential");
       const result = await executeReviewedPiece({ request: request({ [key]: "attacker-controlled" }), credential });
       assert.equal(result.ok, false, key);
@@ -146,10 +195,14 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
 
   test("unknown capability and wrong version fail before action loading", async () => {
     let loads = 0;
+    const builds = hubspotBuildFor(async () => {
+      loads += 1;
+      throw new Error("must not load");
+    });
     for (const overrides of [{ capabilityId: "salesforce.read" }, { capabilityVersion: 2 }]) {
       const result = await executeReviewedPiece(
         { request: request(overrides), credential: Buffer.from("synthetic-credential") },
-        { loadAction: async () => { loads += 1; throw new Error("must not load"); } },
+        { builds },
       );
       assert.equal(result.ok, false);
       assert.equal(result.errorCode, "PIECE_UNSUPPORTED_CAPABILITY");
@@ -165,7 +218,7 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
     const result = await executeReviewedPiece(
       { request: request(), credential },
       {
-        loadAction: async () => ({
+        builds: hubspotBuildFor(async () => ({
           name: "get-contact",
           classification: "READ",
           async run(context: Record<string, unknown>) {
@@ -173,7 +226,7 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
             captured = context;
             return { id: "contact-123", properties: { firstname: "Casey" }, archived: false, ignored: canary };
           },
-        }),
+        })),
       },
     );
     assert.equal(result.ok, true);
@@ -199,33 +252,39 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
       {
         manifests: syntheticManifests,
         adapters: syntheticAdapters,
-        loadAction: async (manifest: Record<string, unknown>) => {
-          assert.equal(manifest.piecePackage, "@crazyloops/test-piece");
-          return {
-            name: "echo-read",
-            classification: "READ",
-            async run({ auth, propsValue }: { auth: string; propsValue: { message: string } }) {
-              assert.equal(auth, "fixture-secret");
-              return { echo: propsValue.message };
-            },
-          };
-        },
+        builds: syntheticBuilds,
       },
     );
     assert.equal(result.ok, true);
     assert.deepEqual(result.output, { echo: "hello" });
+    const syntheticPlan = buildInvocationPlan(
+      request({ capabilityId: "fixture.echo_read", input: { message: "hello" } }),
+      syntheticManifests,
+      syntheticBuilds,
+    );
+    assert.equal(syntheticPlan.buildId, "crazyloops-test-piece-1_0_0");
+    assert.equal(syntheticPlan.images.sandbox, "crazyloops/piece-runtime-fixture:1.0.0-test");
     assert.ok(credential.every((byte) => byte === 0));
   });
 
   test("WRITE manifests are denied before loading or running an action", async () => {
-    const manifests = createManifestRegistry([WRITE_MANIFEST]);
     let loaded = false;
+    const builds = createPieceBuildRegistry([{
+      ...SYNTHETIC_BUILD,
+      actions: {
+        "write-action": {
+          classification: "WRITE",
+          resolve: async () => { loaded = true; return {}; },
+        },
+      },
+    }]);
+    const manifests = createManifestRegistry([WRITE_MANIFEST], builds);
     const result = await executeReviewedPiece(
       {
         request: request({ capabilityId: "fixture.write", input: { message: "write" } }),
         credential: Buffer.from("fixture-secret"),
       },
-      { manifests, adapters: syntheticAdapters, loadAction: async () => { loaded = true; return {}; } },
+      { manifests, adapters: syntheticAdapters, builds },
     );
     assert.equal(result.ok, false);
     assert.equal(result.errorCode, "PIECE_ACTION_NOT_ALLOWED");
@@ -238,9 +297,10 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
       { name: "get-contact", classification: "WRITE", run: async () => ({}) },
       { name: "get-contact", classification: "READ" },
     ]) {
+      const builds = hubspotBuildFor(async () => action);
       const result = await executeReviewedPiece(
         { request: request(), credential: Buffer.from("valid") },
-        { loadAction: async () => action },
+        { builds },
       );
       assert.equal(result.ok, false);
       assert.equal(result.errorCode, "PIECE_ACTION_NOT_ALLOWED");
@@ -248,6 +308,8 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
   });
 
   test("malformed/oversized input and malformed/oversized credentials fail closed", async () => {
+    let loads = 0;
+    const builds = hubspotBuildFor(async () => { loads += 1; throw new Error("must not load"); });
     const cases = [
       { request: request({ input: { contactId: "bad/id" } }), credential: Buffer.from("valid") },
       { request: request({ input: { contactId: "contact", properties: Array.from({ length: 26 }, (_, index) => `p_${index}`) } }), credential: Buffer.from("valid") },
@@ -258,10 +320,11 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
       { request: request(), credential: Buffer.from([0xff, 0xfe]) },
     ];
     for (const invocation of cases) {
-      const result = await executeReviewedPiece(invocation, { loadAction: async () => { throw new Error("must not load"); } });
+      const result = await executeReviewedPiece(invocation, { builds });
       assert.equal(result.ok, false);
       assert.ok(["PIECE_INVALID_INPUT", "PIECE_INVALID_CREDENTIAL"].includes(result.errorCode));
     }
+    assert.equal(loads, 0);
   });
 
   test("provider failures, timeout, malformed output, and output ceiling use bounded errors", async () => {
@@ -274,7 +337,7 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
       const logs: unknown[] = [];
       const result = await executeReviewedPiece(
         { request: request(), credential: Buffer.from("valid") },
-        { logger: (event: unknown) => logs.push(event), loadAction: async () => ({ name: "get-contact", classification: "READ", run: async () => { throw thrown; } }) },
+        { logger: (event: unknown) => logs.push(event), builds: hubspotBuildFor(async () => ({ name: "get-contact", classification: "READ", run: async () => { throw thrown; } })) },
       );
       assert.equal(result.ok, false);
       assert.equal(result.errorCode, code);
@@ -284,23 +347,24 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
 
     const timeoutManifest = structuredClone(HUBSPOT_GET_CONTACT_MANIFEST);
     timeoutManifest.resourceLimits.executionTimeoutMs = 10;
+    const timeoutBuilds = hubspotBuildFor(async () => ({ name: "get-contact", classification: "READ", run: async () => new Promise(() => {}) }));
     const timeout = await executeReviewedPiece(
       { request: request(), credential: Buffer.from("valid") },
-      { manifests: createManifestRegistry([timeoutManifest]), loadAction: async () => ({ name: "get-contact", classification: "READ", run: async () => new Promise(() => {}) }) },
+      { manifests: createManifestRegistry([timeoutManifest], timeoutBuilds), builds: timeoutBuilds },
     );
     assert.equal(timeout.ok, false);
     assert.equal(timeout.errorCode, "PIECE_TIMEOUT");
 
     const malformed = await executeReviewedPiece(
       { request: request(), credential: Buffer.from("valid") },
-      { loadAction: async () => ({ name: "get-contact", classification: "READ", run: async () => ({ unexpected: true }) }) },
+      { builds: hubspotBuildFor(async () => ({ name: "get-contact", classification: "READ", run: async () => ({ unexpected: true }) })) },
     );
     assert.equal(malformed.ok, false);
     assert.equal(malformed.errorCode, "PIECE_RESPONSE_INVALID");
 
     const oversized = await executeReviewedPiece(
       { request: request(), credential: Buffer.from("valid") },
-      { loadAction: async () => ({ name: "get-contact", classification: "READ", run: async () => ({ id: "contact", properties: { huge: "x".repeat(200_000) } }) }) },
+      { builds: hubspotBuildFor(async () => ({ name: "get-contact", classification: "READ", run: async () => ({ id: "contact", properties: { huge: "x".repeat(200_000) } }) })) },
     );
     assert.equal(oversized.ok, false);
     assert.equal(oversized.errorCode, "PIECE_RESPONSE_INVALID");
@@ -325,6 +389,12 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
         resolve6: async () => [],
       }),
     );
+    await assert.rejects(
+      resolveManifestDestination(destination, {
+        resolve4: async () => [{ address: "10.252.0.2", ttl: 60 }],
+        resolve6: async () => [],
+      }),
+    );
     await assert.rejects(resolveManifestDestination({ ...destination, hostname: "1.1.1.1" }));
     await assert.rejects(resolveManifestDestination({ ...destination, port: 444 }));
     assert.deepEqual(parseTlsClientHello(tlsHello("api.hubapi.com")), { hostname: "api.hubapi.com" });
@@ -332,13 +402,23 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
     assert.equal(parseTlsClientHello(tlsHello()).error, "PIECE_EGRESS_DENIED");
     assert.equal(parseTlsClientHello(Buffer.from("not tls")).error, "PIECE_EGRESS_DENIED");
     const plan = buildInvocationPlan(request());
-    assert.deepEqual(plan.sandbox.dnsAliases, ["api.hubapi.com"]);
-    assert.equal(plan.sandbox.dnsAliases.includes("redirect.example"), false);
+    assert.deepEqual(plan.sandbox.canonicalHostMappings, [{
+      hostname: "api.hubapi.com",
+      target: "gateway_internal_ip",
+      gatewayName: plan.names.gateway,
+    }]);
+    assert.deepEqual(plan.gateway.internalAliases, [plan.names.gateway]);
+    assert.deepEqual(plan.gateway.providerHostAliases, []);
+    assert.deepEqual(plan.gateway.resolverHostnames, ["api.hubapi.com"]);
+    assert.equal(plan.gateway.internalAliases.includes("api.hubapi.com"), false);
+    assert.equal(plan.sandbox.canonicalHostMappings.some(({ hostname }: { hostname: string }) => hostname === "redirect.example"), false);
   });
 
   test("container plan preserves the accepted sandbox/gateway security policy", () => {
     const plan = buildInvocationPlan(request());
     assert.equal(plan.sandbox.internalOnlyNetwork, true);
+    assert.equal(plan.buildId, "activepieces-hubspot-0_8_10");
+    assert.equal(plan.images.sandbox, "crazyloops/piece-runtime-hubspot:0.8.10-step5a");
     assert.equal(plan.sandbox.user, "65532:65532");
     assert.equal(plan.sandbox.readOnlyRoot, true);
     assert.equal(plan.sandbox.tmpfs, "/tmp:rw,noexec,nosuid,nodev,size=4m");
@@ -402,7 +482,7 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
       { request: request(), credential },
       {
         logger: (event: unknown) => logs.push(event),
-        loadAction: async () => ({ name: "get-contact", classification: "READ", run: async () => ({ id: "contact-123", properties: {}, archived: false }) }),
+        builds: hubspotBuildFor(async () => ({ name: "get-contact", classification: "READ", run: async () => ({ id: "contact-123", properties: {}, archived: false }) })),
       },
     );
     const plan = buildInvocationPlan(request());
@@ -411,18 +491,70 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
     assert.ok(credential.every((byte) => byte === 0));
   });
 
-  test("owner-run host harness keeps credentials on stdin and production disconnected", () => {
+  test("owner-run host harness covers real Docker boundaries without product deployment", () => {
     const harness = readFileSync(join(ROOT, "scripts/e50-step5a-host-acceptance.sh"), "utf8");
+    assert.match(harness, /EXPECTED_BASE='07b236ca99b5044600fe2c9b3e9ac5966397b2d4'/);
+    assert.match(harness, /codex\/e50-piece-runtime/);
+    assert.match(harness, /git status --porcelain/);
+    assert.match(harness, /git diff --name-only "\$EXPECTED_BASE\.\.HEAD"/);
+    assert.match(harness, /git rev-parse origin\/main/);
+    assert.match(harness, /node:24\.8\.0-bookworm-slim@sha256:cadbfafeb6baf87eaaffa40b3640209c4b7fd38cebde65059d15bc39cd636b85/);
+    assert.match(harness, /npm ci --omit=dev --ignore-scripts --no-audit --no-fund/);
+    assert.match(harness, /installed\.version !== build\.packageVersion/);
+    assert.match(harness, /installed\.integrity !== build\.npmIntegrity/);
+    assert.match(harness, /--no-cache --label "\$LABEL"/);
     assert.match(harness, /docker network create --internal/);
-    assert.match(harness, /--network "\$NETWORK"/);
+    assert.match(harness, /docker network create --label "\$LABEL" "\$EGRESS_NETWORK"/);
+    assert.match(harness, /--network "\$INTERNAL_NETWORK"/);
+    assert.match(harness, /--add-host "api\.hubapi\.com:\$GATEWAY_INTERNAL_IP"/);
+    assert.match(harness, /--alias "\$GATEWAY" "\$INTERNAL_NETWORK" "\$GATEWAY"/);
+    assert.match(harness, /! grep -q "api\.hubapi\.com" \/etc\/hosts/);
+    assert.match(harness, /lookup\("api\.hubapi\.com", \{ all: true, verbatim: true \}\)/);
+    assert.match(harness, /answers\.some\(\(\{ address \}\) => address === "10\.253\.50\.2"\)/);
+    assert.match(harness, /tls-probe\.mjs canonical/);
+    assert.match(harness, /"authorized":true/);
+    assert.match(harness, /"applicationBytesSent":0/);
     assert.match(harness, /--read-only/);
+    assert.match(harness, /--tmpfs \/tmp:rw,noexec,nosuid,nodev,size=4m/);
     assert.match(harness, /--cap-drop=ALL/);
     assert.match(harness, /--security-opt=no-new-privileges/);
     assert.match(harness, /--pids-limit=16/);
+    assert.match(harness, /--memory=134217728/);
+    assert.match(harness, /--memory-swap=134217728/);
+    assert.match(harness, /--cpus=0\.5/);
+    assert.match(harness, /--memory=67108864 --memory-swap=67108864 --cpus=0\.25/);
+    assert.match(harness, /--ulimit=nofile=64:64/);
+    assert.match(harness, /runtime\.capabilities !== '0000000000000000'/);
+    assert.match(harness, /runtime\.seccomp !== '2'/);
+    assert.match(harness, /runtime\.pidsMax !== '16'/);
+    assert.match(harness, /Object\.keys\(inspect\.NetworkSettings\.Networks\)\.length !== 2/);
+    for (const marker of [
+      "unsupported", "wrong-version", "worker-large",
+      "worker-large-credential", "negative-runtime", "filesystem", "child", "network",
+      "wrong-sni", "missing-sni", "wrong-port", "crash", "oom", "cpu",
+      "concurrent-one", "concurrent-two", "worker-crossover", "temp-first", "temp-second",
+    ]) assert.match(harness, new RegExp(marker));
+    assert.match(harness, /for override in buildId piecePackage pieceVersion actionId hostname port authProjection sandboxImage/);
+    assert.match(harness, /PROTECTED=\(crazyloops-connector-runner activepieces-app activepieces-worker-1 redis\)/);
+    assert.match(harness, /snapshot_protected "\$PROTECTED_BEFORE"/);
+    assert.match(harness, /cmp -s "\$PROTECTED_BEFORE" "\$PROTECTED_AFTER"/);
+    assert.match(harness, /Content-Type: application\/json/);
+    assert.match(harness, /expected 401/);
+    assert.match(harness, /docker exec redis redis-cli PING/);
     assert.match(harness, /trap cleanup EXIT INT TERM/);
     assert.match(harness, /credentialBase64/);
+    assert.match(harness, /printf '%s' "\$envelope" \| docker run/);
+    assert.match(harness, /TOKEN\/CREDENTIAL PLAINTEXT OCCURRENCES=0/);
+    assert.match(harness, /grep -Fq "\$CANARY" "\$SURFACE_FILE"/);
+    assert.match(harness, /docker image inspect "\$SANDBOX_IMAGE" "\$GATEWAY_IMAGE" "\$ACCEPTANCE_IMAGE"/);
+    assert.match(harness, /docker history --no-trunc "\$SANDBOX_IMAGE"/);
+    assert.match(harness, /STEP5A_CONTAINERS.*count_labelled containers/);
+    assert.match(harness, /STEP5A_NETWORKS.*count_labelled networks/);
+    assert.match(harness, /STEP5A_IMAGES.*count_labelled images/);
+    assert.match(harness, /for image in "\$ACCEPTANCE_IMAGE" "\$GATEWAY_IMAGE" "\$SANDBOX_IMAGE"/);
+    assert.match(harness, /docker image rm -f/);
     assert.doesNotMatch(harness, /--env[^\n]*(credential|secret|token)/i);
-    assert.doesNotMatch(harness, /docker\.sock|--privileged|flow-mind-beta|crazy-loops\.com/i);
+    assert.doesNotMatch(harness, /docker\.sock|--privileged|flow-mind-beta|crazy-loops\.com|vercel deploy|git push/i);
   });
 
   test("error vocabulary is bounded and production/customer surfaces remain disconnected", () => {
@@ -438,8 +570,10 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
       assert.doesNotMatch(source, /services\/piece-runtime|hubspot\.get_contact/);
     }
     const loader = readFileSync(join(ROOT, "services/piece-runtime/src/piece-loader.mjs"), "utf8");
-    assert.match(loader, /import\("@activepieces\/piece-hubspot"\)/);
-    assert.doesNotMatch(loader, /import\([^"']/);
+    const builds = readFileSync(join(ROOT, "services/piece-runtime/src/build-registry.mjs"), "utf8");
+    assert.match(loader, /builds\.getForManifest\(manifest\)/);
+    assert.match(builds, /import\("@activepieces\/piece-hubspot"\)/);
+    assert.doesNotMatch(builds, /import\([^"']/);
     const gateway = readFileSync(join(ROOT, "services/piece-runtime/src/gateway.mjs"), "utf8");
     assert.doesNotMatch(gateway, /authorization|bearer|credential|docker\.sock/i);
     const lock = readFileSync(join(ROOT, "services/piece-runtime/package-lock.json"), "utf8");
