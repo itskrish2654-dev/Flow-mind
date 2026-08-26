@@ -574,6 +574,19 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
     assert.match(harness, /runtime\.seccomp !== '2'/);
     assert.match(harness, /runtime\.pidsMax !== '16'/);
     assert.match(harness, /Object\.keys\(inspect\.NetworkSettings\.Networks\)\.length !== 2/);
+    assert.match(harness, /docker run --detach --name "\$OOM_NAME"/);
+    assert.match(harness, /timeout 25 docker wait "\$OOM_NAME"/);
+    assert.match(harness, /kill_wait_remove_probe "\$OOM_NAME"/);
+    assert.match(harness, /fail 'OOM probe did not terminate within its bounded wait\.'/);
+    assert.match(harness, /docker run --detach --name "\$CPU_NAME"/);
+    assert.match(harness, /timeout 5 docker wait "\$CPU_NAME"/);
+    assert.match(harness, /case "\$cpu_wait_status" in[\s\S]*124\)[\s\S]*kill_wait_remove_probe "\$CPU_NAME"/);
+    assert.match(harness, /fail 'CPU runaway probe unexpectedly exited before timeout\.'/);
+    assert.doesNotMatch(harness, /timeout (?:5|25) docker run/);
+    assert.match(harness, /docker kill "\$name"/);
+    assert.match(harness, /docker wait "\$name"/);
+    assert.match(harness, /docker rm "\$name"/);
+    assert.match(harness, /docker inspect "\$name"/);
     for (const marker of [
       "unsupported", "wrong-version", "worker-large",
       "worker-large-credential", "negative-runtime", "filesystem", "child", "network",

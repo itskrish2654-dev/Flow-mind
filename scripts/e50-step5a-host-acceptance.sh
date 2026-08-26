@@ -106,6 +106,21 @@ run_acceptance_probe() {
   cat "$output" >>"$SURFACE_FILE"
 }
 
+remove_exited_probe() {
+  local name="$1"
+  docker rm "$name" >/dev/null
+  if docker inspect "$name" >/dev/null 2>&1; then
+    fail "Probe container $name still exists after removal."
+  fi
+}
+
+kill_wait_remove_probe() {
+  local name="$1"
+  docker kill "$name" >/dev/null
+  docker wait "$name" >/dev/null 2>&1 || true
+  remove_exited_probe "$name"
+}
+
 count_labelled() {
   local kind="$1"
   case "$kind" in
@@ -317,10 +332,46 @@ done
 
 if docker run --rm --name "${PREFIX}crash" --label "$LABEL" --network none $(sandbox_args) \
   --entrypoint node "$ACCEPTANCE_IMAGE" /acceptance/runtime-probe.mjs crash >/dev/null 2>&1; then fail 'Crash probe unexpectedly succeeded.'; fi
-if timeout 25 docker run --rm --name "${PREFIX}oom" --label "$LABEL" --network none $(sandbox_args) \
-  --entrypoint node "$ACCEPTANCE_IMAGE" /acceptance/runtime-probe.mjs oom >/dev/null 2>&1; then fail 'OOM probe unexpectedly succeeded.'; fi
-if timeout 5 docker run --rm --name "${PREFIX}cpu" --label "$LABEL" --network none $(sandbox_args) \
-  --entrypoint node "$ACCEPTANCE_IMAGE" /acceptance/runtime-probe.mjs cpu >/dev/null 2>&1; then fail 'CPU timeout probe unexpectedly succeeded.'; fi
+
+OOM_NAME="${PREFIX}oom"
+docker run --detach --name "$OOM_NAME" --label "$LABEL" --network none $(sandbox_args) \
+  --entrypoint node "$ACCEPTANCE_IMAGE" /acceptance/runtime-probe.mjs oom >/dev/null
+oom_wait_status=0
+timeout 25 docker wait "$OOM_NAME" >"$ARTIFACT_DIR/oom-exit-code.txt" 2>&1 || oom_wait_status=$?
+case "$oom_wait_status" in
+  0)
+    OOM_EXIT_CODE="$(tr -d '\r\n' <"$ARTIFACT_DIR/oom-exit-code.txt")"
+    remove_exited_probe "$OOM_NAME"
+    [[ "$OOM_EXIT_CODE" != '0' ]] || fail 'OOM probe unexpectedly succeeded.'
+    ;;
+  124)
+    kill_wait_remove_probe "$OOM_NAME"
+    fail 'OOM probe did not terminate within its bounded wait.'
+    ;;
+  *)
+    kill_wait_remove_probe "$OOM_NAME"
+    fail "OOM docker wait failed with status $oom_wait_status."
+    ;;
+esac
+
+CPU_NAME="${PREFIX}cpu"
+docker run --detach --name "$CPU_NAME" --label "$LABEL" --network none $(sandbox_args) \
+  --entrypoint node "$ACCEPTANCE_IMAGE" /acceptance/runtime-probe.mjs cpu >/dev/null
+cpu_wait_status=0
+timeout 5 docker wait "$CPU_NAME" >"$ARTIFACT_DIR/cpu-exit-code.txt" 2>&1 || cpu_wait_status=$?
+case "$cpu_wait_status" in
+  0)
+    remove_exited_probe "$CPU_NAME"
+    fail 'CPU runaway probe unexpectedly exited before timeout.'
+    ;;
+  124)
+    kill_wait_remove_probe "$CPU_NAME"
+    ;;
+  *)
+    kill_wait_remove_probe "$CPU_NAME"
+    fail "CPU docker wait failed with status $cpu_wait_status."
+    ;;
+esac
 
 for suffix in one two; do
   docker run --detach --name "${PREFIX}concurrent-${suffix}" --label "$LABEL" --network none $(sandbox_args) \
