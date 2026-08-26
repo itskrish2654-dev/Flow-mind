@@ -190,13 +190,6 @@ for _ in $(seq 1 30); do
 done
 docker logs "$GATEWAY" 2>&1 | grep -q 'piece_gateway_ready' || fail 'Gateway did not become ready.'
 docker exec "$GATEWAY" sh -c '! grep -q "api.hubapi.com" /etc/hosts' || fail 'Gateway namespace self-shadows the provider hostname.'
-docker exec "$GATEWAY" node --input-type=module -e '
-  import { lookup } from "node:dns/promises";
-  import { isSafePublicAddress } from "/piece-gateway/ip-policy.mjs";
-  const answers = await lookup("api.hubapi.com", { all: true, verbatim: true });
-  if (!answers.length || !answers.every(({ address }) => isSafePublicAddress(address)) || answers.some(({ address }) => address === "10.253.50.2")) process.exit(1);
-  console.log(JSON.stringify({ hostname: "api.hubapi.com", answers: answers.map(({ family }) => ({ family, classification: "SAFE" })), selfShadow: false }));
-' >"$ARTIFACT_DIR/gateway-real-dns.json"
 
 TLS_NAME="${PREFIX}tls-canonical"
 docker run --name "$TLS_NAME" --label "$LABEL" --network "$INTERNAL_NETWORK" \
@@ -205,10 +198,39 @@ docker run --name "$TLS_NAME" --label "$LABEL" --network "$INTERNAL_NETWORK" \
 grep -q '"authorized":true' "$ARTIFACT_DIR/tls.json" || fail 'Credential-free canonical TLS verification failed.'
 grep -q '"applicationBytesSent":0' "$ARTIFACT_DIR/tls.json" || fail 'TLS preflight sent application data.'
 docker rm "$TLS_NAME" >/dev/null
+for _ in $(seq 1 30); do
+  if docker logs "$GATEWAY" 2>&1 | grep -q '"outcome":"PIECE_GATEWAY_SUCCEEDED"'; then break; fi
+  sleep 0.1
+done
 docker logs "$GATEWAY" >"$ARTIFACT_DIR/gateway-logs.txt" 2>&1
-grep -q '"event":"piece_gateway_dns"' "$ARTIFACT_DIR/gateway-logs.txt" || fail 'Gateway emitted no DNS evidence.'
-grep -q '"hostname":"api.hubapi.com"' "$ARTIFACT_DIR/gateway-logs.txt" || fail 'Gateway did not resolve the canonical provider hostname.'
-grep -q '"outcome":"SAFE"' "$ARTIFACT_DIR/gateway-logs.txt" || fail 'Gateway DNS was not classified SAFE.'
+node - "$ARTIFACT_DIR/gateway-logs.txt" <<'NODE'
+const { readFileSync } = require('node:fs');
+const events = readFileSync(process.argv[2], 'utf8')
+  .split(/\r?\n/)
+  .filter(Boolean)
+  .map((line) => JSON.parse(line));
+const dnsEvents = events.filter((event) => event.event === 'piece_gateway_dns');
+if (dnsEvents.length === 0) throw new Error('gateway DNS evidence missing');
+for (const event of dnsEvents) {
+  if (
+    event.capabilityId !== 'hubspot.get_contact' ||
+    event.hostname !== 'api.hubapi.com' ||
+    event.port !== 443 ||
+    event.outcome !== 'SAFE' ||
+    !Array.isArray(event.answers) ||
+    event.answers.length === 0 ||
+    !event.answers.every((answer) => answer?.classification === 'SAFE')
+  ) throw new Error('gateway DNS evidence invalid');
+}
+const connection = events.find((event) =>
+  event.event === 'piece_gateway_connection' &&
+  event.capabilityId === 'hubspot.get_contact' &&
+  event.hostname === 'api.hubapi.com' &&
+  event.port === 443 &&
+  event.outcome === 'PIECE_GATEWAY_SUCCEEDED'
+);
+if (!connection) throw new Error('gateway connection evidence missing');
+NODE
 
 RUNTIME_NAME="${PREFIX}runtime-evidence"
 docker create --name "$RUNTIME_NAME" --label "$LABEL" --network "$INTERNAL_NETWORK" \
