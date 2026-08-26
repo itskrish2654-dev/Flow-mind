@@ -19,6 +19,10 @@ import {
 } from "../services/piece-runtime/src/container-engine.mjs";
 import { resolveManifestDestination } from "../services/piece-runtime/src/dns-policy.mjs";
 import { PIECE_ERROR_CODES } from "../services/piece-runtime/src/errors.mjs";
+import {
+  approvedDestinationForHostname,
+  gatewayConnectionEvidence,
+} from "../services/piece-runtime/src/gateway-evidence.mjs";
 import { isSafePublicAddress } from "../services/piece-runtime/src/ip-policy.mjs";
 import {
   createManifestRegistry,
@@ -414,6 +418,39 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
     assert.equal(plan.sandbox.canonicalHostMappings.some(({ hostname }: { hostname: string }) => hostname === "redirect.example"), false);
   });
 
+  test("gateway connection evidence retains only an approved reviewed SNI destination", () => {
+    const beforeApproval = gatewayConnectionEvidence({
+      requestId: "request-123",
+      capabilityId: HUBSPOT_GET_CONTACT_MANIFEST.capabilityId,
+      approvedDestination: null,
+      hostname: "api.hubapi.com",
+      upstreamBytes: 0,
+      downstreamBytes: 0,
+      outcome: "PIECE_EGRESS_DENIED",
+    });
+    assert.equal(beforeApproval.hostname, null);
+
+    assert.equal(approvedDestinationForHostname(HUBSPOT_GET_CONTACT_MANIFEST, "wrong.example"), null);
+    assert.equal(approvedDestinationForHostname(HUBSPOT_GET_CONTACT_MANIFEST, undefined), null);
+
+    const approvedDestination = approvedDestinationForHostname(HUBSPOT_GET_CONTACT_MANIFEST, "api.hubapi.com");
+    assert.equal(approvedDestination, HUBSPOT_GET_CONTACT_MANIFEST.destinations[0]);
+    const normalClientEnd = gatewayConnectionEvidence({
+      requestId: "request-123",
+      capabilityId: HUBSPOT_GET_CONTACT_MANIFEST.capabilityId,
+      approvedDestination,
+      upstreamBytes: 517,
+      downstreamBytes: 2048,
+      outcome: "PIECE_GATEWAY_SUCCEEDED",
+    });
+    assert.equal(normalClientEnd.hostname, "api.hubapi.com");
+    assert.equal(normalClientEnd.port, 443);
+    assert.equal(normalClientEnd.outcome, "PIECE_GATEWAY_SUCCEEDED");
+
+    const gatewayDockerfile = readFileSync(join(ROOT, "services/piece-runtime/Dockerfile.gateway"), "utf8");
+    assert.match(gatewayDockerfile, /src\/gateway-evidence\.mjs/);
+  });
+
   test("container plan preserves the accepted sandbox/gateway security policy", () => {
     const plan = buildInvocationPlan(request());
     assert.equal(plan.sandbox.internalOnlyNetwork, true);
@@ -521,6 +558,7 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
     assert.match(harness, /event\.answers\.length === 0/);
     assert.match(harness, /event\.answers\.every\(\(answer\) => answer\?\.classification === 'SAFE'\)/);
     assert.match(harness, /event\.event === 'piece_gateway_connection'/);
+    assert.match(harness, /event\.hostname === 'api\.hubapi\.com'/);
     assert.match(harness, /event\.outcome === 'PIECE_GATEWAY_SUCCEEDED'/);
     assert.match(harness, /--read-only/);
     assert.match(harness, /--tmpfs \/tmp:rw,noexec,nosuid,nodev,size=4m/);

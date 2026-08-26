@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { createServer, connect as connectTcp } from "node:net";
 
 import { resolveManifestDestination } from "./dns-policy.mjs";
+import { approvedDestinationForHostname, gatewayConnectionEvidence } from "./gateway-evidence.mjs";
 import { REVIEWED_MANIFESTS } from "./manifest-registry.mjs";
 import { parseTlsClientHello } from "./tls-client-hello.mjs";
 
@@ -30,12 +31,6 @@ function runtimeEvidence() {
   };
 }
 
-function destinationFor(hostname) {
-  return manifest.destinations.find(
-    (candidate) => candidate.hostname === hostname && candidate.protocol === "tls" && candidate.port === 443,
-  );
-}
-
 function handleClient(client) {
   let clientHello = Buffer.alloc(0);
   let upstream = null;
@@ -43,12 +38,13 @@ function handleClient(client) {
   let downstreamBytes = 0;
   let completed = false;
   let resolving = false;
+  let approvedDestination = null;
   let handshakeTimer;
   let connectTimer;
   let lifetimeTimer;
   activeConnections += 1;
 
-  const finish = (outcome, hostname = null) => {
+  const finish = (outcome) => {
     if (completed) return;
     completed = true;
     clearTimeout(handshakeTimer);
@@ -58,16 +54,14 @@ function handleClient(client) {
     clientHello.fill(0);
     client.destroy();
     upstream?.destroy();
-    emit({
-      event: "piece_gateway_connection",
+    emit(gatewayConnectionEvidence({
       requestId,
       capabilityId: manifest.capabilityId,
-      hostname,
-      port: 443,
+      approvedDestination,
       upstreamBytes,
       downstreamBytes,
       outcome,
-    });
+    }));
   };
 
   if (activeConnections > limits.simultaneousConnections) return finish("PIECE_EGRESS_DENIED");
@@ -84,8 +78,9 @@ function handleClient(client) {
     const parsed = parseTlsClientHello(clientHello);
     if (parsed.pending) return;
     if (parsed.error) return finish("PIECE_EGRESS_DENIED");
-    const destination = destinationFor(parsed.hostname);
-    if (!destination) return finish("PIECE_EGRESS_DENIED", parsed.hostname);
+    const destination = approvedDestinationForHostname(manifest, parsed.hostname);
+    if (!destination) return finish("PIECE_EGRESS_DENIED");
+    approvedDestination = destination;
     resolving = true;
     client.pause();
     clearTimeout(handshakeTimer);
@@ -102,8 +97,8 @@ function handleClient(client) {
           outcome: "SAFE",
         });
         upstream = connectTcp({ host: resolved.pinnedAddress, port: destination.port, family: resolved.family });
-        connectTimer = setTimeout(() => finish("PIECE_TIMEOUT", destination.hostname), limits.connectTimeoutMs);
-        upstream.setTimeout(limits.idleTimeoutMs, () => finish("PIECE_TIMEOUT", destination.hostname));
+        connectTimer = setTimeout(() => finish("PIECE_TIMEOUT"), limits.connectTimeoutMs);
+        upstream.setTimeout(limits.idleTimeoutMs, () => finish("PIECE_TIMEOUT"));
         upstream.once("connect", () => {
           clearTimeout(connectTimer);
           upstream.write(clientHello);
@@ -114,14 +109,14 @@ function handleClient(client) {
         upstream.on("data", (data) => {
           downstreamBytes += data.length;
           if (downstreamBytes > manifest.maximumProviderDownstreamBytes) {
-            return finish("PIECE_RESPONSE_INVALID", destination.hostname);
+            return finish("PIECE_RESPONSE_INVALID");
           }
           client.write(data);
         });
-        upstream.once("error", () => finish("PIECE_PROVIDER_UNAVAILABLE", destination.hostname));
-        upstream.once("end", () => finish("PIECE_GATEWAY_SUCCEEDED", destination.hostname));
+        upstream.once("error", () => finish("PIECE_PROVIDER_UNAVAILABLE"));
+        upstream.once("end", () => finish("PIECE_GATEWAY_SUCCEEDED"));
       })
-      .catch(() => finish("PIECE_EGRESS_DENIED", destination.hostname));
+      .catch(() => finish("PIECE_EGRESS_DENIED"));
   });
   client.once("error", () => finish("PIECE_EGRESS_DENIED"));
   client.once("end", () => finish(upstream ? "PIECE_GATEWAY_SUCCEEDED" : "PIECE_EGRESS_DENIED"));
