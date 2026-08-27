@@ -10,7 +10,11 @@ function log(event) {
 
 async function main() {
   const docker = new DockerEngineClient();
-  const engine = new DockerPieceContainerEngine({ docker, logger: log });
+  const engine = new DockerPieceContainerEngine({
+    docker,
+    logger: log,
+    selfContainerName: process.env.PIECE_SUPERVISOR_CONTAINER_NAME,
+  });
   const service = new PieceSupervisorService({
     engine,
     concurrencyLimit: process.env.PIECE_SUPERVISOR_CONCURRENCY ?? SUPERVISOR_DEFAULT_CONCURRENCY,

@@ -79,15 +79,30 @@ have the exact reviewed parent and basename, and cannot traverse elsewhere.
 There is no TCP fallback.
 
 An existing responsive socket causes startup to fail. An unresponsive object is
-removed only when it is an actual stale Unix socket. The supervisor first owns
-the socket, then performs narrow orphan recovery, and only then reports ready.
-This socket-ownership sequence prevents a second active supervisor from running
-or performing cleanup concurrently. Graceful shutdown stops acceptance, aborts
-active work, allows a bounded cleanup window, force-closes remaining control
-connections after a second bounded grace period, and unlinks the owned socket in
-`finally`. A cleanup that still cannot be verified is reported only as the
-bounded unavailable failure; process termination remains possible so the next
-startup can apply exact-label orphan recovery.
+removed only when it is an actual stale Unix socket. UDS ownership protects the
+local shared control-plane socket namespace, but it is not considered sufficient
+to authorize Docker-global orphan cleanup: differently mounted host control
+directories can expose the same in-container path to separate supervisors.
+
+The second lock is an authoritative Docker-level singleton proof. Infrastructure
+supplies the strictly validated, bounded `PIECE_SUPERVISOR_CONTAINER_NAME`. The
+supervisor inspects that exact container, requires it to be running with both
+`crazyloops.runtime=piece-runtime-supervisor-v1` and
+`crazyloops.resource=supervisor`, lists the owner-labelled Docker containers,
+and requires exactly one running supervisor whose Docker ID is the inspected
+self ID. Zero, multiple, mislabelled, mismatched, or unprovable supervisors fail
+closed as `SUPERVISOR_UNAVAILABLE`. If concurrent starts expose two running
+supervisors, both may become unavailable; neither is authorized to clean the
+other's namespace.
+
+Startup therefore claims and binds the UDS without reporting ready, proves the
+exact Docker self identity and host-global singleton, performs narrow orphan
+recovery, and only then reports ready. Graceful shutdown stops acceptance,
+aborts active work, allows a bounded cleanup window, force-closes remaining
+control connections after a second bounded grace period, and unlinks the owned
+socket in `finally`. A cleanup that still cannot be verified is reported only as
+the bounded unavailable failure; process termination remains possible so a
+subsequent correctly identified singleton can apply exact-label orphan recovery.
 
 The future Connector Runner-to-supervisor relationship will use a group-readable
 bind mount for this UDS. Step 5B.1 does not modify or mount it into the Runner.
@@ -180,7 +195,10 @@ owner label and removes only resources that also carry the exact invocation
 resource label, containers before networks. It never removes by broad name
 prefix, never deletes images, never touches Step 5A acceptance resources, and
 never touches Connector Runner, Activepieces, Redis, or unrelated Docker
-workloads.
+workloads. `cleanupOrphans()` always performs the Docker-level singleton proof
+itself before listing or deleting invocation resources, so a future caller
+cannot bypass this precondition. Stopped stale supervisor containers do not
+count as active; unrelated labels do not count and remain untouched.
 
 ## Acceptance and remaining work
 
@@ -192,7 +210,9 @@ or Docker enforcement.
 
 `scripts/e50-step5b1-supervisor-host-acceptance.sh` is owner-run only on the
 accepted Linux Docker host. It is commit/branch/base gated, snapshots protected
-services, builds reviewed images, inspects the hardened supervisor, calls health
+services, refuses to run beside an existing active owner-labelled supervisor,
+builds reviewed images, passes and verifies the disposable supervisor's exact
+Docker identity, inspects the hardened supervisor, calls health
 and execute over UDS, proves exact socket/directory modes and cgroup/runtime
 limits, captures both real invocation networks and the gateway's credential-free
 DNS/connection evidence, requires real-provider `PIECE_AUTH_FAILED` for its fake

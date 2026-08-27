@@ -4,9 +4,26 @@ import { PieceContainerEngine } from "./container-engine.mjs";
 import { DockerClientError, decodeDockerMultiplexed } from "./docker-client.mjs";
 import { PIECE_ERROR_CODES, PieceRuntimeError } from "./errors.mjs";
 import { REVIEWED_MANIFESTS } from "./manifest-registry.mjs";
-import { SUPERVISOR_INVOCATION_RESOURCE_LABEL, SUPERVISOR_OWNER_LABEL } from "./supervisor-constants.mjs";
+import {
+  SUPERVISOR_INVOCATION_RESOURCE_LABEL,
+  SUPERVISOR_OWNER_LABEL,
+  SUPERVISOR_SERVICE_RESOURCE_LABEL,
+} from "./supervisor-constants.mjs";
+import { SupervisorError } from "./supervisor-errors.mjs";
 
 const INVOCATION_LABEL_KEY = "crazyloops.invocation";
+const DOCKER_CONTAINER_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+
+function validatedSelfContainerName(value) {
+  if (typeof value !== "string" || !DOCKER_CONTAINER_NAME.test(value)) {
+    throw new SupervisorError("SUPERVISOR_UNAVAILABLE", 503);
+  }
+  return value;
+}
+
+function unavailable() {
+  return new SupervisorError("SUPERVISOR_UNAVAILABLE", 503);
+}
 
 function nanoCpus(cpus) {
   return Math.round(cpus * 1_000_000_000);
@@ -177,12 +194,13 @@ function mapDockerFailure(error) {
 }
 
 export class DockerPieceContainerEngine extends PieceContainerEngine {
-  /** @param {{docker?: *, logger?: Function}} options */
-  constructor({ docker, logger = () => undefined } = {}) {
+  /** @param {{docker?: *, logger?: Function, selfContainerName?: string}} options */
+  constructor({ docker, logger = () => undefined, selfContainerName } = {}) {
     super();
     if (!docker) throw new PieceRuntimeError("PIECE_RUNTIME_FAILED");
     this.docker = docker;
     this.logger = logger;
+    this.selfContainerName = validatedSelfContainerName(selfContainerName);
     this.resources = new Map();
   }
 
@@ -327,7 +345,38 @@ export class DockerPieceContainerEngine extends PieceContainerEngine {
     }
   }
 
+  async assertSingleActiveSupervisor() {
+    let self;
+    let containers;
+    try {
+      self = await this.docker.inspectContainer(this.selfContainerName);
+      containers = await this.docker.listContainers(`${SUPERVISOR_OWNER_LABEL.key}=${SUPERVISOR_OWNER_LABEL.value}`);
+    } catch {
+      throw unavailable();
+    }
+    const selfLabels = self?.Config?.Labels ?? {};
+    if (
+      typeof self?.Id !== "string" || self.Id.length === 0 ||
+      self?.State?.Running !== true ||
+      selfLabels[SUPERVISOR_OWNER_LABEL.key] !== SUPERVISOR_OWNER_LABEL.value ||
+      selfLabels[SUPERVISOR_SERVICE_RESOURCE_LABEL.key] !== SUPERVISOR_SERVICE_RESOURCE_LABEL.value
+    ) {
+      throw unavailable();
+    }
+    const runningSupervisors = (containers ?? []).filter((container) => {
+      const labels = container?.Labels ?? {};
+      return container?.State === "running" &&
+        labels[SUPERVISOR_OWNER_LABEL.key] === SUPERVISOR_OWNER_LABEL.value &&
+        labels[SUPERVISOR_SERVICE_RESOURCE_LABEL.key] === SUPERVISOR_SERVICE_RESOURCE_LABEL.value;
+    });
+    if (runningSupervisors.length !== 1 || runningSupervisors[0]?.Id !== self.Id) {
+      throw unavailable();
+    }
+    return self.Id;
+  }
+
   async cleanupOrphans() {
+    await this.assertSingleActiveSupervisor();
     const filter = `${SUPERVISOR_OWNER_LABEL.key}=${SUPERVISOR_OWNER_LABEL.value}`;
     let failed = false;
     const containers = await this.docker.listContainers(filter);

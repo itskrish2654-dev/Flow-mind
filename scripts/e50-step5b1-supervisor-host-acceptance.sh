@@ -6,6 +6,7 @@ ACCEPTED_STEP5A='353b2c4821b1b959aeb7f485beade3a5eaf219fd'
 EXPECTED_ORIGIN_MAIN='20c23d7e85123eaa77a916ce43f4a9ef5ca8a5e7'
 OWNER_LABEL='crazyloops.runtime=piece-runtime-supervisor-v1'
 RESOURCE_LABEL='crazyloops.resource=invocation'
+SUPERVISOR_RESOURCE_LABEL='crazyloops.resource=supervisor'
 SUPERVISOR_NAME='cl-piece-step5b1-supervisor'
 SUPERVISOR_IMAGE='crazyloops/piece-runtime-supervisor:step5b1'
 SANDBOX_IMAGE='crazyloops/piece-runtime-hubspot:0.8.10-step5a'
@@ -65,6 +66,14 @@ count_invocation_networks() {
   docker network ls -q --filter "label=$OWNER_LABEL" --filter "label=$RESOURCE_LABEL" | sed '/^$/d' | wc -l
 }
 
+active_supervisor_ids() {
+  docker ps --no-trunc --quiet --filter "label=$OWNER_LABEL" --filter "label=$SUPERVISOR_RESOURCE_LABEL"
+}
+
+count_active_supervisors() {
+  active_supervisor_ids | sed '/^$/d' | wc -l
+}
+
 assert_zero_invocation_resources() {
   [[ "$(count_invocation_containers)" == '0' && "$(count_invocation_networks)" == '0' ]] || fail "$1"
 }
@@ -104,6 +113,7 @@ done < <(git diff --name-only "$ACCEPTED_STEP5A..HEAD")
 command -v docker >/dev/null || fail 'Docker is required.'
 command -v curl >/dev/null || fail 'curl is required.'
 [[ -S /var/run/docker.sock ]] || fail 'Docker Engine socket is unavailable.'
+[[ "$(count_active_supervisors)" == '0' ]] || fail 'No already-running Step 5B.1 supervisor may exist before acceptance.'
 snapshot_protected "$PROTECTED_BEFORE"
 for protected_name in "${PROTECTED[@]}"; do assert_no_docker_socket_mount "$protected_name"; done
 [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' --request POST --header 'Content-Type: application/json' --data '{}' http://127.0.0.1:8788/v1/execute)" == '401' ]] || fail 'Connector Runner unsigned JSON check did not return 401.'
@@ -121,7 +131,8 @@ docker network create --label 'crazyloops.runtime=unrelated-proof' "$UNRELATED_N
 DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
 chown 65532:65532 "$CONTROL_DIR"
 chmod 0750 "$CONTROL_DIR"
-docker run --detach --name "$SUPERVISOR_NAME" --label "$OWNER_LABEL" --label 'crazyloops.resource=supervisor' \
+docker run --detach --name "$SUPERVISOR_NAME" --label "$OWNER_LABEL" --label "$SUPERVISOR_RESOURCE_LABEL" \
+  --env PIECE_SUPERVISOR_CONTAINER_NAME="$SUPERVISOR_NAME" \
   --network none --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=4m \
   --cap-drop=ALL --security-opt=no-new-privileges --pids-limit=32 \
   --memory=268435456 --memory-swap=268435456 --cpus=0.5 --ulimit=nofile=128:128 \
@@ -129,6 +140,11 @@ docker run --detach --name "$SUPERVISOR_NAME" --label "$OWNER_LABEL" --label 'cr
   --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
   --mount type=bind,src="$CONTROL_DIR",dst=/run/crazyloops-piece \
   "$SUPERVISOR_IMAGE" >/dev/null
+
+mapfile -t active_supervisors < <(active_supervisor_ids)
+[[ "${#active_supervisors[@]}" == '1' ]] || fail 'Exactly one active Step 5B.1 supervisor was not proven.'
+SUPERVISOR_DOCKER_ID="$(docker inspect --format '{{.Id}}' "$SUPERVISOR_NAME")"
+[[ "${active_supervisors[0]}" == "$SUPERVISOR_DOCKER_ID" ]] || fail 'Active supervisor does not match its inspected self Docker identity.'
 
 for _ in $(seq 1 100); do [[ -S "$SOCKET" ]] && break; sleep 0.05; done
 [[ -S "$SOCKET" ]] || fail 'Supervisor UDS was not created.'
@@ -142,6 +158,7 @@ node - "$ARTIFACT_DIR/supervisor-inspect.json" "$CONTROL_DIR" "$DOCKER_GID" <<'N
 const fs = require('node:fs');
 const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))[0];
 const host = value.HostConfig;
+if (value.Config.Labels?.['crazyloops.runtime'] !== 'piece-runtime-supervisor-v1' || value.Config.Labels?.['crazyloops.resource'] !== 'supervisor') throw new Error('supervisor labels');
 if (value.Config.User !== '65532:65532') throw new Error('user');
 if (host.NetworkMode !== 'none' || Object.keys(host.PortBindings ?? {}).length || value.Config.ExposedPorts) throw new Error('network');
 if (!host.ReadonlyRootfs || host.Privileged || JSON.stringify(host.CapDrop) !== JSON.stringify(['ALL']) || (host.CapAdd ?? []).length || !(host.SecurityOpt ?? []).includes('no-new-privileges')) throw new Error('privilege');
@@ -343,6 +360,7 @@ while IFS= read -r -d '' surface; do
 done < <(find "$CONTROL_DIR" -maxdepth 1 -type f -print0)
 
 docker stop --time 20 "$SUPERVISOR_NAME" >/dev/null
+[[ "$(count_active_supervisors)" == '0' ]] || fail 'Running Step 5B.1 supervisor count did not return to zero after graceful shutdown.'
 node -e 'const value=JSON.parse(process.argv[1])[0];if(value.State.Running||value.State.OOMKilled||value.State.ExitCode!==0)process.exit(1)' "$(docker inspect "$SUPERVISOR_NAME")" || fail 'Supervisor did not complete its bounded SIGTERM shutdown.'
 docker rm "$SUPERVISOR_NAME" >/dev/null
 [[ ! -e "$SOCKET" ]] || fail 'Supervisor socket survived graceful shutdown.'

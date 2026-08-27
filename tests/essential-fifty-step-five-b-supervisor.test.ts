@@ -21,6 +21,7 @@ import {
   SUPERVISOR_MAX_CONTROL_CONNECTIONS,
   SUPERVISOR_OWNER_LABEL,
   SUPERVISOR_RUNTIME_SPEC,
+  SUPERVISOR_SERVICE_RESOURCE_LABEL,
   SUPERVISOR_SHUTDOWN_GRACE_MS,
   SUPERVISOR_SOCKET_DIRECTORY_MODE,
   SUPERVISOR_SOCKET_MODE,
@@ -32,6 +33,18 @@ import { validateSupervisorSocketPath } from "../services/piece-runtime/src/supe
 import { PieceSupervisorService } from "../services/piece-runtime/src/supervisor-service.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
+const SELF_CONTAINER_NAME = "cl-piece-step5b1-supervisor";
+
+function supervisorLabels() {
+  return {
+    [SUPERVISOR_OWNER_LABEL.key]: SUPERVISOR_OWNER_LABEL.value,
+    [SUPERVISOR_SERVICE_RESOURCE_LABEL.key]: SUPERVISOR_SERVICE_RESOURCE_LABEL.value,
+  };
+}
+
+function dockerEngine(docker: FakeDocker) {
+  return new DockerPieceContainerEngine({ docker, selfContainerName: SELF_CONTAINER_NAME });
+}
 
 function invocation(requestId = "request-supervisor-1", overrides: Record<string, unknown> = {}) {
   return {
@@ -91,6 +104,7 @@ class FakeDocker {
   gatewayAddress = "10.90.0.7";
   workerOutput: Buffer;
   lastReturnedOutput: Buffer | null = null;
+  listedContainers: Array<Record<string, any>> | null = null;
 
   constructor() {
     this.workerOutput = Buffer.from(JSON.stringify({
@@ -184,7 +198,12 @@ class FakeDocker {
 
   async listContainers(label: string) {
     this.record("listContainers", label);
-    return [...this.containers.values()].map((value) => ({ Id: value.Id, Labels: value.Config.Labels }));
+    if (this.listedContainers) return this.listedContainers;
+    return [...this.containers.values()].map((value) => ({
+      Id: value.Id,
+      Labels: value.Config.Labels,
+      State: value.State?.Running === true ? "running" : "exited",
+    }));
   }
 
   async listNetworks(label: string) {
@@ -238,7 +257,7 @@ class CleanupFailingEngine extends PieceContainerEngine {
 describe("Essential 50 Step 5B.1 private piece supervisor", () => {
   test("concrete engine implements the accepted abstraction and creates isolated dynamic topology", async () => {
     const docker = new FakeDocker();
-    const engine = new DockerPieceContainerEngine({ docker });
+    const engine = dockerEngine(docker);
     assert.ok(engine instanceof PieceContainerEngine);
     const request = invocation();
     const plan = buildInvocationPlan(request);
@@ -337,7 +356,7 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     for (const failure of ["createNetwork", "createContainer", "connectNetwork", "startContainer", "attachAndRun"]) {
       const docker = new FakeDocker();
       docker.failAt = failure;
-      const engine = new DockerPieceContainerEngine({ docker });
+      const engine = dockerEngine(docker);
       const request = invocation();
       const plan = buildInvocationPlan(request);
       await assert.rejects(engine.runInvocation({ plan, request, credential: Buffer.from("synthetic-token") }), PieceRuntimeError);
@@ -351,7 +370,7 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
 
   test("cleanup attempts every owned resource even when one Docker removal fails", async () => {
     const docker = new FakeDocker();
-    const engine = new DockerPieceContainerEngine({ docker });
+    const engine = dockerEngine(docker);
     const request = invocation();
     const plan = buildInvocationPlan(request);
     await engine.runInvocation({ plan, request, credential: Buffer.from("synthetic-token") });
@@ -392,7 +411,7 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     for (const output of [Buffer.from("not-json\n"), Buffer.alloc(150 * 1024, 1)]) {
       const docker = new FakeDocker();
       docker.workerOutput = output;
-      const engine = new DockerPieceContainerEngine({ docker });
+      const engine = dockerEngine(docker);
       const request = invocation();
       const plan = buildInvocationPlan(request);
       await assert.rejects(engine.runInvocation({ plan, request, credential: Buffer.from("synthetic-token") }), (error: any) => error.code === "PIECE_RESPONSE_INVALID" || error.code === "PIECE_RUNTIME_FAILED");
@@ -418,7 +437,7 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     for (const value of invalidResults) {
       const docker = new FakeDocker();
       docker.workerOutput = Buffer.from(`${JSON.stringify(value)}\n`);
-      const engine = new DockerPieceContainerEngine({ docker });
+      const engine = dockerEngine(docker);
       const request = invocation();
       const plan = buildInvocationPlan(request);
       await assert.rejects(
@@ -438,7 +457,7 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
         errorCode,
         retryable: false,
       })}\n`);
-      const engine = new DockerPieceContainerEngine({ docker });
+      const engine = dockerEngine(docker);
       const request = invocation();
       const plan = buildInvocationPlan(request);
       const result = await engine.runInvocation({ plan, request, credential: Buffer.from("synthetic-token") });
@@ -449,7 +468,7 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
 
     const docker = new FakeDocker();
     docker.workerOutput = Buffer.from(`${JSON.stringify(successfulWorkerResult())}\n`);
-    const engine = new DockerPieceContainerEngine({ docker });
+    const engine = dockerEngine(docker);
     const request = invocation();
     const plan = buildInvocationPlan(request);
     const result = await engine.runInvocation({ plan, request, credential: Buffer.from("synthetic-token") });
@@ -459,22 +478,112 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     await engine.cleanupInvocation(plan);
   });
 
-  test("orphan cleanup uses only the exact Step 5B owner label", async () => {
+  test("orphan cleanup proceeds only for exactly one running, correctly labelled self", async () => {
     const docker = new FakeDocker();
-    const engine = new DockerPieceContainerEngine({ docker });
     const plan = buildInvocationPlan(invocation());
-    const owned = { [SUPERVISOR_OWNER_LABEL.key]: SUPERVISOR_OWNER_LABEL.value, [SUPERVISOR_INVOCATION_RESOURCE_LABEL.key]: SUPERVISOR_INVOCATION_RESOURCE_LABEL.value, "crazyloops.invocation": plan.invocationId };
-    const unrelated = { "crazyloops.runtime": "piece-runtime-step5a", "crazyloops.invocation": "unrelated" };
-    docker.containers.set("owned", { Id: "owned", Config: { Labels: owned }, State: {}, NetworkSettings: { Networks: {} } });
-    docker.containers.set("unrelated", { Id: "unrelated", Config: { Labels: unrelated }, State: {}, NetworkSettings: { Networks: {} } });
+    const invocationLabels = {
+      [SUPERVISOR_OWNER_LABEL.key]: SUPERVISOR_OWNER_LABEL.value,
+      [SUPERVISOR_INVOCATION_RESOURCE_LABEL.key]: SUPERVISOR_INVOCATION_RESOURCE_LABEL.value,
+      "crazyloops.invocation": plan.invocationId,
+    };
+    docker.containers.set(SELF_CONTAINER_NAME, {
+      Id: "self-docker-id",
+      Config: { Labels: supervisorLabels() },
+      State: { Running: true },
+      NetworkSettings: { Networks: {} },
+    });
+    docker.containers.set("owned", { Id: "owned", Config: { Labels: invocationLabels }, State: { Running: false }, NetworkSettings: { Networks: {} } });
+    docker.networks.set("owned-network", { Id: "owned-network", Labels: invocationLabels });
+    const engine = dockerEngine(docker);
+    assert.equal(await engine.assertSingleActiveSupervisor(), "self-docker-id");
+    await engine.cleanupOrphans();
+    assert.equal(docker.containers.has("owned"), false);
+    assert.equal(docker.networks.has("owned-network"), false);
+    assert.equal(docker.containers.has(SELF_CONTAINER_NAME), true);
+    const firstRemove = docker.calls.findIndex(({ method }) => method === "removeContainer" || method === "removeNetwork");
+    const singletonList = docker.calls.findIndex(({ method }) => method === "listContainers");
+    assert.ok(singletonList >= 0 && firstRemove > singletonList);
+  });
+
+  test("zero active supervisors fails closed before orphan deletion", async () => {
+    const docker = new FakeDocker();
+    const labels = { ...supervisorLabels(), [SUPERVISOR_INVOCATION_RESOURCE_LABEL.key]: SUPERVISOR_INVOCATION_RESOURCE_LABEL.value };
+    docker.containers.set("owned", { Id: "owned", Config: { Labels: labels }, State: { Running: false }, NetworkSettings: { Networks: {} } });
+    await assert.rejects(dockerEngine(docker).cleanupOrphans(), (error: any) => error.code === "SUPERVISOR_UNAVAILABLE");
+    assert.equal(docker.containers.has("owned"), true);
+    assert.equal(docker.calls.some(({ method }) => method === "removeContainer" || method === "removeNetwork"), false);
+  });
+
+  test("two running supervisors fail closed before orphan deletion", async () => {
+    const docker = new FakeDocker();
+    for (const [name, id] of [[SELF_CONTAINER_NAME, "self-docker-id"], ["second-supervisor", "second-docker-id"]]) {
+      docker.containers.set(name, { Id: id, Config: { Labels: supervisorLabels() }, State: { Running: true }, NetworkSettings: { Networks: {} } });
+    }
+    const orphanLabels = { [SUPERVISOR_OWNER_LABEL.key]: SUPERVISOR_OWNER_LABEL.value, [SUPERVISOR_INVOCATION_RESOURCE_LABEL.key]: SUPERVISOR_INVOCATION_RESOURCE_LABEL.value };
+    docker.containers.set("owned", { Id: "owned", Config: { Labels: orphanLabels }, State: { Running: false }, NetworkSettings: { Networks: {} } });
+    await assert.rejects(dockerEngine(docker).cleanupOrphans(), (error: any) => error.code === "SUPERVISOR_UNAVAILABLE");
+    assert.equal(docker.containers.has("owned"), true);
+    assert.equal(docker.calls.some(({ method }) => method === "removeContainer" || method === "removeNetwork"), false);
+  });
+
+  test("mislabelled self fails closed before orphan deletion", async () => {
+    const docker = new FakeDocker();
+    docker.containers.set(SELF_CONTAINER_NAME, {
+      Id: "self-docker-id",
+      Config: { Labels: { [SUPERVISOR_OWNER_LABEL.key]: SUPERVISOR_OWNER_LABEL.value } },
+      State: { Running: true },
+      NetworkSettings: { Networks: {} },
+    });
+    docker.networks.set("owned-network", {
+      Id: "owned-network",
+      Labels: { [SUPERVISOR_OWNER_LABEL.key]: SUPERVISOR_OWNER_LABEL.value, [SUPERVISOR_INVOCATION_RESOURCE_LABEL.key]: SUPERVISOR_INVOCATION_RESOURCE_LABEL.value },
+    });
+    await assert.rejects(dockerEngine(docker).cleanupOrphans(), (error: any) => error.code === "SUPERVISOR_UNAVAILABLE");
+    assert.equal(docker.networks.has("owned-network"), true);
+    assert.equal(docker.calls.some(({ method }) => method === "removeNetwork"), false);
+  });
+
+  test("a listed singleton that is not inspected self fails closed", async () => {
+    const docker = new FakeDocker();
+    docker.containers.set(SELF_CONTAINER_NAME, {
+      Id: "self-docker-id",
+      Config: { Labels: supervisorLabels() },
+      State: { Running: true },
+      NetworkSettings: { Networks: {} },
+    });
+    docker.listedContainers = [{ Id: "different-docker-id", Labels: supervisorLabels(), State: "running" }];
+    await assert.rejects(dockerEngine(docker).cleanupOrphans(), (error: any) => error.code === "SUPERVISOR_UNAVAILABLE");
+    assert.equal(docker.calls.some(({ method }) => method === "removeContainer" || method === "removeNetwork"), false);
+  });
+
+  test("stopped stale supervisors do not count against one running self", async () => {
+    const docker = new FakeDocker();
+    docker.containers.set(SELF_CONTAINER_NAME, { Id: "self-docker-id", Config: { Labels: supervisorLabels() }, State: { Running: true }, NetworkSettings: { Networks: {} } });
+    docker.containers.set("stopped-supervisor", { Id: "stopped-id", Config: { Labels: supervisorLabels() }, State: { Running: false }, NetworkSettings: { Networks: {} } });
+    assert.equal(await dockerEngine(docker).assertSingleActiveSupervisor(), "self-docker-id");
+  });
+
+  test("unrelated labels do not count and unrelated resources remain untouched", async () => {
+    const docker = new FakeDocker();
+    docker.containers.set(SELF_CONTAINER_NAME, { Id: "self-docker-id", Config: { Labels: supervisorLabels() }, State: { Running: true }, NetworkSettings: { Networks: {} } });
+    const owned = { [SUPERVISOR_OWNER_LABEL.key]: SUPERVISOR_OWNER_LABEL.value, [SUPERVISOR_INVOCATION_RESOURCE_LABEL.key]: SUPERVISOR_INVOCATION_RESOURCE_LABEL.value };
+    const unrelated = { "crazyloops.runtime": "piece-runtime-step5a", "crazyloops.resource": "supervisor" };
+    docker.containers.set("owned", { Id: "owned", Config: { Labels: owned }, State: { Running: false }, NetworkSettings: { Networks: {} } });
+    docker.containers.set("unrelated", { Id: "unrelated", Config: { Labels: unrelated }, State: { Running: true }, NetworkSettings: { Networks: {} } });
     docker.networks.set("owned-network", { Id: "owned-network", Labels: owned });
     docker.networks.set("unrelated-network", { Id: "unrelated-network", Labels: unrelated });
-    await engine.cleanupOrphans();
+    await dockerEngine(docker).cleanupOrphans();
     assert.equal(docker.containers.has("owned"), false);
     assert.equal(docker.networks.has("owned-network"), false);
     assert.equal(docker.containers.has("unrelated"), true);
     assert.equal(docker.networks.has("unrelated-network"), true);
-    assert.ok(docker.calls.some(({ method, args }) => method === "listContainers" && args[0] === "crazyloops.runtime=piece-runtime-supervisor-v1"));
+  });
+
+  test("supervisor self container names are strictly bounded", () => {
+    const docker = new FakeDocker();
+    for (const value of [undefined, "", "/host/name", "bad name", `.bad`, "a".repeat(129)]) {
+      assert.throws(() => new DockerPieceContainerEngine({ docker, selfContainerName: value }), (error: any) => error.code === "SUPERVISOR_UNAVAILABLE");
+    }
   });
 
   test("socket validation permits only the reviewed UDS path", () => {
@@ -500,6 +609,7 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.equal(SUPERVISOR_KEEP_ALIVE_TIMEOUT_MS, 1);
     assert.equal(SUPERVISOR_SHUTDOWN_GRACE_MS, 8_000);
     assert.equal(SUPERVISOR_FORCE_CLOSE_MS, 2_000);
+    assert.deepEqual(SUPERVISOR_SERVICE_RESOURCE_LABEL, { key: "crazyloops.resource", value: "supervisor" });
     assert.deepEqual(SUPERVISOR_RUNTIME_SPEC.mounts.map(({ target }: any) => target), ["/var/run/docker.sock", "/run/crazyloops-piece"]);
     const server = readFileSync(resolve(ROOT, "services/piece-runtime/src/supervisor-server.mjs"), "utf8");
     assert.match(server, /server\.listen\(socketPath/);
@@ -523,6 +633,7 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.match(server, /controller\.abort\(\)/);
     assert.match(server, /chmodSync\(socketPath, SUPERVISOR_SOCKET_MODE\)/);
     const supervisor = readFileSync(resolve(ROOT, "services/piece-runtime/src/supervisor.mjs"), "utf8");
+    assert.match(supervisor, /selfContainerName: process\.env\.PIECE_SUPERVISOR_CONTAINER_NAME/);
     assert.match(supervisor, /piece_supervisor_shutdown_failed/);
     assert.match(supervisor, /errorCode: "SUPERVISOR_UNAVAILABLE"/);
     assert.match(supervisor, /process\.exitCode = 1/);
@@ -576,6 +687,12 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.match(harness, /curl[^\n]*--unix-socket/);
     assert.match(harness, /trap cleanup EXIT INT TERM/);
     assert.match(harness, /crazyloops\.runtime=piece-runtime-supervisor-v1/);
+    assert.match(harness, /SUPERVISOR_RESOURCE_LABEL='crazyloops\.resource=supervisor'/);
+    assert.match(harness, /PIECE_SUPERVISOR_CONTAINER_NAME="\$SUPERVISOR_NAME"/);
+    assert.match(harness, /No already-running Step 5B\.1 supervisor/);
+    assert.match(harness, /count_active_supervisors/);
+    assert.match(harness, /active_supervisor_ids/);
+    assert.match(harness, /self Docker identity/);
     assert.match(harness, /STEP5B1_SUPERVISOR_CONTAINERS/);
     assert.match(harness, /STEP5B1_INVOCATION_CONTAINERS/);
     assert.match(harness, /STEP5B1_INVOCATION_NETWORKS/);

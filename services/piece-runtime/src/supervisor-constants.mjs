@@ -23,6 +23,10 @@ export const SUPERVISOR_INVOCATION_RESOURCE_LABEL = deepFreeze({
   key: "crazyloops.resource",
   value: "invocation",
 });
+export const SUPERVISOR_SERVICE_RESOURCE_LABEL = deepFreeze({
+  key: "crazyloops.resource",
+  value: "supervisor",
+});
 
 export const SUPERVISOR_RUNTIME_SPEC = deepFreeze({
   networkMode: "none",
