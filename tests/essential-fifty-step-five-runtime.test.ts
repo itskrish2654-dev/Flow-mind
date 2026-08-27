@@ -419,7 +419,7 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
   });
 
   test("gateway connection evidence retains only an approved reviewed SNI destination", () => {
-    const beforeApproval = gatewayConnectionEvidence({
+    const spoofedBeforeApproval = {
       requestId: "request-123",
       capabilityId: HUBSPOT_GET_CONTACT_MANIFEST.capabilityId,
       approvedDestination: null,
@@ -427,7 +427,8 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
       upstreamBytes: 0,
       downstreamBytes: 0,
       outcome: "PIECE_EGRESS_DENIED",
-    });
+    };
+    const beforeApproval = gatewayConnectionEvidence(spoofedBeforeApproval);
     assert.equal(beforeApproval.hostname, null);
 
     assert.equal(approvedDestinationForHostname(HUBSPOT_GET_CONTACT_MANIFEST, "wrong.example"), null);
