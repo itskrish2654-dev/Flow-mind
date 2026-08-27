@@ -9,6 +9,12 @@ export const SUPERVISOR_DEFAULT_CONCURRENCY = 2;
 export const SUPERVISOR_MAX_CONCURRENCY = 4;
 export const SUPERVISOR_MAX_REQUEST_BYTES = 96 * 1024;
 export const SUPERVISOR_MAX_RESPONSE_BYTES = 192 * 1024;
+export const SUPERVISOR_MAX_CONTROL_CONNECTIONS = 8;
+export const SUPERVISOR_HEADERS_TIMEOUT_MS = 5_000;
+export const SUPERVISOR_BODY_TIMEOUT_MS = 10_000;
+export const SUPERVISOR_KEEP_ALIVE_TIMEOUT_MS = 1;
+export const SUPERVISOR_SHUTDOWN_GRACE_MS = 8_000;
+export const SUPERVISOR_FORCE_CLOSE_MS = 2_000;
 export const SUPERVISOR_OWNER_LABEL = deepFreeze({
   key: "crazyloops.runtime",
   value: "piece-runtime-supervisor-v1",

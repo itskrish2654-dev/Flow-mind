@@ -2,7 +2,7 @@ import { isIP } from "node:net";
 
 import { PieceContainerEngine } from "./container-engine.mjs";
 import { DockerClientError, decodeDockerMultiplexed } from "./docker-client.mjs";
-import { PieceRuntimeError } from "./errors.mjs";
+import { PIECE_ERROR_CODES, PieceRuntimeError } from "./errors.mjs";
 import { REVIEWED_MANIFESTS } from "./manifest-registry.mjs";
 import { SUPERVISOR_INVOCATION_RESOURCE_LABEL, SUPERVISOR_OWNER_LABEL } from "./supervisor-constants.mjs";
 
@@ -33,11 +33,21 @@ function validGatewayAddress(value) {
   return typeof value === "string" && isIP(value) !== 0 && value !== "0.0.0.0" && value !== "::" && value !== "127.0.0.1" && value !== "::1";
 }
 
-function safeWorkerResult(buffer, requestId, maximumBytes) {
-  if (!Buffer.isBuffer(buffer) || buffer.length < 2 || buffer.length > maximumBytes) {
-    throw new PieceRuntimeError("PIECE_RESPONSE_INVALID");
-  }
+function exactKeys(value, expected) {
+  const actual = Object.keys(value).sort();
+  const reviewed = [...expected].sort();
+  return actual.length === reviewed.length && actual.every((key, index) => key === reviewed[index]);
+}
+
+function record(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function safeWorkerResult(buffer, requestId, maximumBytes, manifest) {
   try {
+    if (!Buffer.isBuffer(buffer) || buffer.length < 2 || buffer.length > maximumBytes) {
+      throw new PieceRuntimeError("PIECE_RESPONSE_INVALID");
+    }
     const lines = buffer.toString("utf8").split(/\r?\n/).filter(Boolean);
     if (lines.length !== 1) throw new Error("invalid line count");
     const value = JSON.parse(lines[0]);
@@ -46,26 +56,41 @@ function safeWorkerResult(buffer, requestId, maximumBytes) {
       value.protocolVersion !== 1 || value.requestId !== requestId || typeof value.ok !== "boolean"
     ) throw new Error("invalid worker result");
     if (value.ok === true) {
-      const keys = Object.keys(value).sort();
-      if (JSON.stringify(keys) !== JSON.stringify(["acknowledged", "meta", "ok", "output", "protocolVersion", "requestId"])) {
+      if (!exactKeys(value, ["acknowledged", "meta", "ok", "output", "protocolVersion", "requestId"])) {
         throw new Error("invalid success result");
       }
-      if (value.acknowledged !== true || !value.output || typeof value.output !== "object" || !value.meta || typeof value.meta !== "object") {
+      const output = record(value.output);
+      const meta = record(value.meta);
+      if (
+        value.acknowledged !== true || !output || !meta ||
+        !exactKeys(meta, [
+          "capabilityId", "capabilityVersion", "providerId", "pieceVersion",
+          "actionId", "classification", "attempts",
+        ]) ||
+        meta.capabilityId !== manifest.capabilityId ||
+        meta.capabilityVersion !== manifest.capabilityVersion ||
+        meta.providerId !== manifest.providerId ||
+        meta.pieceVersion !== manifest.pieceVersion ||
+        meta.actionId !== manifest.actionId ||
+        meta.classification !== manifest.operationClassification ||
+        meta.attempts !== 1
+      ) {
         throw new Error("invalid success result");
       }
     } else {
-      const keys = Object.keys(value).sort();
-      if (JSON.stringify(keys) !== JSON.stringify(["errorCode", "ok", "protocolVersion", "requestId", "retryable"])) {
+      if (!exactKeys(value, ["errorCode", "ok", "protocolVersion", "requestId", "retryable"])) {
         throw new Error("invalid failure result");
       }
-      if (typeof value.errorCode !== "string" || typeof value.retryable !== "boolean") throw new Error("invalid failure result");
+      if (!PIECE_ERROR_CODES.includes(value.errorCode) || typeof value.retryable !== "boolean") {
+        throw new Error("invalid failure result");
+      }
     }
     return value;
   } catch (error) {
     if (error instanceof PieceRuntimeError) throw error;
     throw new PieceRuntimeError("PIECE_RESPONSE_INVALID");
   } finally {
-    buffer.fill(0);
+    if (Buffer.isBuffer(buffer)) buffer.fill(0);
   }
 }
 
@@ -202,7 +227,7 @@ export class DockerPieceContainerEngine extends PieceContainerEngine {
       });
       const gatewayAfter = await this.docker.inspectContainer(plan.names.gateway);
       if (gatewayAfter?.State?.Running !== true) throw new PieceRuntimeError("PIECE_EGRESS_DENIED");
-      return safeWorkerResult(output, request.requestId, manifest.maximumResponseBytes + 8 * 1024);
+      return safeWorkerResult(output, request.requestId, manifest.maximumResponseBytes + 8 * 1024, manifest);
     } catch (error) {
       throw mapDockerFailure(error);
     } finally {
@@ -231,7 +256,8 @@ export class DockerPieceContainerEngine extends PieceContainerEngine {
   }
 
   async cleanupInvocation(plan) {
-    const labels = labelsFor(plan);
+    const tracked = this.resources.get(plan.invocationId);
+    const labels = tracked?.labels ?? labelsFor(plan);
     let failed = false;
     for (const operation of [
       () => this.removeOwnedContainer(plan.names.sandbox, labels),
@@ -242,8 +268,8 @@ export class DockerPieceContainerEngine extends PieceContainerEngine {
       try { await operation(); } catch { failed = true; }
     }
     try { await this.verifyAbsent(plan); } catch { failed = true; }
-    this.resources.delete(plan.invocationId);
     if (failed) throw new PieceRuntimeError("PIECE_RUNTIME_FAILED");
+    this.resources.delete(plan.invocationId);
   }
 
   async removeOwnedContainer(name, labels) {

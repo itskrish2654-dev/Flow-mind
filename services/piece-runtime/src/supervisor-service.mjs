@@ -26,6 +26,23 @@ function linkAbortSignals(...signals) {
   return controller;
 }
 
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function within(promise, milliseconds) {
+  if (milliseconds <= 0) return false;
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve(promise).then(() => true, () => false),
+      new Promise((resolve) => { timer = setTimeout(() => resolve(false), milliseconds); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export class PieceSupervisorService {
   /** @param {{engine?: PieceContainerEngine, concurrencyLimit?: number | string, logger?: Function}} options */
   constructor({ engine, concurrencyLimit = SUPERVISOR_DEFAULT_CONCURRENCY, logger = () => undefined } = {}) {
@@ -67,24 +84,52 @@ export class PieceSupervisorService {
       if (this.active.has(plan.invocationId)) throw new SupervisorError("SUPERVISOR_DUPLICATE", 409);
       if (this.active.size >= this.concurrencyLimit) throw new SupervisorError("SUPERVISOR_BUSY", 429);
       const controller = linkAbortSignals(clientSignal);
-      active = { controller, plan };
+      active = {
+        controller,
+        plan,
+        request,
+        executionComplete: false,
+        cleanupFailed: false,
+        cleanupPromise: null,
+      };
       this.active.set(plan.invocationId, active);
       this.safeLog("piece_supervisor_execution_started", request, null);
       const result = await this.engine.runInvocation({ plan, request, credential, signal: controller.signal });
-      this.safeLog("piece_supervisor_execution_finished", request, result?.ok === true ? null : result?.errorCode ?? "PIECE_RUNTIME_FAILED");
+      active.resultErrorCode = result?.ok === true ? null : result?.errorCode ?? "PIECE_RUNTIME_FAILED";
       return result;
     } finally {
       credential.fill(0);
       if (plan && active) {
+        active.executionComplete = true;
         try {
-          await this.engine.cleanupInvocation(plan);
+          await this.cleanupActive(active);
         } catch {
-          this.safeLog("piece_supervisor_cleanup_failed", request, "PIECE_RUNTIME_FAILED");
           throw new PieceRuntimeError("PIECE_RUNTIME_FAILED");
-        } finally {
-          this.active.delete(plan.invocationId);
         }
+        this.safeLog("piece_supervisor_execution_finished", request, active.resultErrorCode ?? null);
       }
+    }
+  }
+
+  async cleanupActive(active) {
+    if (active.cleanupPromise) return active.cleanupPromise;
+    const cleanupPromise = (async () => {
+      try {
+        await this.engine.cleanupInvocation(active.plan);
+        active.cleanupFailed = false;
+        this.active.delete(active.plan.invocationId);
+      } catch {
+        active.cleanupFailed = true;
+        this.ready = false;
+        this.safeLog("piece_supervisor_cleanup_failed", active.request, "PIECE_RUNTIME_FAILED");
+        throw new PieceRuntimeError("PIECE_RUNTIME_FAILED");
+      }
+    })();
+    active.cleanupPromise = cleanupPromise;
+    try {
+      return await cleanupPromise;
+    } finally {
+      if (active.cleanupPromise === cleanupPromise) active.cleanupPromise = null;
     }
   }
 
@@ -109,12 +154,26 @@ export class PieceSupervisorService {
     this.shuttingDown = true;
     for (const { controller } of this.active.values()) controller.abort();
     const deadline = Date.now() + timeoutMs;
-    while (this.active.size > 0 && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 25));
+    while (
+      Date.now() < deadline &&
+      [...this.active.values()].some((active) => !active.executionComplete || active.cleanupPromise)
+    ) {
+      await delay(25);
     }
-    for (const { plan } of this.active.values()) {
-      await this.engine.cleanupInvocation(plan).catch(() => undefined);
+    for (const active of [...this.active.values()]) {
+      let remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      if (active.cleanupPromise) {
+        await within(active.cleanupPromise, remaining);
+      }
+      remaining = deadline - Date.now();
+      if (
+        remaining > 0 && this.active.has(active.plan.invocationId) &&
+        !active.cleanupPromise && (active.executionComplete || active.cleanupFailed)
+      ) {
+        await within(this.cleanupActive(active), remaining);
+      }
     }
-    this.active.clear();
+    return Object.freeze({ clean: this.active.size === 0, activeInvocations: this.active.size });
   }
 }

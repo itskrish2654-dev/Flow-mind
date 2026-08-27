@@ -5,9 +5,15 @@ import { basename, dirname, isAbsolute, normalize } from "node:path/posix";
 
 import { PieceRuntimeError } from "./errors.mjs";
 import {
+  SUPERVISOR_BODY_TIMEOUT_MS,
+  SUPERVISOR_FORCE_CLOSE_MS,
+  SUPERVISOR_HEADERS_TIMEOUT_MS,
+  SUPERVISOR_KEEP_ALIVE_TIMEOUT_MS,
+  SUPERVISOR_MAX_CONTROL_CONNECTIONS,
   SUPERVISOR_MAX_REQUEST_BYTES,
   SUPERVISOR_MAX_RESPONSE_BYTES,
   SUPERVISOR_PROTOCOL_VERSION,
+  SUPERVISOR_SHUTDOWN_GRACE_MS,
   SUPERVISOR_SOCKET_DIRECTORY,
   SUPERVISOR_SOCKET_DIRECTORY_MODE,
   SUPERVISOR_SOCKET_MODE,
@@ -58,28 +64,70 @@ function readJson(request) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let bytes = 0;
-    request.on("data", (chunk) => {
-      bytes += chunk.length;
-      if (bytes > SUPERVISOR_MAX_REQUEST_BYTES) {
-        request.destroy();
-        reject(new SupervisorError("SUPERVISOR_INVALID_REQUEST", 413));
+    let settled = false;
+    const zeroChunks = () => {
+      for (const chunk of chunks) chunk.fill(0);
+      chunks.length = 0;
+      bytes = 0;
+    };
+    const removeListeners = () => {
+      request.off("data", onData);
+      request.off("end", onEnd);
+      request.off("error", onError);
+      request.off("aborted", onAborted);
+    };
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      removeListeners();
+      zeroChunks();
+      if (error) reject(error); else resolve(value);
+    };
+    const onData = (chunk) => {
+      if (settled) return;
+      if (bytes + chunk.length > SUPERVISOR_MAX_REQUEST_BYTES) {
+        request.pause();
+        if (Buffer.isBuffer(chunk)) chunk.fill(0);
+        finish(new SupervisorError("SUPERVISOR_INVALID_REQUEST", 413));
         return;
       }
+      bytes += chunk.length;
       chunks.push(Buffer.from(chunk));
-    });
-    request.once("end", () => {
+    };
+    const onEnd = () => {
       const raw = Buffer.concat(chunks, bytes);
       try {
-        resolve(JSON.parse(raw.toString("utf8")));
+        finish(null, JSON.parse(raw.toString("utf8")));
       } catch {
-        reject(new SupervisorError("SUPERVISOR_INVALID_REQUEST", 400));
+        finish(new SupervisorError("SUPERVISOR_INVALID_REQUEST", 400));
       } finally {
         raw.fill(0);
-        for (const chunk of chunks) chunk.fill(0);
       }
-    });
-    request.once("error", () => reject(new SupervisorError("SUPERVISOR_INVALID_REQUEST", 400)));
+    };
+    const onError = () => finish(new SupervisorError("SUPERVISOR_INVALID_REQUEST", 400));
+    const onAborted = () => finish(new SupervisorError("SUPERVISOR_INVALID_REQUEST", 400));
+    const timer = setTimeout(() => {
+      request.pause();
+      finish(new SupervisorError("SUPERVISOR_INVALID_REQUEST", 408));
+    }, SUPERVISOR_BODY_TIMEOUT_MS);
+    request.on("data", onData);
+    request.once("end", onEnd);
+    request.once("error", onError);
+    request.once("aborted", onAborted);
   });
+}
+
+async function settlesWithin(promise, timeoutMs) {
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve(promise).then(() => true, () => false),
+      new Promise((resolve) => { timer = setTimeout(() => resolve(false), timeoutMs); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function boundedResponse(response, statusCode, value) {
@@ -130,6 +178,16 @@ export async function startSupervisorServer({ service, engine, socketPath = SUPE
       boundedResponse(response, safe.statusCode, safe.body);
     }
   });
+  const controlConnections = new Set();
+  server.headersTimeout = SUPERVISOR_HEADERS_TIMEOUT_MS;
+  server.requestTimeout = SUPERVISOR_BODY_TIMEOUT_MS;
+  server.keepAliveTimeout = SUPERVISOR_KEEP_ALIVE_TIMEOUT_MS;
+  server.maxRequestsPerSocket = 1;
+  server.maxConnections = SUPERVISOR_MAX_CONTROL_CONNECTIONS;
+  server.on("connection", (socket) => {
+    controlConnections.add(socket);
+    socket.once("close", () => controlConnections.delete(socket));
+  });
   server.on("clientError", (_error, socket) => socket.destroy());
   await new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -152,10 +210,22 @@ export async function startSupervisorServer({ service, engine, socketPath = SUPE
     async stop() {
       if (stopping) return;
       stopping = true;
+      let failure = false;
       const closed = new Promise((resolve) => server.close(resolve));
-      await service.shutdown();
-      await closed;
-      if (existsSync(socketPath)) unlinkSync(socketPath);
+      try {
+        const shutdown = await service.shutdown(SUPERVISOR_SHUTDOWN_GRACE_MS).catch(() => null);
+        if (!shutdown?.clean) failure = true;
+        server.closeIdleConnections?.();
+        if (!await settlesWithin(closed, SUPERVISOR_FORCE_CLOSE_MS)) {
+          server.closeAllConnections?.();
+          for (const socket of controlConnections) socket.destroy();
+          if (!await settlesWithin(closed, SUPERVISOR_FORCE_CLOSE_MS)) failure = true;
+        }
+      } finally {
+        for (const socket of controlConnections) socket.destroy();
+        if (existsSync(socketPath)) unlinkSync(socketPath);
+      }
+      if (failure) throw new SupervisorError("SUPERVISOR_UNAVAILABLE", 503);
     },
   });
 }

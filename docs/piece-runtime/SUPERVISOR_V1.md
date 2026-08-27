@@ -83,8 +83,11 @@ removed only when it is an actual stale Unix socket. The supervisor first owns
 the socket, then performs narrow orphan recovery, and only then reports ready.
 This socket-ownership sequence prevents a second active supervisor from running
 or performing cleanup concurrently. Graceful shutdown stops acceptance, aborts
-active work, waits within a bound, removes owned invocation resources, closes
-the listener, and unlinks the socket.
+active work, allows a bounded cleanup window, force-closes remaining control
+connections after a second bounded grace period, and unlinks the owned socket in
+`finally`. A cleanup that still cannot be verified is reported only as the
+bounded unavailable failure; process termination remains possible so the next
+startup can apply exact-label orphan recovery.
 
 The future Connector Runner-to-supervisor relationship will use a group-readable
 bind mount for this UDS. Step 5B.1 does not modify or mount it into the Runner.
@@ -94,8 +97,11 @@ bind mount for this UDS. Step 5B.1 does not modify or mount it into the Runner.
 `GET /v1/health` returns only protocol version, readiness, active invocation
 count, and concurrency limit. `POST /v1/execute` accepts protocol version 1,
 the existing validated Piece request, and one bounded Base64 credential. Request
-and response sizes are bounded. Unknown routes, malformed JSON, unsupported
-versions, extra metadata, and content-type mismatches fail closed.
+and response sizes are bounded. Buffered body chunks are zeroed on success,
+overflow, malformed JSON, abort, and request error. Headers, body lifetime,
+connections, requests per socket, and keep-alive are constrained by trusted
+startup constants. Unknown routes, malformed JSON, unsupported versions, extra
+metadata, and content-type mismatches fail closed.
 
 Supervisor-level output is limited to:
 
@@ -104,7 +110,11 @@ Supervisor-level output is limited to:
 - `SUPERVISOR_DUPLICATE`
 - `SUPERVISOR_UNAVAILABLE`
 
-Piece/runtime failures retain the bounded `PIECE_*` vocabulary. Docker daemon
+Piece/runtime failures must be exact members of the reviewed `PIECE_ERROR_CODES`
+vocabulary. Successful worker metadata must have the exact reviewed keys and
+match capability, version, provider, piece, action, READ classification, and one
+attempt. Unknown error strings, spoofed metadata, extra metadata, array output,
+and any malformed result become `PIECE_RESPONSE_INVALID`. Docker daemon
 messages, image errors, provider bodies, SDK text, stack traces, worker stderr,
 raw requests, and environment values never cross the control response or
 structured metadata logs.
@@ -145,7 +155,12 @@ one stdin write, one action attempt, bounded result, and finally sandbox,
 gateway, internal network, egress network removal. Timeout, disconnect, crash,
 malformed output, Docker failure, provider failure, shutdown, and internal
 exception all enter the same idempotent cleanup boundary. Absence is verified
-before an invocation slot is released.
+before an invocation slot is released. If cleanup or the absence check fails,
+the engine retains its resource record, the service retains the active slot,
+health becomes unavailable, and all new execution requests fail before Docker
+work. Shutdown retries retained cleanup state; only a verified retry releases
+the slot and resource record. Startup orphan cleanup is the final exact-label
+recovery path after an unrecoverable process shutdown.
 
 ## Concurrency, duplicates, and orphan recovery
 
@@ -178,10 +193,17 @@ or Docker enforcement.
 `scripts/e50-step5b1-supervisor-host-acceptance.sh` is owner-run only on the
 accepted Linux Docker host. It is commit/branch/base gated, snapshots protected
 services, builds reviewed images, inspects the hardened supervisor, calls health
-and execute over UDS, observes real topology, uses only synthetic credentials,
-scans persistence surfaces, proves narrow orphan cleanup, verifies zero owned
+and execute over UDS, proves exact socket/directory modes and cgroup/runtime
+limits, captures both real invocation networks and the gateway's credential-free
+DNS/connection evidence, requires real-provider `PIECE_AUTH_FAILED` for its fake
+token, exercises the bounded negative matrix, scans plaintext and Base64 canary
+forms across runtime/persistence surfaces, proves Docker-socket isolation and
+narrow orphan cleanup, verifies bounded graceful shutdown and zero owned
 resources, and confirms Connector Runner HTTP 401 plus Redis PONG. Codex must
-not execute it.
+not execute it. Duplicate and concurrency saturation remain deterministic
+repository proofs in Step 5B.1; the owner harness deliberately emits no host
+PASS marker for them because staging the race without a production test hook is
+not deterministic enough for acceptance.
 
 Step 5B.2 must still design and review the Connector Runner-to-UDS integration,
 production service ownership/group setup, deployment/rollback, stronger image

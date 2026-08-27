@@ -26,8 +26,13 @@ async function main() {
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    await supervisor.stop();
-    process.exitCode = 0;
+    try {
+      await supervisor.stop();
+      process.exitCode = 0;
+    } catch {
+      process.stderr.write(`${JSON.stringify({ event: "piece_supervisor_shutdown_failed", errorCode: "SUPERVISOR_UNAVAILABLE" })}\n`);
+      process.exitCode = 1;
+    }
   };
   process.once("SIGTERM", () => void shutdown());
   process.once("SIGINT", () => void shutdown());

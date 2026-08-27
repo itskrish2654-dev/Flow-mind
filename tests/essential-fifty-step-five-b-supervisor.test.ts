@@ -10,12 +10,20 @@ import {
   DockerPieceContainerEngine,
   supervisorContainerConfigurations,
 } from "../services/piece-runtime/src/docker-piece-container-engine.mjs";
-import { PieceRuntimeError } from "../services/piece-runtime/src/errors.mjs";
+import { PIECE_ERROR_CODES, PieceRuntimeError } from "../services/piece-runtime/src/errors.mjs";
 import {
+  SUPERVISOR_BODY_TIMEOUT_MS,
   SUPERVISOR_DEFAULT_CONCURRENCY,
+  SUPERVISOR_FORCE_CLOSE_MS,
+  SUPERVISOR_HEADERS_TIMEOUT_MS,
   SUPERVISOR_INVOCATION_RESOURCE_LABEL,
+  SUPERVISOR_KEEP_ALIVE_TIMEOUT_MS,
+  SUPERVISOR_MAX_CONTROL_CONNECTIONS,
   SUPERVISOR_OWNER_LABEL,
   SUPERVISOR_RUNTIME_SPEC,
+  SUPERVISOR_SHUTDOWN_GRACE_MS,
+  SUPERVISOR_SOCKET_DIRECTORY_MODE,
+  SUPERVISOR_SOCKET_MODE,
   SUPERVISOR_SOCKET_PATH,
 } from "../services/piece-runtime/src/supervisor-constants.mjs";
 import { SupervisorError } from "../services/piece-runtime/src/supervisor-errors.mjs";
@@ -55,6 +63,26 @@ function multiplex(stream: number, value: string) {
   return Buffer.concat([header, payload]);
 }
 
+function successfulWorkerResult(overrides: Record<string, unknown> = {}) {
+  return {
+    protocolVersion: 1,
+    requestId: "request-supervisor-1",
+    ok: true,
+    acknowledged: true,
+    output: { id: "synthetic-contact" },
+    meta: {
+      capabilityId: "hubspot.get_contact",
+      capabilityVersion: 1,
+      providerId: "hubspot",
+      pieceVersion: "0.8.10",
+      actionId: "get-contact",
+      classification: "READ",
+      attempts: 1,
+    },
+    ...overrides,
+  };
+}
+
 class FakeDocker {
   calls: Array<{ method: string; args: unknown[] }> = [];
   containers = new Map<string, Record<string, any>>();
@@ -62,6 +90,7 @@ class FakeDocker {
   failAt: string | null = null;
   gatewayAddress = "10.90.0.7";
   workerOutput: Buffer;
+  lastReturnedOutput: Buffer | null = null;
 
   constructor() {
     this.workerOutput = Buffer.from(JSON.stringify({
@@ -149,7 +178,8 @@ class FakeDocker {
   async attachAndRun(input: Record<string, any>) {
     this.record("attachAndRun", input);
     await this.startContainer(input.name);
-    return Buffer.from(this.workerOutput);
+    this.lastReturnedOutput = Buffer.from(this.workerOutput);
+    return this.lastReturnedOutput;
   }
 
   async listContainers(label: string) {
@@ -178,6 +208,30 @@ class HoldingEngine extends PieceContainerEngine {
 
   async cleanupInvocation(plan: any) {
     this.cleanups.push(plan.invocationId);
+  }
+}
+
+class CleanupFailingEngine extends PieceContainerEngine {
+  calls: any[] = [];
+  cleanupAttempts = 0;
+  failCleanup = true;
+  credential: Buffer | null = null;
+
+  async runInvocation(value: any) {
+    this.calls.push(value);
+    this.credential = value.credential;
+    return {
+      protocolVersion: 1,
+      requestId: value.request.requestId,
+      ok: false,
+      errorCode: "PIECE_AUTH_FAILED",
+      retryable: false,
+    };
+  }
+
+  async cleanupInvocation() {
+    this.cleanupAttempts += 1;
+    if (this.failCleanup) throw new PieceRuntimeError("PIECE_RUNTIME_FAILED");
   }
 }
 
@@ -305,6 +359,33 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     await assert.rejects(engine.cleanupInvocation(plan), (error: any) => error.code === "PIECE_RUNTIME_FAILED");
     assert.equal(docker.calls.filter(({ method }) => method === "removeContainer").length, 2);
     assert.equal(docker.calls.filter(({ method }) => method === "removeNetwork").length, 2);
+    assert.equal(engine.resources.has(plan.invocationId), true);
+    docker.failAt = null;
+    await engine.cleanupInvocation(plan);
+    assert.equal(engine.resources.has(plan.invocationId), false);
+    assert.equal(docker.containers.size, 0);
+    assert.equal(docker.networks.size, 0);
+  });
+
+  test("cleanup failure degrades the supervisor and retains the active slot until verified retry", async () => {
+    const engine = new CleanupFailingEngine();
+    const logs: any[] = [];
+    const service = new PieceSupervisorService({ engine, logger: (event: any) => logs.push(event) });
+    service.setReady();
+    await assert.rejects(service.execute(envelope()), (error: any) => error.code === "PIECE_RUNTIME_FAILED");
+    assert.ok(engine.credential?.every((byte) => byte === 0));
+    assert.equal(service.health().ok, false);
+    assert.equal(service.health().status, "unavailable");
+    assert.equal(service.health().activeInvocations, 1);
+    assert.equal(engine.calls.length, 1);
+    await assert.rejects(service.execute(envelope("request-after-degrade")), (error: any) => error.code === "SUPERVISOR_UNAVAILABLE");
+    assert.equal(engine.calls.length, 1);
+    assert.equal(logs.some((event) => event.event === "piece_supervisor_cleanup_failed" && event.errorCode === "PIECE_RUNTIME_FAILED"), true);
+    engine.failCleanup = false;
+    const shutdown = await service.shutdown(500);
+    assert.deepEqual(shutdown, { clean: true, activeInvocations: 0 });
+    assert.equal(engine.cleanupAttempts, 2);
+    assert.equal(service.health().activeInvocations, 0);
   });
 
   test("malformed and oversized worker output fail with bounded vocabulary and no stderr", async () => {
@@ -315,8 +396,67 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
       const request = invocation();
       const plan = buildInvocationPlan(request);
       await assert.rejects(engine.runInvocation({ plan, request, credential: Buffer.from("synthetic-token") }), (error: any) => error.code === "PIECE_RESPONSE_INVALID" || error.code === "PIECE_RUNTIME_FAILED");
+      assert.ok(docker.lastReturnedOutput?.every((byte) => byte === 0));
       await engine.cleanupInvocation(plan);
     }
+  });
+
+  test("worker failure and success responses are exact reviewed vocabulary", async () => {
+    const invalidResults = [
+      {
+        protocolVersion: 1,
+        requestId: "request-supervisor-1",
+        ok: false,
+        errorCode: "PIECE_SECRET_DUMP",
+        retryable: false,
+      },
+      successfulWorkerResult({ meta: { ...successfulWorkerResult().meta, providerId: "spoofed" } }),
+      successfulWorkerResult({ meta: { ...successfulWorkerResult().meta, extra: "unreviewed" } }),
+      successfulWorkerResult({ meta: { ...successfulWorkerResult().meta, attempts: 2 } }),
+      successfulWorkerResult({ output: [] }),
+    ];
+    for (const value of invalidResults) {
+      const docker = new FakeDocker();
+      docker.workerOutput = Buffer.from(`${JSON.stringify(value)}\n`);
+      const engine = new DockerPieceContainerEngine({ docker });
+      const request = invocation();
+      const plan = buildInvocationPlan(request);
+      await assert.rejects(
+        engine.runInvocation({ plan, request, credential: Buffer.from("synthetic-token") }),
+        (error: any) => error.code === "PIECE_RESPONSE_INVALID",
+      );
+      assert.ok(docker.lastReturnedOutput?.every((byte) => byte === 0));
+      await engine.cleanupInvocation(plan);
+    }
+
+    for (const errorCode of PIECE_ERROR_CODES) {
+      const docker = new FakeDocker();
+      docker.workerOutput = Buffer.from(`${JSON.stringify({
+        protocolVersion: 1,
+        requestId: "request-supervisor-1",
+        ok: false,
+        errorCode,
+        retryable: false,
+      })}\n`);
+      const engine = new DockerPieceContainerEngine({ docker });
+      const request = invocation();
+      const plan = buildInvocationPlan(request);
+      const result = await engine.runInvocation({ plan, request, credential: Buffer.from("synthetic-token") });
+      assert.equal(result.errorCode, errorCode);
+      assert.ok(docker.lastReturnedOutput?.every((byte) => byte === 0));
+      await engine.cleanupInvocation(plan);
+    }
+
+    const docker = new FakeDocker();
+    docker.workerOutput = Buffer.from(`${JSON.stringify(successfulWorkerResult())}\n`);
+    const engine = new DockerPieceContainerEngine({ docker });
+    const request = invocation();
+    const plan = buildInvocationPlan(request);
+    const result = await engine.runInvocation({ plan, request, credential: Buffer.from("synthetic-token") });
+    assert.equal(result.ok, true);
+    assert.equal(result.meta.attempts, 1);
+    assert.ok(docker.lastReturnedOutput?.every((byte) => byte === 0));
+    await engine.cleanupInvocation(plan);
   });
 
   test("orphan cleanup uses only the exact Step 5B owner label", async () => {
@@ -339,6 +479,8 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
 
   test("socket validation permits only the reviewed UDS path", () => {
     assert.equal(validateSupervisorSocketPath(SUPERVISOR_SOCKET_PATH), SUPERVISOR_SOCKET_PATH);
+    assert.equal(SUPERVISOR_SOCKET_MODE, 0o660);
+    assert.equal(SUPERVISOR_SOCKET_DIRECTORY_MODE, 0o750);
     for (const path of ["piece-supervisor.sock", "/tmp/piece-supervisor.sock", "/run/crazyloops-piece/../piece-supervisor.sock", "/run/crazyloops-piece/other.sock"]) {
       assert.throws(() => validateSupervisorSocketPath(path), SupervisorError);
     }
@@ -352,16 +494,38 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.deepEqual(SUPERVISOR_RUNTIME_SPEC.capDrop, ["ALL"]);
     assert.equal(SUPERVISOR_RUNTIME_SPEC.noNewPrivileges, true);
     assert.equal(SUPERVISOR_DEFAULT_CONCURRENCY, 2);
+    assert.equal(SUPERVISOR_MAX_CONTROL_CONNECTIONS, 8);
+    assert.equal(SUPERVISOR_HEADERS_TIMEOUT_MS, 5_000);
+    assert.equal(SUPERVISOR_BODY_TIMEOUT_MS, 10_000);
+    assert.equal(SUPERVISOR_KEEP_ALIVE_TIMEOUT_MS, 1);
+    assert.equal(SUPERVISOR_SHUTDOWN_GRACE_MS, 8_000);
+    assert.equal(SUPERVISOR_FORCE_CLOSE_MS, 2_000);
     assert.deepEqual(SUPERVISOR_RUNTIME_SPEC.mounts.map(({ target }: any) => target), ["/var/run/docker.sock", "/run/crazyloops-piece"]);
     const server = readFileSync(resolve(ROOT, "services/piece-runtime/src/supervisor-server.mjs"), "utf8");
     assert.match(server, /server\.listen\(socketPath/);
     assert.doesNotMatch(server, /listen\([^\n]*(?:127\.0\.0\.1|0\.0\.0\.0|localhost|[0-9]{4})/);
     assert.match(server, /SUPERVISOR_MAX_REQUEST_BYTES/);
     assert.match(server, /SUPERVISOR_MAX_RESPONSE_BYTES/);
+    assert.match(server, /server\.headersTimeout = SUPERVISOR_HEADERS_TIMEOUT_MS/);
+    assert.match(server, /server\.requestTimeout = SUPERVISOR_BODY_TIMEOUT_MS/);
+    assert.match(server, /server\.keepAliveTimeout = SUPERVISOR_KEEP_ALIVE_TIMEOUT_MS/);
+    assert.match(server, /server\.maxRequestsPerSocket = 1/);
+    assert.match(server, /server\.maxConnections = SUPERVISOR_MAX_CONTROL_CONNECTIONS/);
+    assert.match(server, /const zeroChunks = \(\) =>/);
+    assert.match(server, /request\.once\("error", onError\)/);
+    assert.match(server, /request\.once\("aborted", onAborted\)/);
+    assert.match(server, /request\.pause\(\)/);
+    assert.doesNotMatch(server, /request\.destroy\(\)/);
+    assert.match(server, /server\.closeAllConnections\?\.\(\)/);
+    assert.match(server, /settlesWithin\(closed, SUPERVISOR_FORCE_CLOSE_MS\)/);
     assert.match(server, /request\.url === "\/v1\/health"/);
     assert.match(server, /request\.url !== "\/v1\/execute"/);
     assert.match(server, /controller\.abort\(\)/);
     assert.match(server, /chmodSync\(socketPath, SUPERVISOR_SOCKET_MODE\)/);
+    const supervisor = readFileSync(resolve(ROOT, "services/piece-runtime/src/supervisor.mjs"), "utf8");
+    assert.match(supervisor, /piece_supervisor_shutdown_failed/);
+    assert.match(supervisor, /errorCode: "SUPERVISOR_UNAVAILABLE"/);
+    assert.match(supervisor, /process\.exitCode = 1/);
   });
 
   test("Docker client is direct, dependency-free, and exposes no raw proxy", () => {
@@ -400,12 +564,39 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.match(harness, /--cap-drop=ALL/);
     assert.match(harness, /--security-opt=no-new-privileges/);
     assert.match(harness, /\/var\/run\/docker\.sock:\/var\/run\/docker\.sock/);
+    assert.match(harness, /stat -c '%a' "\$SOCKET"\)" == '660'/);
+    assert.match(harness, /stat -c '%a' "\$CONTROL_DIR"\)" == '750'/);
+    assert.match(harness, /Config\.User !== '65532:65532'/);
+    assert.match(harness, /CapEff !== '0000000000000000'/);
+    assert.match(harness, /NoNewPrivs !== '1'/);
+    assert.match(harness, /Seccomp !== '2'/);
+    assert.match(harness, /\/sys\/fs\/cgroup\/pids\.max/);
+    assert.match(harness, /\/sys\/fs\/cgroup\/memory\.max/);
+    assert.match(harness, /\/sys\/fs\/cgroup\/cpu\.max/);
     assert.match(harness, /curl[^\n]*--unix-socket/);
     assert.match(harness, /trap cleanup EXIT INT TERM/);
     assert.match(harness, /crazyloops\.runtime=piece-runtime-supervisor-v1/);
     assert.match(harness, /STEP5B1_SUPERVISOR_CONTAINERS/);
     assert.match(harness, /STEP5B1_INVOCATION_CONTAINERS/);
     assert.match(harness, /STEP5B1_INVOCATION_NETWORKS/);
+    assert.match(harness, /docker network inspect "\$INTERNAL_NAME" "\$EGRESS_NAME"/);
+    assert.match(harness, /internal\.Internal !== true/);
+    assert.match(harness, /egress\.Internal !== false/);
+    assert.match(harness, /piece_gateway_dns/);
+    assert.match(harness, /piece_gateway_connection/);
+    assert.match(harness, /PIECE_GATEWAY_SUCCEEDED/);
+    assert.match(harness, /expect_error "\$ARTIFACT_DIR\/response\.json" 'PIECE_AUTH_FAILED'/);
+    assert.match(harness, /expect_error "\$ARTIFACT_DIR\/unsupported-response\.json" 'PIECE_UNSUPPORTED_CAPABILITY'/);
+    assert.match(harness, /expect_error "\$ARTIFACT_DIR\/malformed-credential-response\.json" 'PIECE_INVALID_CREDENTIAL'/);
+    assert.match(harness, /expect_error "\$ARTIFACT_DIR\/worker-failure-response\.json" 'PIECE_INVALID_INPUT'/);
+    assert.match(harness, /CANARY_B64/);
+    assert.match(harness, /grep -Fq "\$CANARY_B64"/);
+    assert.match(harness, /docker top "\$SUPERVISOR_NAME"/);
+    assert.match(harness, /docker top "\$SANDBOX_NAME"/);
+    assert.match(harness, /docker top "\$GATEWAY_NAME"/);
+    assert.match(harness, /assert_no_docker_socket_mount/);
+    assert.match(harness, /docker stop --time 20/);
+    assert.doesNotMatch(harness, /DUPLICATE_PROTECTION=PASS|CONCURRENCY_LIMIT=PASS/);
     assert.doesNotMatch(harness, /--privileged|--network host|vercel deploy|git push|docker rm \$\(docker ps -aq\)/);
   });
 });

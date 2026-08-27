@@ -18,6 +18,7 @@ PROTECTED_BEFORE="$ARTIFACT_DIR/protected-before.txt"
 PROTECTED_AFTER="$ARTIFACT_DIR/protected-after.txt"
 UNRELATED_NETWORK='cl-piece-step5b1-unrelated'
 CANARY=''
+CANARY_B64=''
 
 fail() {
   echo "STEP5B1 HOST ACCEPTANCE FAILED: $*" >&2
@@ -40,7 +41,7 @@ snapshot_protected() {
   local output="$1"
   : >"$output"
   for name in "${PROTECTED[@]}"; do
-    docker inspect --format '{{.Name}}|{{.Id}}|{{.RestartCount}}|{{.State.Status}}|{{json .NetworkSettings.Networks}}|{{json .NetworkSettings.Ports}}' "$name" >>"$output"
+    docker inspect --format '{{.Name}}|{{.Id}}|{{.RestartCount}}|{{.State.Status}}|{{json .NetworkSettings.Networks}}|{{json .NetworkSettings.Ports}}|{{json .Mounts}}' "$name" >>"$output"
   done
 }
 
@@ -64,6 +65,28 @@ count_invocation_networks() {
   docker network ls -q --filter "label=$OWNER_LABEL" --filter "label=$RESOURCE_LABEL" | sed '/^$/d' | wc -l
 }
 
+assert_zero_invocation_resources() {
+  [[ "$(count_invocation_containers)" == '0' && "$(count_invocation_networks)" == '0' ]] || fail "$1"
+}
+
+expect_error() {
+  local response="$1"
+  local expected="$2"
+  node - "$response" "$expected" <<'NODE'
+const fs = require('node:fs');
+const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+if (value.protocolVersion !== 1 || value.ok !== false || value.errorCode !== process.argv[3]) process.exit(1);
+if (JSON.stringify(value).length > 2048) process.exit(1);
+NODE
+}
+
+assert_no_docker_socket_mount() {
+  local container="$1"
+  docker inspect --format '{{range .Mounts}}{{println .Destination}}{{end}}' "$container" | grep -qx '/var/run/docker.sock' && \
+    fail "$container unexpectedly has the Docker socket mounted."
+  return 0
+}
+
 [[ "${E50_ACCEPT_STEP5B1:-}" == 'YES' ]] || fail 'Set E50_ACCEPT_STEP5B1=YES after reviewing this owner-run harness.'
 [[ "${E50_EXPECTED_STEP5B1_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]] || fail 'E50_EXPECTED_STEP5B1_COMMIT must be an exact reviewed commit.'
 cd "$ROOT"
@@ -82,6 +105,7 @@ command -v docker >/dev/null || fail 'Docker is required.'
 command -v curl >/dev/null || fail 'curl is required.'
 [[ -S /var/run/docker.sock ]] || fail 'Docker Engine socket is unavailable.'
 snapshot_protected "$PROTECTED_BEFORE"
+for protected_name in "${PROTECTED[@]}"; do assert_no_docker_socket_mount "$protected_name"; done
 [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' --request POST --header 'Content-Type: application/json' --data '{}' http://127.0.0.1:8788/v1/execute)" == '401' ]] || fail 'Connector Runner unsigned JSON check did not return 401.'
 [[ "$(docker exec redis redis-cli PING)" == 'PONG' ]] || fail 'Redis did not return PONG.'
 
@@ -108,21 +132,43 @@ docker run --detach --name "$SUPERVISOR_NAME" --label "$OWNER_LABEL" --label 'cr
 
 for _ in $(seq 1 100); do [[ -S "$SOCKET" ]] && break; sleep 0.05; done
 [[ -S "$SOCKET" ]] || fail 'Supervisor UDS was not created.'
-[[ "$(stat -c '%a' "$SOCKET")" -le 660 ]] || fail 'Supervisor socket permissions are too broad.'
+[[ "$(stat -c '%a' "$SOCKET")" == '660' ]] || fail 'Supervisor socket mode is not exactly 660.'
+[[ "$(stat -c '%a' "$CONTROL_DIR")" == '750' ]] || fail 'Supervisor control directory mode is not exactly 750.'
 HEALTH="$(health)"
 node -e 'const h=JSON.parse(process.argv[1]);if(!h.ok||h.protocolVersion!==1||h.status!=="ready"||h.activeInvocations!==0||h.concurrencyLimit!==2)process.exit(1)' "$HEALTH" || fail 'Supervisor health response is invalid.'
 
 docker inspect "$SUPERVISOR_NAME" >"$ARTIFACT_DIR/supervisor-inspect.json"
-node - "$ARTIFACT_DIR/supervisor-inspect.json" "$CONTROL_DIR" <<'NODE'
+node - "$ARTIFACT_DIR/supervisor-inspect.json" "$CONTROL_DIR" "$DOCKER_GID" <<'NODE'
 const fs = require('node:fs');
 const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))[0];
 const host = value.HostConfig;
+if (value.Config.User !== '65532:65532') throw new Error('user');
 if (host.NetworkMode !== 'none' || Object.keys(host.PortBindings ?? {}).length || value.Config.ExposedPorts) throw new Error('network');
-if (!host.ReadonlyRootfs || host.Privileged || !(host.CapDrop ?? []).includes('ALL') || !(host.SecurityOpt ?? []).includes('no-new-privileges')) throw new Error('privilege');
+if (!host.ReadonlyRootfs || host.Privileged || JSON.stringify(host.CapDrop) !== JSON.stringify(['ALL']) || (host.CapAdd ?? []).length || !(host.SecurityOpt ?? []).includes('no-new-privileges')) throw new Error('privilege');
 if (host.PidsLimit !== 32 || host.Memory !== 268435456 || host.MemorySwap !== 268435456 || host.NanoCpus !== 500000000) throw new Error('limits');
+const nofile = (host.Ulimits ?? []).find(({ Name }) => Name === 'nofile');
+if (!nofile || nofile.Soft !== 128 || nofile.Hard !== 128) throw new Error('nofile');
+if (host.Tmpfs?.['/tmp'] !== 'rw,noexec,nosuid,nodev,size=4m') throw new Error('tmpfs');
+if (!(host.GroupAdd ?? []).map(String).includes(String(process.argv[4]))) throw new Error('docker gid');
 const mounts = value.Mounts.map(({ Source, Destination }) => `${Source}:${Destination}`).sort();
 const expected = [`/var/run/docker.sock:/var/run/docker.sock`, `${process.argv[3]}:/run/crazyloops-piece`].sort();
 if (JSON.stringify(mounts) !== JSON.stringify(expected)) throw new Error('mounts');
+NODE
+docker exec "$SUPERVISOR_NAME" node - "$DOCKER_GID" <<'NODE'
+const fs = require('node:fs');
+const status = Object.fromEntries(fs.readFileSync('/proc/self/status', 'utf8').trim().split(/\n/).map((line) => {
+  const index = line.indexOf(':');
+  return [line.slice(0, index), line.slice(index + 1).trim()];
+}));
+if (!status.Uid.split(/\s+/).every((value) => value === '65532')) throw new Error('uid');
+if (!status.Gid.split(/\s+/).every((value) => value === '65532')) throw new Error('gid');
+if (!status.Groups.split(/\s+/).includes(process.argv[2])) throw new Error('supplementary gid');
+if (status.CapEff !== '0000000000000000' || status.NoNewPrivs !== '1' || status.Seccomp !== '2') throw new Error('kernel privilege');
+if (fs.readFileSync('/sys/fs/cgroup/pids.max', 'utf8').trim() !== '32') throw new Error('pids cgroup');
+if (fs.readFileSync('/sys/fs/cgroup/memory.max', 'utf8').trim() !== '268435456') throw new Error('memory cgroup');
+if (fs.readFileSync('/sys/fs/cgroup/memory.swap.max', 'utf8').trim() !== '0') throw new Error('swap cgroup');
+const [quota, period] = fs.readFileSync('/sys/fs/cgroup/cpu.max', 'utf8').trim().split(/\s+/).map(Number);
+if (!Number.isFinite(quota) || !Number.isFinite(period) || quota / period !== 0.5) throw new Error('cpu cgroup');
 NODE
 docker exec "$SUPERVISOR_NAME" node -e '
   const fs = require("node:fs");
@@ -140,66 +186,164 @@ CANARY="E50_STEP5B1_$(openssl rand -hex 32)"
 CANARY_B64="$(printf '%s' "$CANARY" | base64 -w0)"
 REQUEST_ID='step5b1-host-invocation'
 INVOCATION_ID="$(printf '%s' "$REQUEST_ID" | sha256sum | cut -c1-16)"
+SANDBOX_NAME="cl-piece-sandbox-$INVOCATION_ID"
+GATEWAY_NAME="cl-piece-gateway-$INVOCATION_ID"
+INTERNAL_NAME="cl-piece-internal-$INVOCATION_ID"
+EGRESS_NAME="cl-piece-egress-$INVOCATION_ID"
 cat >"$ARTIFACT_DIR/request.json" <<JSON
 {"protocolVersion":1,"request":{"protocolVersion":1,"requestId":"$REQUEST_ID","executionId":"step5b1-host-execution","capabilityId":"hubspot.get_contact","capabilityVersion":1,"mode":"TEST","idempotencyKey":"step5b1-host-idempotency","input":{"contactId":"synthetic-contact","properties":["firstname"]}},"credentialBase64":"$CANARY_B64"}
 JSON
 execute_file "$ARTIFACT_DIR/request.json" "$ARTIFACT_DIR/response.json" &
 EXECUTE_PID=$!
+GATEWAY_WATCHER_PID=''
+for _ in $(seq 1 500); do
+  if docker inspect "$GATEWAY_NAME" >/dev/null 2>&1; then
+    timeout 20 docker logs --follow "$GATEWAY_NAME" >"$ARTIFACT_DIR/live-gateway-logs.txt" 2>&1 &
+    GATEWAY_WATCHER_PID=$!
+    break
+  fi
+  sleep 0.01
+done
+[[ -n "$GATEWAY_WATCHER_PID" ]] || fail 'Live gateway log watcher could not attach.'
 TOPOLOGY_CAPTURED=0
-for _ in $(seq 1 100); do
-  if docker inspect "cl-piece-sandbox-$INVOCATION_ID" "cl-piece-gateway-$INVOCATION_ID" >"$ARTIFACT_DIR/invocation-inspect.json" 2>/dev/null; then
+for _ in $(seq 1 500); do
+  if docker inspect "$SANDBOX_NAME" "$GATEWAY_NAME" >"$ARTIFACT_DIR/invocation-inspect.json" 2>/dev/null && \
+    docker network inspect "$INTERNAL_NAME" "$EGRESS_NAME" >"$ARTIFACT_DIR/invocation-networks.json" 2>/dev/null && \
+    docker top "$SANDBOX_NAME" -eo pid,args >"$ARTIFACT_DIR/sandbox-processes.txt" 2>/dev/null && \
+    docker top "$GATEWAY_NAME" -eo pid,args >"$ARTIFACT_DIR/gateway-processes.txt" 2>/dev/null && \
+    docker exec "$GATEWAY_NAME" sh -c '! grep -q "api.hubapi.com" /etc/hosts'; then
+    printf 'SAFE\n' >"$ARTIFACT_DIR/gateway-self-shadow.txt"
     TOPOLOGY_CAPTURED=1
     break
   fi
-  sleep 0.02
+  sleep 0.01
 done
 wait "$EXECUTE_PID"
+wait "$GATEWAY_WATCHER_PID" || true
 [[ "$TOPOLOGY_CAPTURED" == '1' ]] || fail 'Invocation topology was not captured.'
-node - "$ARTIFACT_DIR/invocation-inspect.json" <<'NODE'
+node - "$ARTIFACT_DIR/invocation-inspect.json" "$ARTIFACT_DIR/invocation-networks.json" "$INVOCATION_ID" "$INTERNAL_NAME" "$EGRESS_NAME" <<'NODE'
 const fs = require('node:fs');
 const [sandbox, gateway] = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const networks = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+const invocation = process.argv[4];
+const internalName = process.argv[5];
+const egressName = process.argv[6];
+const labelsAreExact = (labels) => labels?.['crazyloops.runtime'] === 'piece-runtime-supervisor-v1' && labels?.['crazyloops.resource'] === 'invocation' && labels?.['crazyloops.invocation'] === invocation;
+const internal = networks.find(({ Name }) => Name === internalName);
+const egress = networks.find(({ Name }) => Name === egressName);
+if (!internal || internal.Internal !== true || !labelsAreExact(internal.Labels)) throw new Error('internal network');
+if (!egress || egress.Internal !== false || !labelsAreExact(egress.Labels)) throw new Error('egress network');
 const sandboxNetworks = Object.keys(sandbox.NetworkSettings.Networks);
 const gatewayNetworks = Object.keys(gateway.NetworkSettings.Networks);
-if (sandboxNetworks.length !== 1 || gatewayNetworks.length !== 2) throw new Error('topology');
+if (JSON.stringify(sandboxNetworks) !== JSON.stringify([internalName])) throw new Error('sandbox topology');
+if (gatewayNetworks.length !== 2 || !gatewayNetworks.includes(internalName) || !gatewayNetworks.includes(egressName)) throw new Error('gateway topology');
+if (!labelsAreExact(sandbox.Config.Labels) || !labelsAreExact(gateway.Config.Labels)) throw new Error('container labels');
 if (sandbox.Mounts.length || gateway.Mounts.length || sandbox.HostConfig.Privileged || gateway.HostConfig.Privileged) throw new Error('boundary');
-const internal = sandboxNetworks[0];
-const gatewayIp = gateway.NetworkSettings.Networks[internal]?.IPAddress;
+if (JSON.stringify({ sandbox, gateway }).includes('/var/run/docker.sock')) throw new Error('docker socket');
+const gatewayIp = gateway.NetworkSettings.Networks[internalName]?.IPAddress;
 if (!gatewayIp || !(sandbox.HostConfig.ExtraHosts ?? []).includes(`api.hubapi.com:${gatewayIp}`)) throw new Error('dynamic gateway IP');
+const aliases = gateway.NetworkSettings.Networks[internalName]?.Aliases ?? [];
+if (!aliases.includes(`cl-piece-gateway-${invocation}`) || aliases.includes('api.hubapi.com')) throw new Error('gateway aliases');
 NODE
-node - "$ARTIFACT_DIR/response.json" <<'NODE'
+node - "$ARTIFACT_DIR/live-gateway-logs.txt" <<'NODE'
 const fs = require('node:fs');
-const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-if (value.protocolVersion !== 1 || value.ok !== false || !/^PIECE_[A-Z_]+$/.test(value.errorCode)) process.exit(1);
-if (JSON.stringify(value).length > 2048) process.exit(1);
+const events = fs.readFileSync(process.argv[2], 'utf8').split(/\r?\n/).filter(Boolean).flatMap((line) => {
+  try { return [JSON.parse(line)]; } catch { return []; }
+});
+const dns = events.find((event) => event.event === 'piece_gateway_dns' && event.hostname === 'api.hubapi.com' && event.port === 443 && event.outcome === 'SAFE');
+const connection = events.find((event) => event.event === 'piece_gateway_connection' && event.hostname === 'api.hubapi.com' && event.port === 443 && event.outcome === 'PIECE_GATEWAY_SUCCEEDED');
+if (!dns || !connection) process.exit(1);
 NODE
-[[ "$(count_invocation_containers)" == '0' && "$(count_invocation_networks)" == '0' ]] || fail 'Invocation resources survived request completion.'
+expect_error "$ARTIFACT_DIR/response.json" 'PIECE_AUTH_FAILED' || fail 'Real provider canary did not return PIECE_AUTH_FAILED.'
+assert_zero_invocation_resources 'Invocation resources survived request completion.'
 
 printf '{' >"$ARTIFACT_DIR/malformed.json"
 execute_file "$ARTIFACT_DIR/malformed.json" "$ARTIFACT_DIR/malformed-response.json" || true
-grep -q 'SUPERVISOR_INVALID_REQUEST' "$ARTIFACT_DIR/malformed-response.json" || fail 'Malformed request was not bounded.'
-node - "$ARTIFACT_DIR/request.json" "$ARTIFACT_DIR/override.json" <<'NODE'
+expect_error "$ARTIFACT_DIR/malformed-response.json" 'SUPERVISOR_INVALID_REQUEST' || fail 'Malformed request was not bounded.'
+assert_zero_invocation_resources 'Malformed request created resources.'
+
+node - "$ARTIFACT_DIR/override.json" <<'NODE'
 const fs = require('node:fs');
-const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const requestId = 'step5b1-negative-override';
+const value = { protocolVersion: 1, request: { protocolVersion: 1, requestId, executionId: 'negative-execution', capabilityId: 'hubspot.get_contact', capabilityVersion: 1, mode: 'TEST', idempotencyKey: requestId, input: { contactId: 'synthetic-contact' } }, credentialBase64: Buffer.from('negative-token').toString('base64') };
 value.request.sandboxImage = 'attacker/image';
-fs.writeFileSync(process.argv[3], JSON.stringify(value));
+fs.writeFileSync(process.argv[2], JSON.stringify(value));
 NODE
 execute_file "$ARTIFACT_DIR/override.json" "$ARTIFACT_DIR/override-response.json" || true
-grep -Eq 'PIECE_INVALID_INPUT|SUPERVISOR_INVALID_REQUEST' "$ARTIFACT_DIR/override-response.json" || fail 'Metadata override was not rejected.'
-[[ "$(count_invocation_containers)" == '0' && "$(count_invocation_networks)" == '0' ]] || fail 'Negative request created resources.'
+expect_error "$ARTIFACT_DIR/override-response.json" 'PIECE_INVALID_INPUT' || fail 'Metadata override was not rejected.'
+assert_zero_invocation_resources 'Metadata override created resources.'
 
+node - "$ARTIFACT_DIR/unsupported.json" <<'NODE'
+const fs = require('node:fs');
+const requestId = 'step5b1-negative-unsupported';
+fs.writeFileSync(process.argv[2], JSON.stringify({ protocolVersion: 1, request: { protocolVersion: 1, requestId, executionId: 'negative-execution', capabilityId: 'hubspot.get_contact', capabilityVersion: 999, mode: 'TEST', idempotencyKey: requestId, input: { contactId: 'synthetic-contact' } }, credentialBase64: Buffer.from('negative-token').toString('base64') }));
+NODE
+execute_file "$ARTIFACT_DIR/unsupported.json" "$ARTIFACT_DIR/unsupported-response.json" || true
+expect_error "$ARTIFACT_DIR/unsupported-response.json" 'PIECE_UNSUPPORTED_CAPABILITY' || fail 'Unsupported capability/version was not bounded.'
+assert_zero_invocation_resources 'Unsupported capability/version created resources.'
+
+node - "$ARTIFACT_DIR/malformed-credential.json" <<'NODE'
+const fs = require('node:fs');
+const requestId = 'step5b1-negative-credential';
+fs.writeFileSync(process.argv[2], JSON.stringify({ protocolVersion: 1, request: { protocolVersion: 1, requestId, executionId: 'negative-execution', capabilityId: 'hubspot.get_contact', capabilityVersion: 1, mode: 'TEST', idempotencyKey: requestId, input: { contactId: 'synthetic-contact' } }, credentialBase64: 'Zg' }));
+NODE
+execute_file "$ARTIFACT_DIR/malformed-credential.json" "$ARTIFACT_DIR/malformed-credential-response.json" || true
+expect_error "$ARTIFACT_DIR/malformed-credential-response.json" 'PIECE_INVALID_CREDENTIAL' || fail 'Malformed credential was not bounded.'
+assert_zero_invocation_resources 'Malformed credential created resources.'
+
+node - "$ARTIFACT_DIR/worker-failure.json" <<'NODE'
+const fs = require('node:fs');
+const requestId = 'step5b1-negative-worker';
+fs.writeFileSync(process.argv[2], JSON.stringify({ protocolVersion: 1, request: { protocolVersion: 1, requestId, executionId: 'negative-execution', capabilityId: 'hubspot.get_contact', capabilityVersion: 1, mode: 'TEST', idempotencyKey: requestId, input: { contactId: 'invalid/contact' } }, credentialBase64: Buffer.from('negative-token').toString('base64') }));
+NODE
+execute_file "$ARTIFACT_DIR/worker-failure.json" "$ARTIFACT_DIR/worker-failure-response.json" || true
+expect_error "$ARTIFACT_DIR/worker-failure-response.json" 'PIECE_INVALID_INPUT' || fail 'Controlled worker failure was not bounded.'
+assert_zero_invocation_resources 'Controlled worker failure left resources.'
+
+docker top "$SUPERVISOR_NAME" -eo pid,args >"$ARTIFACT_DIR/supervisor-processes.txt"
 docker logs "$SUPERVISOR_NAME" >"$ARTIFACT_DIR/supervisor-logs.txt" 2>&1
 docker image inspect "$SUPERVISOR_IMAGE" "$GATEWAY_IMAGE" "$SANDBOX_IMAGE" >"$ARTIFACT_DIR/images.json"
 docker history --no-trunc "$SUPERVISOR_IMAGE" >"$ARTIFACT_DIR/supervisor-history.txt"
 docker history --no-trunc "$GATEWAY_IMAGE" >"$ARTIFACT_DIR/gateway-history.txt"
 docker history --no-trunc "$SANDBOX_IMAGE" >"$ARTIFACT_DIR/sandbox-history.txt"
-for surface in "$ARTIFACT_DIR"/* "$CONTROL_DIR"/*; do
-  [[ -f "$surface" && "$surface" != "$ARTIFACT_DIR/request.json" ]] || continue
-  grep -Fq "$CANARY" "$surface" && fail "Credential plaintext appeared in $(basename "$surface")."
-done
-
 snapshot_protected "$PROTECTED_AFTER"
 cmp -s "$PROTECTED_BEFORE" "$PROTECTED_AFTER" || fail 'Protected services changed.'
-docker stop --time 8 "$SUPERVISOR_NAME" >/dev/null
+for protected_name in "${PROTECTED[@]}"; do assert_no_docker_socket_mount "$protected_name"; done
+
+RUNTIME_SURFACES=(
+  "$ARTIFACT_DIR/supervisor-logs.txt"
+  "$ARTIFACT_DIR/supervisor-inspect.json"
+  "$ARTIFACT_DIR/invocation-inspect.json"
+  "$ARTIFACT_DIR/invocation-networks.json"
+  "$ARTIFACT_DIR/live-gateway-logs.txt"
+  "$ARTIFACT_DIR/supervisor-processes.txt"
+  "$ARTIFACT_DIR/sandbox-processes.txt"
+  "$ARTIFACT_DIR/gateway-processes.txt"
+  "$ARTIFACT_DIR/images.json"
+  "$ARTIFACT_DIR/supervisor-history.txt"
+  "$ARTIFACT_DIR/gateway-history.txt"
+  "$ARTIFACT_DIR/sandbox-history.txt"
+  "$ARTIFACT_DIR/response.json"
+  "$ARTIFACT_DIR/malformed-response.json"
+  "$ARTIFACT_DIR/override-response.json"
+  "$ARTIFACT_DIR/unsupported-response.json"
+  "$ARTIFACT_DIR/malformed-credential-response.json"
+  "$ARTIFACT_DIR/worker-failure-response.json"
+  "$PROTECTED_BEFORE"
+  "$PROTECTED_AFTER"
+)
+for surface in "${RUNTIME_SURFACES[@]}"; do
+  [[ -f "$surface" ]] || fail "Missing credential scan surface: $(basename "$surface")"
+  grep -Fq "$CANARY" "$surface" && fail "Credential plaintext appeared in $(basename "$surface")."
+  grep -Fq "$CANARY_B64" "$surface" && fail "Credential Base64 appeared in $(basename "$surface")."
+done
+while IFS= read -r -d '' surface; do
+  grep -Fq "$CANARY" "$surface" && fail "Credential plaintext appeared in control file $(basename "$surface")."
+  grep -Fq "$CANARY_B64" "$surface" && fail "Credential Base64 appeared in control file $(basename "$surface")."
+done < <(find "$CONTROL_DIR" -maxdepth 1 -type f -print0)
+
+docker stop --time 20 "$SUPERVISOR_NAME" >/dev/null
+node -e 'const value=JSON.parse(process.argv[1])[0];if(value.State.Running||value.State.OOMKilled||value.State.ExitCode!==0)process.exit(1)' "$(docker inspect "$SUPERVISOR_NAME")" || fail 'Supervisor did not complete its bounded SIGTERM shutdown.'
 docker rm "$SUPERVISOR_NAME" >/dev/null
 [[ ! -e "$SOCKET" ]] || fail 'Supervisor socket survived graceful shutdown.'
 
@@ -226,6 +370,7 @@ BOUNDED_PROVIDER_FAILURE=PASS
 NEGATIVE_MATRIX=PASS
 ORPHAN_CLEANUP_SCOPE=PASS
 CREDENTIAL_PLAINTEXT_OCCURRENCES=0
+CREDENTIAL_BASE64_OCCURRENCES=0
 PROTECTED_SERVICES_UNCHANGED=PASS
 RUNNER_UNSIGNED_HTTP=401
 REDIS=PONG
@@ -238,5 +383,6 @@ STEP5B1 HOST ACCEPTANCE=PASS
 REPORT
 
 CANARY=''
+CANARY_B64=''
 rm -rf -- "$ARTIFACT_DIR" "$CONTROL_DIR"
 trap - EXIT INT TERM
