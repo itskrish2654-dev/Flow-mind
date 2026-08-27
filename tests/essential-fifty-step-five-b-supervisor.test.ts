@@ -675,8 +675,8 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.match(harness, /--cap-drop=ALL/);
     assert.match(harness, /--security-opt=no-new-privileges/);
     assert.match(harness, /\/var\/run\/docker\.sock:\/var\/run\/docker\.sock/);
-    assert.match(harness, /stat -c '%a' "\$SOCKET"\)" == '660'/);
-    assert.match(harness, /stat -c '%a' "\$CONTROL_DIR"\)" == '750'/);
+    assert.match(harness, /SOCKET_AND_DIR_MODES=.*docker exec "\$SUPERVISOR_NAME"/);
+    assert.match(harness, /SOCKET_AND_DIR_MODES.*== '660:750'/);
     assert.match(harness, /Config\.User !== '65532:65532'/);
     assert.match(harness, /CapEff !== '0000000000000000'/);
     assert.match(harness, /NoNewPrivs !== '1'/);
@@ -684,7 +684,7 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.match(harness, /\/sys\/fs\/cgroup\/pids\.max/);
     assert.match(harness, /\/sys\/fs\/cgroup\/memory\.max/);
     assert.match(harness, /\/sys\/fs\/cgroup\/cpu\.max/);
-    assert.match(harness, /curl[^\n]*--unix-socket/);
+    assert.doesNotMatch(harness, /curl[^\n]*--unix-socket/);
     assert.match(harness, /trap cleanup EXIT INT TERM/);
     assert.match(harness, /crazyloops\.runtime=piece-runtime-supervisor-v1/);
     assert.match(harness, /SUPERVISOR_RESOURCE_LABEL='crazyloops\.resource=supervisor'/);
@@ -743,5 +743,59 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.match(harness, /WORKER_FAILURE_INVOCATION_ID=.*sha256sum/);
     assert.match(harness, /No already-running Step 5B\.1 supervisor/);
     assert.match(harness, /active_supervisors\[0\].*SUPERVISOR_DOCKER_ID/);
+  });
+
+  test("owner harness transfers directory ownership and reaches UDS through isolated helpers", () => {
+    const harness = readFileSync(resolve(ROOT, "scripts/e50-step5b1-supervisor-host-acceptance.sh"), "utf8");
+    assert.doesNotMatch(harness, /^\s*chown 65532:65532 "\$CONTROL_DIR"/m);
+    assert.doesNotMatch(harness, /\bsudo\b/);
+    assert.match(harness, /HOST_UID="\$\(id -u\)"/);
+    assert.match(harness, /HOST_GID="\$\(id -g\)"/);
+
+    const ownership = harness.match(/run_control_ownership_helper\(\) \{([\s\S]*?)\n\}/)?.[1];
+    assert.ok(ownership);
+    assert.match(ownership, /--network none/);
+    assert.match(ownership, /--read-only/);
+    assert.match(ownership, /--cap-drop=ALL --cap-add=CHOWN/);
+    assert.equal((ownership.match(/--cap-add=/g) ?? []).length, 1);
+    assert.match(ownership, /--security-opt=no-new-privileges/);
+    assert.match(ownership, /--user=0:0/);
+    assert.match(ownership, /--mount type=bind,src="\$CONTROL_DIR",dst=\/control/);
+    assert.equal((ownership.match(/--mount/g) ?? []).length, 1);
+    assert.doesNotMatch(ownership, /docker\.sock|--privileged|CAP_DAC_OVERRIDE|CAP_SYS_ADMIN|--network host/);
+    assert.match(ownership, /--entrypoint \/usr\/bin\/chown/);
+    assert.match(harness, /run_control_ownership_helper "\$CONTROL_INIT_HELPER_NAME" '65532:65532'/);
+    assert.match(harness, /stat -c '%u:%g:%a'.*== '65532:65532:750'/);
+    assert.match(harness, /restore_control_dir_ownership\(\)/);
+    assert.match(harness, /run_control_ownership_helper "\$CONTROL_RESTORE_HELPER_NAME" "\$HOST_UID:\$HOST_GID"/);
+
+    const cleanup = harness.match(/\ncleanup\(\) \{\n([\s\S]*?)\n\}/)?.[1] ?? "";
+    assert.ok(cleanup.indexOf("restore_control_dir_ownership") < cleanup.indexOf('remove_acceptance_image_exact "$SUPERVISOR_IMAGE"'));
+    assert.match(harness, /CONTROL_INIT_HELPER_NAME='cl-piece-step5b1-control-init'/);
+    assert.match(harness, /CONTROL_RESTORE_HELPER_NAME='cl-piece-step5b1-control-restore'/);
+    assert.match(harness, /ACCEPTANCE_HELPER_LABEL='crazyloops\.acceptance=step5b1-control-helper'/);
+
+    assert.doesNotMatch(harness, /curl[^\n]*--unix-socket/);
+    assert.match(harness, /UDS_HEALTH_CLIENT_NAME='cl-piece-step5b1-uds-health'/);
+    assert.match(harness, /UDS_EXECUTE_CLIENT_NAME='cl-piece-step5b1-uds-execute'/);
+    assert.match(harness, /socketPath: '\/control\/piece-supervisor\.sock'/);
+    assert.match(harness, /request\.setTimeout\(timeoutMs/);
+    assert.match(harness, /body\.fill\(0\)/);
+    assert.match(harness, /MAX_INPUT_BYTES = 96 \* 1024/);
+    assert.match(harness, /Content-Length[\s\S]*String\(body\.length\)/);
+    assert.match(harness, /--user=65532:65532/);
+    assert.match(harness, /--network none --read-only --cap-drop=ALL --security-opt=no-new-privileges/);
+    assert.match(harness, /--mount type=bind,src="\$CONTROL_DIR",dst=\/control,readonly/);
+    assert.match(harness, /--entrypoint node -i "\$SUPERVISOR_IMAGE"[\s\S]*<"\$input" >"\$output"/);
+    assert.doesNotMatch(harness, /--env[^\n]*(?:credential|CANARY)|--label[^\n]*(?:credential|CANARY)/i);
+    assert.match(harness, /uds-client-inspect\.json/);
+    assert.match(harness, /uds-execute-client-inspect\.json/);
+    assert.match(harness, /uds-client-processes\.txt/);
+    assert.match(harness, /docker exec "\$SUPERVISOR_NAME" node -e[\s\S]*SOCKET_AND_DIR_MODES/);
+    assert.match(harness, /SOCKET_AND_DIR_MODES.*== '660:750'/);
+    assert.match(harness, /CONTROL_DIR_UID=65532/);
+    assert.match(harness, /CONTROL_DIR_GID=65532/);
+    assert.match(harness, /CONTROL_DIR_MODE=750/);
+    assert.match(harness, /SOCKET_MODE=660/);
   });
 });

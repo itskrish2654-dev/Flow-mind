@@ -231,6 +231,25 @@ owner-label-wide destructive cleanup. Pre-existing production supervisor
 resources and pre-existing image tags are outside the harness cleanup authority;
 the harness fails safely rather than deleting them.
 
+The ordinary owner host user does not directly change the runtime directory to
+UID/GID 65532 and does not open the protected UDS. A one-shot, networkless init
+helper reuses the reviewed supervisor image with only `CAP_CHOWN`, root only for
+that operation, and only the exact control-directory mount. Cleanup uses the
+same boundary to restore the directory to the recorded host UID/GID before
+removal. Health and execution use a separate read-only, networkless UDS client
+running as `65532:65532`; it receives POST bodies only on stdin, has no Docker
+socket, and connects with Node's built-in HTTP client to the mounted UDS.
+
+### Step 5B.1 owner-host attempt 1
+
+The first Ubuntu owner-host attempt passed source checkout and DNS warmup on the
+second attempt, then built the sandbox, gateway, and supervisor images. It
+stopped before supervisor startup because the ordinary host user could not
+`chown` the control directory to UID/GID 65532. No runtime supervisor execution
+occurred. Hardened cleanup passed, left zero Step 5B.1 resources, and left the
+Connector Runner, Activepieces app/worker, and Redis unchanged. This was an
+owner-harness ownership-transition failure, not a runtime security failure.
+
 Step 5B.2 must still design and review the Connector Runner-to-UDS integration,
 production service ownership/group setup, deployment/rollback, stronger image
 identity pinning, production monitoring, real host restart/shutdown behavior,

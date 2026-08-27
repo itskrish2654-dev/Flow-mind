@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HOST_UID="$(id -u)"
+HOST_GID="$(id -g)"
 ACCEPTED_STEP5A='353b2c4821b1b959aeb7f485beade3a5eaf219fd'
 EXPECTED_ORIGIN_MAIN='20c23d7e85123eaa77a916ce43f4a9ef5ca8a5e7'
 OWNER_LABEL='crazyloops.runtime=piece-runtime-supervisor-v1'
@@ -9,6 +11,11 @@ OWNER_LABEL_VALUE='piece-runtime-supervisor-v1'
 RESOURCE_LABEL='crazyloops.resource=invocation'
 SUPERVISOR_RESOURCE_LABEL='crazyloops.resource=supervisor'
 SUPERVISOR_NAME='cl-piece-step5b1-supervisor'
+CONTROL_INIT_HELPER_NAME='cl-piece-step5b1-control-init'
+CONTROL_RESTORE_HELPER_NAME='cl-piece-step5b1-control-restore'
+UDS_HEALTH_CLIENT_NAME='cl-piece-step5b1-uds-health'
+UDS_EXECUTE_CLIENT_NAME='cl-piece-step5b1-uds-execute'
+ACCEPTANCE_HELPER_LABEL='crazyloops.acceptance=step5b1-control-helper'
 STALE_CONTAINER_NAME='cl-piece-step5b1-stale'
 STALE_NETWORK_NAME='cl-piece-step5b1-stale-network'
 SUPERVISOR_IMAGE='crazyloops/piece-runtime-supervisor:step5b1'
@@ -32,10 +39,13 @@ GATEWAY_IMAGE_BUILT_BY_HARNESS=0
 SANDBOX_IMAGE_BUILT_BY_HARNESS=0
 HOST_INVOCATION_STARTED=0
 WORKER_FAILURE_INVOCATION_STARTED=0
+CONTROL_DIR_RUNTIME_OWNED=0
+UDS_HEALTH_CLIENT_CREATED=0
 HOST_REQUEST_ID='step5b1-host-invocation'
 WORKER_FAILURE_REQUEST_ID='step5b1-negative-worker'
 HOST_INVOCATION_ID=''
 WORKER_FAILURE_INVOCATION_ID=''
+UDS_CLIENT_SOURCE=''
 
 fail() {
   echo "STEP5B1 HOST ACCEPTANCE FAILED: $*" >&2
@@ -84,6 +94,32 @@ remove_acceptance_image_exact() {
   docker image rm -f "$image" >/dev/null 2>&1
 }
 
+remove_acceptance_helper_exact() {
+  local name="$1"
+  docker inspect "$name" >/dev/null 2>&1 || return 0
+  [[ "$(docker inspect --format '{{index .Config.Labels "crazyloops.acceptance"}}' "$name" 2>/dev/null)" == 'step5b1-control-helper' ]] || return 1
+  docker rm -f "$name" >/dev/null 2>&1
+}
+
+run_control_ownership_helper() {
+  local name="$1"
+  local owner="$2"
+  docker run --rm --name "$name" --label "$ACCEPTANCE_HELPER_LABEL" \
+    --network none --read-only --cap-drop=ALL --cap-add=CHOWN \
+    --security-opt=no-new-privileges --pids-limit=8 \
+    --memory=33554432 --memory-swap=33554432 --cpus=0.1 --user=0:0 \
+    --mount type=bind,src="$CONTROL_DIR",dst=/control \
+    --entrypoint /usr/bin/chown "$SUPERVISOR_IMAGE" "$owner" /control >/dev/null
+}
+
+restore_control_dir_ownership() {
+  [[ "$CONTROL_DIR_RUNTIME_OWNED" == '1' && -d "$CONTROL_DIR" ]] || return 0
+  remove_acceptance_helper_exact "$CONTROL_RESTORE_HELPER_NAME" || return 1
+  run_control_ownership_helper "$CONTROL_RESTORE_HELPER_NAME" "$HOST_UID:$HOST_GID" || return 1
+  [[ "$(stat -c '%u:%g' "$CONTROL_DIR")" == "$HOST_UID:$HOST_GID" ]] || return 1
+  CONTROL_DIR_RUNTIME_OWNED=0
+}
+
 remove_invocation_topology_exact() {
   local invocation="$1"
   [[ -n "$invocation" ]] || return 0
@@ -100,12 +136,122 @@ cleanup() {
   if [[ "$STALE_CONTAINER_CREATED" == '1' ]]; then remove_acceptance_container_exact "$STALE_CONTAINER_NAME" 'stale-proof' || true; fi
   if [[ "$STALE_NETWORK_CREATED" == '1' ]]; then remove_acceptance_network_exact "$STALE_NETWORK_NAME" 'stale-proof' || true; fi
   if [[ "$UNRELATED_NETWORK_CREATED" == '1' ]]; then remove_unrelated_acceptance_network_exact || true; fi
+  remove_acceptance_helper_exact "$UDS_HEALTH_CLIENT_NAME" || true
+  remove_acceptance_helper_exact "$UDS_EXECUTE_CLIENT_NAME" || true
+  remove_acceptance_helper_exact "$CONTROL_INIT_HELPER_NAME" || true
+  remove_acceptance_helper_exact "$CONTROL_RESTORE_HELPER_NAME" || true
+  if [[ -d "$CONTROL_DIR" && "$(stat -c '%u:%g' "$CONTROL_DIR" 2>/dev/null || true)" == '65532:65532' ]]; then
+    CONTROL_DIR_RUNTIME_OWNED=1
+  fi
+  restore_control_dir_ownership || true
+  rm -rf -- "$CONTROL_DIR" "$ARTIFACT_DIR" || true
   if [[ "$SUPERVISOR_IMAGE_BUILT_BY_HARNESS" == '1' ]]; then remove_acceptance_image_exact "$SUPERVISOR_IMAGE" || true; fi
   if [[ "$GATEWAY_IMAGE_BUILT_BY_HARNESS" == '1' ]]; then remove_acceptance_image_exact "$GATEWAY_IMAGE" || true; fi
   if [[ "$SANDBOX_IMAGE_BUILT_BY_HARNESS" == '1' ]]; then remove_acceptance_image_exact "$SANDBOX_IMAGE" || true; fi
-  rm -rf -- "$CONTROL_DIR" "$ARTIFACT_DIR"
 }
 trap cleanup EXIT INT TERM
+
+UDS_CLIENT_SOURCE="$(cat <<'NODE'
+const http = require('node:http');
+
+const MAX_INPUT_BYTES = 96 * 1024;
+const MAX_OUTPUT_BYTES = 192 * 1024;
+const method = process.argv[1];
+const timeoutMs = Number(process.argv[2]);
+
+async function readBoundedInput() {
+  const chunks = [];
+  let bytes = 0;
+  try {
+    for await (const value of process.stdin) {
+      const chunk = Buffer.from(value);
+      if (bytes + chunk.length > MAX_INPUT_BYTES) {
+        chunk.fill(0);
+        throw new Error('input_limit');
+      }
+      bytes += chunk.length;
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks, bytes);
+  } finally {
+    for (const chunk of chunks) chunk.fill(0);
+  }
+}
+
+function send(body) {
+  return new Promise((resolve, reject) => {
+    const responseChunks = [];
+    let responseBytes = 0;
+    let settled = false;
+    const zeroResponse = () => {
+      for (const chunk of responseChunks) chunk.fill(0);
+      responseChunks.length = 0;
+    };
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      zeroResponse();
+      if (error) reject(error); else resolve();
+    };
+    const headers = { Connection: 'close' };
+    if (method === 'POST') {
+      headers['Content-Type'] = 'application/json';
+      headers['Content-Length'] = String(body.length);
+    }
+    const request = http.request({
+      socketPath: '/control/piece-supervisor.sock',
+      path: method === 'GET' ? '/v1/health' : '/v1/execute',
+      method,
+      headers,
+    }, (response) => {
+      response.on('data', (value) => {
+        const chunk = Buffer.from(value);
+        if (responseBytes + chunk.length > MAX_OUTPUT_BYTES) {
+          chunk.fill(0);
+          response.destroy();
+          finish(new Error('output_limit'));
+          return;
+        }
+        responseBytes += chunk.length;
+        responseChunks.push(chunk);
+      });
+      response.once('aborted', () => finish(new Error('response_aborted')));
+      response.once('error', () => finish(new Error('response_error')));
+      response.once('end', () => {
+        if (settled) return;
+        const output = Buffer.concat(responseChunks, responseBytes);
+        zeroResponse();
+        process.stdout.write(output, (error) => {
+          output.fill(0);
+          finish(error || null);
+        });
+      });
+    });
+    request.setTimeout(timeoutMs, () => request.destroy(new Error('timeout')));
+    request.once('error', () => finish(new Error('request_error')));
+    if (method === 'POST') request.end(body); else request.end();
+  });
+}
+
+async function main() {
+  if (!['GET', 'POST'].includes(method) || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 15_000) {
+    process.exitCode = 1;
+    return;
+  }
+  let body = Buffer.alloc(0);
+  try {
+    if (method === 'POST') body = await readBoundedInput();
+    await send(body);
+  } catch {
+    process.exitCode = 1;
+  } finally {
+    body.fill(0);
+  }
+}
+
+void main();
+NODE
+)"
 
 snapshot_protected() {
   local output="$1"
@@ -115,16 +261,50 @@ snapshot_protected() {
   done
 }
 
+create_health_client() {
+  docker create --rm --name "$UDS_HEALTH_CLIENT_NAME" --label "$ACCEPTANCE_HELPER_LABEL" \
+    --network none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+    --pids-limit=16 --memory=67108864 --memory-swap=67108864 --cpus=0.25 \
+    --user=65532:65532 \
+    --mount type=bind,src="$CONTROL_DIR",dst=/control,readonly \
+    --entrypoint node "$SUPERVISOR_IMAGE" -e "$UDS_CLIENT_SOURCE" GET 3000 >/dev/null
+  UDS_HEALTH_CLIENT_CREATED=1
+  docker inspect "$UDS_HEALTH_CLIENT_NAME" >"$ARTIFACT_DIR/uds-client-inspect.json"
+  node - "$ARTIFACT_DIR/uds-client-inspect.json" "$CONTROL_DIR" <<'NODE'
+const fs = require('node:fs');
+const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))[0];
+const host = value.HostConfig;
+if (value.Config.User !== '65532:65532') throw new Error('client user');
+if (value.Config.Labels?.['crazyloops.acceptance'] !== 'step5b1-control-helper') throw new Error('client label');
+if (host.NetworkMode !== 'none' || Object.keys(host.PortBindings ?? {}).length || value.Config.ExposedPorts) throw new Error('client network');
+if (!host.ReadonlyRootfs || host.Privileged || JSON.stringify(host.CapDrop) !== JSON.stringify(['ALL']) || (host.CapAdd ?? []).length) throw new Error('client privileges');
+if (!(host.SecurityOpt ?? []).some((value) => value.startsWith('no-new-privileges'))) throw new Error('client no-new-privileges');
+if (host.PidsLimit !== 16 || host.Memory !== 67108864 || host.MemorySwap !== 67108864 || host.NanoCpus !== 250000000) throw new Error('client limits');
+if (host.AutoRemove !== true) throw new Error('client auto-remove');
+if ((value.Config.Env ?? []).some((entry) => /(?:secret|token|credential)/i.test(entry))) throw new Error('client environment');
+if (value.Mounts.length !== 1) throw new Error('client mounts');
+const mount = value.Mounts[0];
+if (mount.Source !== process.argv[3] || mount.Destination !== '/control' || mount.RW !== false) throw new Error('client control mount');
+if (JSON.stringify(value).includes('/var/run/docker.sock')) throw new Error('client docker socket');
+NODE
+}
+
 health() {
-  curl --silent --show-error --max-time 3 --unix-socket "$SOCKET" http://localhost/v1/health
+  create_health_client
+  docker start --attach "$UDS_HEALTH_CLIENT_NAME"
+  UDS_HEALTH_CLIENT_CREATED=0
 }
 
 execute_file() {
   local input="$1"
   local output="$2"
-  curl --silent --show-error --max-time 15 --unix-socket "$SOCKET" \
-    --request POST --header 'Content-Type: application/json' --data-binary "@$input" \
-    http://localhost/v1/execute >"$output"
+  docker run --rm --name "$UDS_EXECUTE_CLIENT_NAME" --label "$ACCEPTANCE_HELPER_LABEL" \
+    --network none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+    --pids-limit=16 --memory=67108864 --memory-swap=67108864 --cpus=0.25 \
+    --user=65532:65532 \
+    --mount type=bind,src="$CONTROL_DIR",dst=/control,readonly \
+    --entrypoint node -i "$SUPERVISOR_IMAGE" -e "$UDS_CLIENT_SOURCE" POST 15000 \
+    <"$input" >"$output"
 }
 
 count_invocation_containers() {
@@ -184,6 +364,12 @@ command -v curl >/dev/null || fail 'curl is required.'
 command -v sha256sum >/dev/null || fail 'sha256sum is required.'
 [[ -S /var/run/docker.sock ]] || fail 'Docker Engine socket is unavailable.'
 [[ "$(count_active_supervisors)" == '0' ]] || fail 'No already-running Step 5B.1 supervisor may exist before acceptance.'
+for helper_name in "$CONTROL_INIT_HELPER_NAME" "$CONTROL_RESTORE_HELPER_NAME" "$UDS_HEALTH_CLIENT_NAME" "$UDS_EXECUTE_CLIENT_NAME"; do
+  if docker inspect "$helper_name" >/dev/null 2>&1; then
+    remove_acceptance_helper_exact "$helper_name" || fail "Unexpected same-named container is outside harness cleanup authority: $helper_name"
+  fi
+  ! docker inspect "$helper_name" >/dev/null 2>&1 || fail "Acceptance helper name is unavailable: $helper_name"
+done
 HOST_INVOCATION_ID="$(printf '%s' "$HOST_REQUEST_ID" | sha256sum | cut -c1-16)"
 WORKER_FAILURE_INVOCATION_ID="$(printf '%s' "$WORKER_FAILURE_REQUEST_ID" | sha256sum | cut -c1-16)"
 for acceptance_image in "$SUPERVISOR_IMAGE" "$GATEWAY_IMAGE" "$SANDBOX_IMAGE"; do
@@ -210,8 +396,10 @@ docker network create --label 'crazyloops.runtime=unrelated-proof' "$UNRELATED_N
 UNRELATED_NETWORK_CREATED=1
 
 DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
-chown 65532:65532 "$CONTROL_DIR"
 chmod 0750 "$CONTROL_DIR"
+run_control_ownership_helper "$CONTROL_INIT_HELPER_NAME" '65532:65532' || fail 'Control directory ownership init helper failed.'
+[[ "$(stat -c '%u:%g:%a' "$CONTROL_DIR")" == '65532:65532:750' ]] || fail 'Control directory runtime ownership or mode is invalid.'
+CONTROL_DIR_RUNTIME_OWNED=1
 docker run --detach --name "$SUPERVISOR_NAME" --label "$OWNER_LABEL" --label "$SUPERVISOR_RESOURCE_LABEL" \
   --env PIECE_SUPERVISOR_CONTAINER_NAME="$SUPERVISOR_NAME" \
   --network none --read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=4m \
@@ -228,10 +416,17 @@ mapfile -t active_supervisors < <(active_supervisor_ids)
 SUPERVISOR_DOCKER_ID="$(docker inspect --format '{{.Id}}' "$SUPERVISOR_NAME")"
 [[ "${active_supervisors[0]}" == "$SUPERVISOR_DOCKER_ID" ]] || fail 'Active supervisor does not match its inspected self Docker identity.'
 
-for _ in $(seq 1 100); do [[ -S "$SOCKET" ]] && break; sleep 0.05; done
-[[ -S "$SOCKET" ]] || fail 'Supervisor UDS was not created.'
-[[ "$(stat -c '%a' "$SOCKET")" == '660' ]] || fail 'Supervisor socket mode is not exactly 660.'
-[[ "$(stat -c '%a' "$CONTROL_DIR")" == '750' ]] || fail 'Supervisor control directory mode is not exactly 750.'
+SOCKET_READY=0
+for _ in $(seq 1 100); do
+  if docker exec "$SUPERVISOR_NAME" node -e 'const fs=require("node:fs");const s=fs.statSync("/run/crazyloops-piece/piece-supervisor.sock");if(!s.isSocket())process.exit(1)' >/dev/null 2>&1; then
+    SOCKET_READY=1
+    break
+  fi
+  sleep 0.05
+done
+[[ "$SOCKET_READY" == '1' ]] || fail 'Supervisor UDS was not created.'
+SOCKET_AND_DIR_MODES="$(docker exec "$SUPERVISOR_NAME" node -e 'const fs=require("node:fs");const mode=(path)=>(fs.statSync(path).mode&0o777).toString(8);process.stdout.write(`${mode("/run/crazyloops-piece/piece-supervisor.sock")}:${mode("/run/crazyloops-piece")}`)')"
+[[ "$SOCKET_AND_DIR_MODES" == '660:750' ]] || fail 'Supervisor socket or control directory mode is invalid.'
 HEALTH="$(health)"
 node -e 'const h=JSON.parse(process.argv[1]);if(!h.ok||h.protocolVersion!==1||h.status!=="ready"||h.activeInvocations!==0||h.concurrencyLimit!==2)process.exit(1)' "$HEALTH" || fail 'Supervisor health response is invalid.'
 
@@ -311,8 +506,10 @@ TOPOLOGY_CAPTURED=0
 for _ in $(seq 1 500); do
   if docker inspect "$SANDBOX_NAME" "$GATEWAY_NAME" >"$ARTIFACT_DIR/invocation-inspect.json" 2>/dev/null && \
     docker network inspect "$INTERNAL_NAME" "$EGRESS_NAME" >"$ARTIFACT_DIR/invocation-networks.json" 2>/dev/null && \
+    docker inspect "$UDS_EXECUTE_CLIENT_NAME" >"$ARTIFACT_DIR/uds-execute-client-inspect.json" 2>/dev/null && \
     docker top "$SANDBOX_NAME" -eo pid,args >"$ARTIFACT_DIR/sandbox-processes.txt" 2>/dev/null && \
     docker top "$GATEWAY_NAME" -eo pid,args >"$ARTIFACT_DIR/gateway-processes.txt" 2>/dev/null && \
+    docker top "$UDS_EXECUTE_CLIENT_NAME" -eo pid,args >"$ARTIFACT_DIR/uds-client-processes.txt" 2>/dev/null && \
     docker exec "$GATEWAY_NAME" sh -c '! grep -q "api.hubapi.com" /etc/hosts'; then
     printf 'SAFE\n' >"$ARTIFACT_DIR/gateway-self-shadow.txt"
     TOPOLOGY_CAPTURED=1
@@ -416,12 +613,15 @@ for protected_name in "${PROTECTED[@]}"; do assert_no_docker_socket_mount "$prot
 RUNTIME_SURFACES=(
   "$ARTIFACT_DIR/supervisor-logs.txt"
   "$ARTIFACT_DIR/supervisor-inspect.json"
+  "$ARTIFACT_DIR/uds-client-inspect.json"
+  "$ARTIFACT_DIR/uds-execute-client-inspect.json"
   "$ARTIFACT_DIR/invocation-inspect.json"
   "$ARTIFACT_DIR/invocation-networks.json"
   "$ARTIFACT_DIR/live-gateway-logs.txt"
   "$ARTIFACT_DIR/supervisor-processes.txt"
   "$ARTIFACT_DIR/sandbox-processes.txt"
   "$ARTIFACT_DIR/gateway-processes.txt"
+  "$ARTIFACT_DIR/uds-client-processes.txt"
   "$ARTIFACT_DIR/images.json"
   "$ARTIFACT_DIR/supervisor-history.txt"
   "$ARTIFACT_DIR/gateway-history.txt"
@@ -450,10 +650,13 @@ docker stop --time 20 "$SUPERVISOR_NAME" >/dev/null
 node -e 'const value=JSON.parse(process.argv[1])[0];if(value.State.Running||value.State.OOMKilled||value.State.ExitCode!==0)process.exit(1)' "$(docker inspect "$SUPERVISOR_NAME")" || fail 'Supervisor did not complete its bounded SIGTERM shutdown.'
 remove_acceptance_supervisor_exact "$SUPERVISOR_NAME" || fail 'Exact labelled acceptance supervisor could not be removed.'
 SUPERVISOR_CREATED=0
-[[ ! -e "$SOCKET" ]] || fail 'Supervisor socket survived graceful shutdown.'
-
 remove_unrelated_acceptance_network_exact || fail 'Exact unrelated acceptance network could not be removed.'
 UNRELATED_NETWORK_CREATED=0
+! docker inspect "$UDS_HEALTH_CLIENT_NAME" >/dev/null 2>&1 || fail 'UDS health client survived.'
+! docker inspect "$UDS_EXECUTE_CLIENT_NAME" >/dev/null 2>&1 || fail 'UDS execute client survived.'
+restore_control_dir_ownership || fail 'Control directory ownership restore helper failed.'
+[[ ! -e "$SOCKET" ]] || fail 'Supervisor socket survived graceful shutdown.'
+rm -rf -- "$CONTROL_DIR" "$ARTIFACT_DIR"
 remove_acceptance_image_exact "$SUPERVISOR_IMAGE" || fail 'Harness-built supervisor image could not be removed safely.'
 SUPERVISOR_IMAGE_BUILT_BY_HARNESS=0
 remove_acceptance_image_exact "$GATEWAY_IMAGE" || fail 'Harness-built gateway image could not be removed safely.'
@@ -482,6 +685,10 @@ NEGATIVE_MATRIX=PASS
 ORPHAN_CLEANUP_SCOPE=PASS
 CREDENTIAL_PLAINTEXT_OCCURRENCES=0
 CREDENTIAL_BASE64_OCCURRENCES=0
+CONTROL_DIR_UID=65532
+CONTROL_DIR_GID=65532
+CONTROL_DIR_MODE=750
+SOCKET_MODE=660
 PROTECTED_SERVICES_UNCHANGED=PASS
 RUNNER_UNSIGNED_HTTP=401
 REDIS=PONG
@@ -495,5 +702,4 @@ REPORT
 
 CANARY=''
 CANARY_B64=''
-rm -rf -- "$ARTIFACT_DIR" "$CONTROL_DIR"
 trap - EXIT INT TERM
