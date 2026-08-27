@@ -5,9 +5,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ACCEPTED_STEP5A='353b2c4821b1b959aeb7f485beade3a5eaf219fd'
 EXPECTED_ORIGIN_MAIN='20c23d7e85123eaa77a916ce43f4a9ef5ca8a5e7'
 OWNER_LABEL='crazyloops.runtime=piece-runtime-supervisor-v1'
+OWNER_LABEL_VALUE='piece-runtime-supervisor-v1'
 RESOURCE_LABEL='crazyloops.resource=invocation'
 SUPERVISOR_RESOURCE_LABEL='crazyloops.resource=supervisor'
 SUPERVISOR_NAME='cl-piece-step5b1-supervisor'
+STALE_CONTAINER_NAME='cl-piece-step5b1-stale'
+STALE_NETWORK_NAME='cl-piece-step5b1-stale-network'
 SUPERVISOR_IMAGE='crazyloops/piece-runtime-supervisor:step5b1'
 SANDBOX_IMAGE='crazyloops/piece-runtime-hubspot:0.8.10-step5a'
 GATEWAY_IMAGE='crazyloops/piece-runtime-gateway:step5a'
@@ -20,20 +23,86 @@ PROTECTED_AFTER="$ARTIFACT_DIR/protected-after.txt"
 UNRELATED_NETWORK='cl-piece-step5b1-unrelated'
 CANARY=''
 CANARY_B64=''
+SUPERVISOR_CREATED=0
+STALE_CONTAINER_CREATED=0
+STALE_NETWORK_CREATED=0
+UNRELATED_NETWORK_CREATED=0
+SUPERVISOR_IMAGE_BUILT_BY_HARNESS=0
+GATEWAY_IMAGE_BUILT_BY_HARNESS=0
+SANDBOX_IMAGE_BUILT_BY_HARNESS=0
+HOST_INVOCATION_STARTED=0
+WORKER_FAILURE_INVOCATION_STARTED=0
+HOST_REQUEST_ID='step5b1-host-invocation'
+WORKER_FAILURE_REQUEST_ID='step5b1-negative-worker'
+HOST_INVOCATION_ID=''
+WORKER_FAILURE_INVOCATION_ID=''
 
 fail() {
   echo "STEP5B1 HOST ACCEPTANCE FAILED: $*" >&2
   exit 1
 }
 
+remove_acceptance_supervisor_exact() {
+  local name="$1"
+  local labels
+  docker inspect "$name" >/dev/null 2>&1 || return 0
+  labels="$(docker inspect --format '{{index .Config.Labels "crazyloops.runtime"}}|{{index .Config.Labels "crazyloops.resource"}}' "$name" 2>/dev/null)" || return 1
+  [[ "$labels" == "$OWNER_LABEL_VALUE|supervisor" ]] || return 1
+  docker rm -f "$name" >/dev/null 2>&1
+}
+
+remove_acceptance_container_exact() {
+  local name="$1"
+  local expected_invocation="$2"
+  local labels
+  docker inspect "$name" >/dev/null 2>&1 || return 0
+  labels="$(docker inspect --format '{{index .Config.Labels "crazyloops.runtime"}}|{{index .Config.Labels "crazyloops.resource"}}|{{index .Config.Labels "crazyloops.invocation"}}' "$name" 2>/dev/null)" || return 1
+  [[ "$labels" == "$OWNER_LABEL_VALUE|invocation|$expected_invocation" ]] || return 1
+  docker rm -f "$name" >/dev/null 2>&1
+}
+
+remove_acceptance_network_exact() {
+  local name="$1"
+  local expected_invocation="$2"
+  local labels
+  docker network inspect "$name" >/dev/null 2>&1 || return 0
+  labels="$(docker network inspect --format '{{index .Labels "crazyloops.runtime"}}|{{index .Labels "crazyloops.resource"}}|{{index .Labels "crazyloops.invocation"}}' "$name" 2>/dev/null)" || return 1
+  [[ "$labels" == "$OWNER_LABEL_VALUE|invocation|$expected_invocation" ]] || return 1
+  docker network rm "$name" >/dev/null 2>&1
+}
+
+remove_unrelated_acceptance_network_exact() {
+  docker network inspect "$UNRELATED_NETWORK" >/dev/null 2>&1 || return 0
+  [[ "$(docker network inspect --format '{{index .Labels "crazyloops.runtime"}}' "$UNRELATED_NETWORK" 2>/dev/null)" == 'unrelated-proof' ]] || return 1
+  docker network rm "$UNRELATED_NETWORK" >/dev/null 2>&1
+}
+
+remove_acceptance_image_exact() {
+  local image="$1"
+  docker image inspect "$image" >/dev/null 2>&1 || return 0
+  [[ "$(docker image inspect --format '{{index .Config.Labels "crazyloops.runtime"}}' "$image" 2>/dev/null)" == "$OWNER_LABEL_VALUE" ]] || return 1
+  docker image rm -f "$image" >/dev/null 2>&1
+}
+
+remove_invocation_topology_exact() {
+  local invocation="$1"
+  [[ -n "$invocation" ]] || return 0
+  remove_acceptance_container_exact "cl-piece-sandbox-$invocation" "$invocation" || true
+  remove_acceptance_container_exact "cl-piece-gateway-$invocation" "$invocation" || true
+  remove_acceptance_network_exact "cl-piece-internal-$invocation" "$invocation" || true
+  remove_acceptance_network_exact "cl-piece-egress-$invocation" "$invocation" || true
+}
+
 cleanup() {
-  docker rm -f "$SUPERVISOR_NAME" >/dev/null 2>&1 || true
-  mapfile -t owned_containers < <(docker ps -aq --filter "label=$OWNER_LABEL" --filter "label=$RESOURCE_LABEL" 2>/dev/null || true)
-  if ((${#owned_containers[@]})); then docker rm -f "${owned_containers[@]}" >/dev/null 2>&1 || true; fi
-  mapfile -t owned_networks < <(docker network ls -q --filter "label=$OWNER_LABEL" --filter "label=$RESOURCE_LABEL" 2>/dev/null || true)
-  if ((${#owned_networks[@]})); then docker network rm "${owned_networks[@]}" >/dev/null 2>&1 || true; fi
-  docker network rm "$UNRELATED_NETWORK" >/dev/null 2>&1 || true
-  docker image rm -f "$SUPERVISOR_IMAGE" "$GATEWAY_IMAGE" "$SANDBOX_IMAGE" >/dev/null 2>&1 || true
+  if [[ "$SUPERVISOR_CREATED" == '1' ]]; then remove_acceptance_supervisor_exact "$SUPERVISOR_NAME" || true; fi
+  if [[ "$HOST_INVOCATION_STARTED" == '1' ]]; then remove_invocation_topology_exact "$HOST_INVOCATION_ID"; fi
+  if [[ "$WORKER_FAILURE_INVOCATION_STARTED" == '1' ]]; then remove_invocation_topology_exact "$WORKER_FAILURE_INVOCATION_ID"; fi
+  if [[ "$STALE_CONTAINER_CREATED" == '1' ]]; then remove_acceptance_container_exact "$STALE_CONTAINER_NAME" 'stale-proof' || true; fi
+  if [[ "$STALE_NETWORK_CREATED" == '1' ]]; then remove_acceptance_network_exact "$STALE_NETWORK_NAME" 'stale-proof' || true; fi
+  if [[ "$UNRELATED_NETWORK_CREATED" == '1' ]]; then remove_unrelated_acceptance_network_exact || true; fi
+  if [[ "$SUPERVISOR_IMAGE_BUILT_BY_HARNESS" == '1' ]]; then remove_acceptance_image_exact "$SUPERVISOR_IMAGE" || true; fi
+  if [[ "$GATEWAY_IMAGE_BUILT_BY_HARNESS" == '1' ]]; then remove_acceptance_image_exact "$GATEWAY_IMAGE" || true; fi
+  if [[ "$SANDBOX_IMAGE_BUILT_BY_HARNESS" == '1' ]]; then remove_acceptance_image_exact "$SANDBOX_IMAGE" || true; fi
   rm -rf -- "$CONTROL_DIR" "$ARTIFACT_DIR"
 }
 trap cleanup EXIT INT TERM
@@ -112,21 +181,33 @@ done < <(git diff --name-only "$ACCEPTED_STEP5A..HEAD")
 
 command -v docker >/dev/null || fail 'Docker is required.'
 command -v curl >/dev/null || fail 'curl is required.'
+command -v sha256sum >/dev/null || fail 'sha256sum is required.'
 [[ -S /var/run/docker.sock ]] || fail 'Docker Engine socket is unavailable.'
 [[ "$(count_active_supervisors)" == '0' ]] || fail 'No already-running Step 5B.1 supervisor may exist before acceptance.'
+HOST_INVOCATION_ID="$(printf '%s' "$HOST_REQUEST_ID" | sha256sum | cut -c1-16)"
+WORKER_FAILURE_INVOCATION_ID="$(printf '%s' "$WORKER_FAILURE_REQUEST_ID" | sha256sum | cut -c1-16)"
+for acceptance_image in "$SUPERVISOR_IMAGE" "$GATEWAY_IMAGE" "$SANDBOX_IMAGE"; do
+  ! docker image inspect "$acceptance_image" >/dev/null 2>&1 || fail "Pre-existing acceptance image tag is outside harness cleanup authority: $acceptance_image"
+done
 snapshot_protected "$PROTECTED_BEFORE"
 for protected_name in "${PROTECTED[@]}"; do assert_no_docker_socket_mount "$protected_name"; done
 [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' --request POST --header 'Content-Type: application/json' --data '{}' http://127.0.0.1:8788/v1/execute)" == '401' ]] || fail 'Connector Runner unsigned JSON check did not return 401.'
 [[ "$(docker exec redis redis-cli PING)" == 'PONG' ]] || fail 'Redis did not return PONG.'
 
 docker build --no-cache --label "$OWNER_LABEL" -f services/piece-runtime/Dockerfile.sandbox -t "$SANDBOX_IMAGE" services/piece-runtime >/dev/null
+SANDBOX_IMAGE_BUILT_BY_HARNESS=1
 docker build --no-cache --label "$OWNER_LABEL" -f services/piece-runtime/Dockerfile.gateway -t "$GATEWAY_IMAGE" services/piece-runtime >/dev/null
+GATEWAY_IMAGE_BUILT_BY_HARNESS=1
 docker build --no-cache --label "$OWNER_LABEL" -f services/piece-runtime/Dockerfile.supervisor -t "$SUPERVISOR_IMAGE" services/piece-runtime >/dev/null
+SUPERVISOR_IMAGE_BUILT_BY_HARNESS=1
 docker run --rm --entrypoint node "$SANDBOX_IMAGE" -e 'const p=require("/piece-runtime/node_modules/@activepieces/piece-hubspot/package.json");if(p.version!=="0.8.10")process.exit(1)' || fail 'Reviewed HubSpot package version mismatch.'
 
-docker create --name cl-piece-step5b1-stale --label "$OWNER_LABEL" --label "$RESOURCE_LABEL" --label 'crazyloops.invocation=stale-proof' --network none "$GATEWAY_IMAGE" >/dev/null
-docker network create --label "$OWNER_LABEL" --label "$RESOURCE_LABEL" --label 'crazyloops.invocation=stale-proof' cl-piece-step5b1-stale-network >/dev/null
+docker create --name "$STALE_CONTAINER_NAME" --label "$OWNER_LABEL" --label "$RESOURCE_LABEL" --label 'crazyloops.invocation=stale-proof' --network none "$GATEWAY_IMAGE" >/dev/null
+STALE_CONTAINER_CREATED=1
+docker network create --label "$OWNER_LABEL" --label "$RESOURCE_LABEL" --label 'crazyloops.invocation=stale-proof' "$STALE_NETWORK_NAME" >/dev/null
+STALE_NETWORK_CREATED=1
 docker network create --label 'crazyloops.runtime=unrelated-proof' "$UNRELATED_NETWORK" >/dev/null
+UNRELATED_NETWORK_CREATED=1
 
 DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
 chown 65532:65532 "$CONTROL_DIR"
@@ -140,6 +221,7 @@ docker run --detach --name "$SUPERVISOR_NAME" --label "$OWNER_LABEL" --label "$S
   --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
   --mount type=bind,src="$CONTROL_DIR",dst=/run/crazyloops-piece \
   "$SUPERVISOR_IMAGE" >/dev/null
+SUPERVISOR_CREATED=1
 
 mapfile -t active_supervisors < <(active_supervisor_ids)
 [[ "${#active_supervisors[@]}" == '1' ]] || fail 'Exactly one active Step 5B.1 supervisor was not proven.'
@@ -195,14 +277,16 @@ docker exec "$SUPERVISOR_NAME" node -e '
     if (listening) process.exit(1);
   }
 ' || fail 'Supervisor has a TCP listener.'
-[[ -z "$(docker ps -aq --filter 'name=cl-piece-step5b1-stale')" ]] || fail 'Owned stale container survived startup cleanup.'
-[[ -z "$(docker network ls -q --filter 'name=cl-piece-step5b1-stale-network')" ]] || fail 'Owned stale network survived startup cleanup.'
+[[ -z "$(docker ps -aq --filter "name=$STALE_CONTAINER_NAME")" ]] || fail 'Owned stale container survived startup cleanup.'
+[[ -z "$(docker network ls -q --filter "name=$STALE_NETWORK_NAME")" ]] || fail 'Owned stale network survived startup cleanup.'
+STALE_CONTAINER_CREATED=0
+STALE_NETWORK_CREATED=0
 [[ -n "$(docker network ls -q --filter "name=$UNRELATED_NETWORK")" ]] || fail 'Unrelated network was removed.'
 
 CANARY="E50_STEP5B1_$(openssl rand -hex 32)"
 CANARY_B64="$(printf '%s' "$CANARY" | base64 -w0)"
-REQUEST_ID='step5b1-host-invocation'
-INVOCATION_ID="$(printf '%s' "$REQUEST_ID" | sha256sum | cut -c1-16)"
+REQUEST_ID="$HOST_REQUEST_ID"
+INVOCATION_ID="$HOST_INVOCATION_ID"
 SANDBOX_NAME="cl-piece-sandbox-$INVOCATION_ID"
 GATEWAY_NAME="cl-piece-gateway-$INVOCATION_ID"
 INTERNAL_NAME="cl-piece-internal-$INVOCATION_ID"
@@ -210,6 +294,7 @@ EGRESS_NAME="cl-piece-egress-$INVOCATION_ID"
 cat >"$ARTIFACT_DIR/request.json" <<JSON
 {"protocolVersion":1,"request":{"protocolVersion":1,"requestId":"$REQUEST_ID","executionId":"step5b1-host-execution","capabilityId":"hubspot.get_contact","capabilityVersion":1,"mode":"TEST","idempotencyKey":"step5b1-host-idempotency","input":{"contactId":"synthetic-contact","properties":["firstname"]}},"credentialBase64":"$CANARY_B64"}
 JSON
+HOST_INVOCATION_STARTED=1
 execute_file "$ARTIFACT_DIR/request.json" "$ARTIFACT_DIR/response.json" &
 EXECUTE_PID=$!
 GATEWAY_WATCHER_PID=''
@@ -313,6 +398,7 @@ const fs = require('node:fs');
 const requestId = 'step5b1-negative-worker';
 fs.writeFileSync(process.argv[2], JSON.stringify({ protocolVersion: 1, request: { protocolVersion: 1, requestId, executionId: 'negative-execution', capabilityId: 'hubspot.get_contact', capabilityVersion: 1, mode: 'TEST', idempotencyKey: requestId, input: { contactId: 'invalid/contact' } }, credentialBase64: Buffer.from('negative-token').toString('base64') }));
 NODE
+WORKER_FAILURE_INVOCATION_STARTED=1
 execute_file "$ARTIFACT_DIR/worker-failure.json" "$ARTIFACT_DIR/worker-failure-response.json" || true
 expect_error "$ARTIFACT_DIR/worker-failure-response.json" 'PIECE_INVALID_INPUT' || fail 'Controlled worker failure was not bounded.'
 assert_zero_invocation_resources 'Controlled worker failure left resources.'
@@ -362,11 +448,18 @@ done < <(find "$CONTROL_DIR" -maxdepth 1 -type f -print0)
 docker stop --time 20 "$SUPERVISOR_NAME" >/dev/null
 [[ "$(count_active_supervisors)" == '0' ]] || fail 'Running Step 5B.1 supervisor count did not return to zero after graceful shutdown.'
 node -e 'const value=JSON.parse(process.argv[1])[0];if(value.State.Running||value.State.OOMKilled||value.State.ExitCode!==0)process.exit(1)' "$(docker inspect "$SUPERVISOR_NAME")" || fail 'Supervisor did not complete its bounded SIGTERM shutdown.'
-docker rm "$SUPERVISOR_NAME" >/dev/null
+remove_acceptance_supervisor_exact "$SUPERVISOR_NAME" || fail 'Exact labelled acceptance supervisor could not be removed.'
+SUPERVISOR_CREATED=0
 [[ ! -e "$SOCKET" ]] || fail 'Supervisor socket survived graceful shutdown.'
 
-docker network rm "$UNRELATED_NETWORK" >/dev/null
-docker image rm -f "$SUPERVISOR_IMAGE" "$GATEWAY_IMAGE" "$SANDBOX_IMAGE" >/dev/null
+remove_unrelated_acceptance_network_exact || fail 'Exact unrelated acceptance network could not be removed.'
+UNRELATED_NETWORK_CREATED=0
+remove_acceptance_image_exact "$SUPERVISOR_IMAGE" || fail 'Harness-built supervisor image could not be removed safely.'
+SUPERVISOR_IMAGE_BUILT_BY_HARNESS=0
+remove_acceptance_image_exact "$GATEWAY_IMAGE" || fail 'Harness-built gateway image could not be removed safely.'
+GATEWAY_IMAGE_BUILT_BY_HARNESS=0
+remove_acceptance_image_exact "$SANDBOX_IMAGE" || fail 'Harness-built sandbox image could not be removed safely.'
+SANDBOX_IMAGE_BUILT_BY_HARNESS=0
 STEP5B1_SUPERVISOR_CONTAINERS="$(docker ps -aq --filter "name=$SUPERVISOR_NAME" | sed '/^$/d' | wc -l)"
 STEP5B1_INVOCATION_CONTAINERS="$(count_invocation_containers)"
 STEP5B1_INVOCATION_NETWORKS="$(count_invocation_networks)"

@@ -716,4 +716,32 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.doesNotMatch(harness, /DUPLICATE_PROTECTION=PASS|CONCURRENCY_LIMIT=PASS/);
     assert.doesNotMatch(harness, /--privileged|--network host|vercel deploy|git push|docker rm \$\(docker ps -aq\)/);
   });
+
+  test("owner harness cleanup is exact-resource scoped and safe on preflight failure", () => {
+    const harness = readFileSync(resolve(ROOT, "scripts/e50-step5b1-supervisor-host-acceptance.sh"), "utf8");
+    const cleanup = harness.match(/\ncleanup\(\) \{\n([\s\S]*?)\n\}/)?.[1];
+    assert.ok(cleanup);
+    assert.doesNotMatch(cleanup, /docker ps -aq|docker network ls -q/);
+    assert.doesNotMatch(cleanup, /docker rm -f "?\$\{?owned_|docker network rm "?\$\{?owned_/);
+    assert.doesNotMatch(cleanup, /docker image rm -f "\$SUPERVISOR_IMAGE" "\$GATEWAY_IMAGE" "\$SANDBOX_IMAGE"/);
+    assert.match(cleanup, /SUPERVISOR_CREATED.*remove_acceptance_supervisor_exact "\$SUPERVISOR_NAME"/);
+    assert.match(cleanup, /HOST_INVOCATION_STARTED.*remove_invocation_topology_exact "\$HOST_INVOCATION_ID"/);
+    assert.match(cleanup, /WORKER_FAILURE_INVOCATION_STARTED.*remove_invocation_topology_exact "\$WORKER_FAILURE_INVOCATION_ID"/);
+    assert.match(cleanup, /STALE_CONTAINER_CREATED.*remove_acceptance_container_exact "\$STALE_CONTAINER_NAME" 'stale-proof'/);
+    assert.match(cleanup, /STALE_NETWORK_CREATED.*remove_acceptance_network_exact "\$STALE_NETWORK_NAME" 'stale-proof'/);
+    assert.match(harness, /remove_acceptance_container_exact\(\)[\s\S]*OWNER_LABEL_VALUE\|invocation\|\$expected_invocation/);
+    assert.match(harness, /remove_acceptance_network_exact\(\)[\s\S]*OWNER_LABEL_VALUE\|invocation\|\$expected_invocation/);
+    assert.match(harness, /remove_acceptance_supervisor_exact\(\)[\s\S]*OWNER_LABEL_VALUE\|supervisor/);
+    assert.match(harness, /SUPERVISOR_CREATED=0[\s\S]*SUPERVISOR_IMAGE_BUILT_BY_HARNESS=0[\s\S]*trap cleanup EXIT INT TERM/);
+    assert.match(harness, /Pre-existing acceptance image tag is outside harness cleanup authority/);
+    assert.match(harness, /SANDBOX_IMAGE_BUILT_BY_HARNESS=1/);
+    assert.match(harness, /GATEWAY_IMAGE_BUILT_BY_HARNESS=1/);
+    assert.match(harness, /SUPERVISOR_IMAGE_BUILT_BY_HARNESS=1/);
+    assert.match(harness, /HOST_REQUEST_ID='step5b1-host-invocation'/);
+    assert.match(harness, /WORKER_FAILURE_REQUEST_ID='step5b1-negative-worker'/);
+    assert.match(harness, /HOST_INVOCATION_ID=.*sha256sum/);
+    assert.match(harness, /WORKER_FAILURE_INVOCATION_ID=.*sha256sum/);
+    assert.match(harness, /No already-running Step 5B\.1 supervisor/);
+    assert.match(harness, /active_supervisors\[0\].*SUPERVISOR_DOCKER_ID/);
+  });
 });

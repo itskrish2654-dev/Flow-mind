@@ -225,6 +225,12 @@ repository proofs in Step 5B.1; the owner harness deliberately emits no host
 PASS marker for them because staging the race without a production test hook is
 not deterministic enough for acceptance.
 
+Harness cleanup is resource-specific: it uses only exact acceptance names,
+exact invocation labels, and explicit creation/build state. It never performs
+owner-label-wide destructive cleanup. Pre-existing production supervisor
+resources and pre-existing image tags are outside the harness cleanup authority;
+the harness fails safely rather than deleting them.
+
 Step 5B.2 must still design and review the Connector Runner-to-UDS integration,
 production service ownership/group setup, deployment/rollback, stronger image
 identity pinning, production monitoring, real host restart/shutdown behavior,
