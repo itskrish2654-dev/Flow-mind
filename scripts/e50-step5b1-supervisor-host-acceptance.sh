@@ -777,7 +777,7 @@ create_execute_client "$ARTIFACT_DIR/uds-execute-client-inspect.json"
 wait_for_gateway_start_and_pause "$GATEWAY_NAME" "$INVOCATION_ID" "$ARTIFACT_DIR/observation-gateway-id.txt" &
 OBSERVATION_WATCHER_PID=$!
 ps -o pid=,args= -p "$OBSERVATION_WATCHER_PID" >"$ARTIFACT_DIR/observation-start-watcher-process.txt"
-start_execute_client "$ARTIFACT_DIR/request.json" "$ARTIFACT_DIR/response.json" &
+start_execute_client "$ARTIFACT_DIR/request.json" "$ARTIFACT_DIR/response.json" 2>/dev/null &
 EXECUTE_PID=$!
 if ! wait "$OBSERVATION_WATCHER_PID"; then
   OBSERVATION_WATCHER_PID=''
@@ -820,12 +820,16 @@ unpause_acceptance_gateway_exact "$OBSERVATION_GATEWAY_ID" "$GATEWAY_NAME" "$INV
 OBSERVATION_GATEWAY_PAUSED=0
 OBSERVATION_RELEASED=1
 printf 'OBSERVATION_RELEASED\n' >"$ARTIFACT_DIR/observation-released.txt"
-wait "$EXECUTE_PID"
+if ! wait "$EXECUTE_PID"; then
+  EXECUTE_PID=''
+  fail 'UDS execute client exited nonzero after gateway release.'
+fi
 EXECUTE_PID=''
+printf 'POST_RELEASE_EXECUTE_CLIENT=PASS\n'
 wait "$OBSERVATION_WATCHER_PID" >/dev/null 2>&1 || true
 OBSERVATION_WATCHER_PID=''
 [[ "$TOPOLOGY_CAPTURED" == '1' && "$OBSERVATION_RELEASED" == '1' ]] || fail 'Topology capture did not complete before gateway release.'
-node - "$ARTIFACT_DIR/invocation-inspect.json" "$ARTIFACT_DIR/invocation-networks.json" "$INVOCATION_ID" "$INTERNAL_NAME" "$EGRESS_NAME" <<'NODE'
+if ! node - "$ARTIFACT_DIR/invocation-inspect.json" "$ARTIFACT_DIR/invocation-networks.json" "$INVOCATION_ID" "$INTERNAL_NAME" "$EGRESS_NAME" >/dev/null 2>&1 <<'NODE'
 const fs = require('node:fs');
 const [sandbox, gateway] = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const networks = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
@@ -849,7 +853,11 @@ if (!gatewayIp || !(sandbox.HostConfig.ExtraHosts ?? []).includes(`api.hubapi.co
 const aliases = gateway.NetworkSettings.Networks[internalName]?.Aliases ?? [];
 if (!aliases.includes(`cl-piece-gateway-${invocation}`) || aliases.includes('api.hubapi.com')) throw new Error('gateway aliases');
 NODE
-node - "$ARTIFACT_DIR/live-gateway-logs.txt" <<'NODE'
+then
+  fail 'Captured invocation topology validation failed.'
+fi
+printf 'POST_RELEASE_TOPOLOGY=PASS\n'
+if ! node - "$ARTIFACT_DIR/live-gateway-logs.txt" >/dev/null 2>&1 <<'NODE'
 const fs = require('node:fs');
 const events = fs.readFileSync(process.argv[2], 'utf8').split(/\r?\n/).filter(Boolean).flatMap((line) => {
   try { return [JSON.parse(line)]; } catch { return []; }
@@ -858,6 +866,10 @@ const dns = events.find((event) => event.event === 'piece_gateway_dns' && event.
 const connection = events.find((event) => event.event === 'piece_gateway_connection' && event.hostname === 'api.hubapi.com' && event.port === 443 && event.outcome === 'PIECE_GATEWAY_SUCCEEDED');
 if (!dns || !connection) process.exit(1);
 NODE
+then
+  fail 'Gateway DNS/connection evidence validation failed.'
+fi
+printf 'POST_RELEASE_GATEWAY_EVIDENCE=PASS\n'
 expect_error "$ARTIFACT_DIR/response.json" 'PIECE_AUTH_FAILED' || fail 'Real provider canary did not return PIECE_AUTH_FAILED.'
 assert_zero_invocation_resources 'Invocation resources survived request completion.'
 

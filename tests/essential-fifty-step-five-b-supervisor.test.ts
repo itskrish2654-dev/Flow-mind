@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Fake Docker API fixtures intentionally model untyped daemon JSON. */
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test, { describe } from "node:test";
@@ -1029,5 +1030,41 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.match(docs, /does not perform a second GitHub fetch/);
     assert.match(docs, /missing or mismatched `origin\/main`\s+tracking ref fails closed/);
     assert.match(docs, /START GATEWAY -> REAL GATEWAY READY -> INSPECT VALID INTERNAL ADDRESS/);
+  });
+
+  test("post-release acceptance checks fail with bounded stage diagnostics", () => {
+    const harness = readFileSync(resolve(ROOT, "scripts/e50-step5b1-supervisor-host-acceptance.sh"), "utf8");
+    const releaseStart = harness.indexOf("printf 'OBSERVATION_RELEASED\\n'");
+    const providerResult = harness.indexOf("expect_error \"$ARTIFACT_DIR/response.json\" 'PIECE_AUTH_FAILED'", releaseStart);
+    assert.ok(releaseStart >= 0 && providerResult > releaseStart);
+    const postRelease = harness.slice(releaseStart, providerResult);
+
+    assert.doesNotMatch(postRelease, /^\s*wait "\$EXECUTE_PID"\s*$/m);
+    assert.match(postRelease, /if ! wait "\$EXECUTE_PID"; then[\s\S]*EXECUTE_PID=''[\s\S]*fail 'UDS execute client exited nonzero after gateway release\.'/);
+    assert.match(postRelease, /if ! node - "\$ARTIFACT_DIR\/invocation-inspect\.json"[\s\S]*fail 'Captured invocation topology validation failed\.'/);
+    assert.match(postRelease, /if ! node - "\$ARTIFACT_DIR\/live-gateway-logs\.txt"[\s\S]*fail 'Gateway DNS\/connection evidence validation failed\.'/);
+    assert.match(postRelease, /invocation-networks\.json".*>\/dev\/null 2>&1 <<'NODE'/);
+    assert.match(postRelease, /live-gateway-logs\.txt" >\/dev\/null 2>&1 <<'NODE'/);
+    assert.match(harness, /start_execute_client.*2>\/dev\/null &/);
+    assert.match(postRelease, /POST_RELEASE_EXECUTE_CLIENT=PASS/);
+    assert.match(postRelease, /POST_RELEASE_TOPOLOGY=PASS/);
+    assert.match(postRelease, /POST_RELEASE_GATEWAY_EVIDENCE=PASS/);
+    assert.match(harness, /READY_TRANSITION_TIMEOUT_MS=750/);
+    assert.match(harness, /Gateway readiness observation barrier was not established/);
+    assert.match(harness, /OBSERVATION_HELD.*OBSERVATION_GATEWAY_PAUSED.*OBSERVATION_SUPERVISOR_PAUSED.*OBSERVATION_RELEASED/);
+
+    const diagnostics = [
+      "UDS execute client exited nonzero after gateway release.",
+      "Captured invocation topology validation failed.",
+      "Gateway DNS/connection evidence validation failed.",
+    ].join(" ");
+    assert.doesNotMatch(diagnostics, /credential|request body|provider response|environment|Docker inspect|gateway logs/i);
+
+    const changedRuntimeFiles = execFileSync(
+      "git",
+      ["diff", "--name-only", "840fdc0abbbdfa2cd973355e2cc82f4aeec06546", "--", "services/piece-runtime/src"],
+      { cwd: ROOT, encoding: "utf8" },
+    ).trim();
+    assert.equal(changedRuntimeFiles, "");
   });
 });
