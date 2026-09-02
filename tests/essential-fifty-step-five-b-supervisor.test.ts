@@ -1,8 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Fake Docker API fixtures intentionally model untyped daemon JSON. */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import test, { describe } from "node:test";
 
 import { buildInvocationPlan, PieceContainerEngine } from "../services/piece-runtime/src/container-engine.mjs";
@@ -1171,5 +1172,111 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
       { cwd: ROOT, encoding: "utf8" },
     ).trim();
     assert.equal(changedRuntimeFiles, "");
+  });
+
+  test("gateway evidence failure diagnostics expose only bounded allowlisted facts", () => {
+    const harness = readFileSync(resolve(ROOT, "scripts/e50-step5b1-supervisor-host-acceptance.sh"), "utf8");
+    const helper = harness.match(/print_gateway_failure_diagnostics\(\) \{[\s\S]*?<<'NODE'\r?\n([\s\S]*?)\r?\nNODE\r?\n\}/)?.[1] ?? "";
+    assert.ok(helper);
+    assert.match(helper, /MAX_GATEWAY_LOG_BYTES = 256 \* 1024/);
+    assert.match(helper, /MAX_RESPONSE_BYTES = 16 \* 1024/);
+    assert.doesNotMatch(helper, /JSON\.stringify|console\.log\((?:event|response|line|logRead|responseRead)/);
+
+    const directory = mkdtempSync(join(tmpdir(), "step5b1-diagnostic-"));
+    const logsPath = join(directory, "logs.jsonl");
+    const responsePath = join(directory, "response.json");
+    const requestId = "step5b1-host-invocation";
+    const exact = { requestId, capabilityId: "hubspot.get_contact", hostname: "api.hubapi.com", port: 443 };
+    const events = [
+      { ...exact, event: "piece_gateway_dns", outcome: "SAFE", answers: ["SECRET_DNS_ANSWER"] },
+      { ...exact, event: "piece_gateway_connection", outcome: "PIECE_GATEWAY_SUCCEEDED" },
+      { ...exact, event: "piece_gateway_connection", outcome: "PIECE_TIMEOUT" },
+      { ...exact, event: "piece_gateway_connection", outcome: "PIECE_PROVIDER_UNAVAILABLE" },
+      { ...exact, event: "piece_gateway_connection", outcome: "PIECE_EGRESS_DENIED" },
+      { ...exact, event: "piece_gateway_connection", outcome: "PIECE_RESPONSE_INVALID" },
+      { ...exact, event: "piece_gateway_connection", outcome: "UNREVIEWED_OUTCOME", body: "SECRET_GATEWAY_BODY" },
+      { ...exact, requestId: "wrong", event: "piece_gateway_connection", outcome: "PIECE_TIMEOUT" },
+      { ...exact, capabilityId: "wrong", event: "piece_gateway_connection", outcome: "PIECE_TIMEOUT" },
+      { ...exact, hostname: "wrong.example", event: "piece_gateway_connection", outcome: "PIECE_TIMEOUT" },
+      { ...exact, port: 444, event: "piece_gateway_connection", outcome: "PIECE_TIMEOUT" },
+    ];
+    writeFileSync(logsPath, `${events.map((event) => JSON.stringify(event)).join("\n")}\nnot-json\n`);
+    writeFileSync(responsePath, JSON.stringify({
+      protocolVersion: 1,
+      ok: false,
+      errorCode: "PIECE_AUTH_FAILED",
+      message: "SECRET_MESSAGE",
+      body: { secret: "SECRET_BODY" },
+      credential: "SECRET_CREDENTIAL",
+    }));
+
+    try {
+      const output = execFileSync(process.execPath, ["-", logsPath, responsePath, requestId], {
+        encoding: "utf8",
+        input: helper,
+      });
+      for (const line of [
+        "GATEWAY_DIAGNOSTIC_DNS_EVENTS=1",
+        "GATEWAY_DIAGNOSTIC_DNS_SAFE_EVENTS=1",
+        "GATEWAY_DIAGNOSTIC_CONNECTION_EVENTS=6",
+        "GATEWAY_DIAGNOSTIC_CONNECTION_SUCCEEDED=1",
+        "GATEWAY_DIAGNOSTIC_CONNECTION_TIMEOUT=1",
+        "GATEWAY_DIAGNOSTIC_CONNECTION_PROVIDER_UNAVAILABLE=1",
+        "GATEWAY_DIAGNOSTIC_CONNECTION_EGRESS_DENIED=1",
+        "GATEWAY_DIAGNOSTIC_CONNECTION_RESPONSE_INVALID=1",
+        "GATEWAY_DIAGNOSTIC_CONNECTION_OTHER=1",
+        "PROVIDER_RESPONSE_DIAGNOSTIC_PRESENT=YES",
+        "PROVIDER_RESPONSE_DIAGNOSTIC_PROTOCOL_VERSION=1",
+        "PROVIDER_RESPONSE_DIAGNOSTIC_OK=false",
+        "PROVIDER_RESPONSE_DIAGNOSTIC_ERROR_CODE=PIECE_AUTH_FAILED",
+      ]) {
+        assert.match(output, new RegExp(`^${line}$`, "m"));
+      }
+      assert.doesNotMatch(output, /SECRET_DNS_ANSWER|SECRET_GATEWAY_BODY|SECRET_MESSAGE|SECRET_BODY|SECRET_CREDENTIAL/);
+
+      writeFileSync(responsePath, "{malformed");
+      const malformed = execFileSync(process.execPath, ["-", logsPath, responsePath, requestId], {
+        encoding: "utf8",
+        input: helper,
+      });
+      assert.match(malformed, /^PROVIDER_RESPONSE_DIAGNOSTIC_PRESENT=YES$/m);
+      assert.match(malformed, /^PROVIDER_RESPONSE_DIAGNOSTIC_PROTOCOL_VERSION=INVALID$/m);
+      assert.match(malformed, /^PROVIDER_RESPONSE_DIAGNOSTIC_OK=INVALID$/m);
+      assert.match(malformed, /^PROVIDER_RESPONSE_DIAGNOSTIC_ERROR_CODE=UNKNOWN$/m);
+
+      const allowedErrorCodes = [
+        "PIECE_AUTH_FAILED",
+        "PIECE_RATE_LIMITED",
+        "PIECE_PROVIDER_UNAVAILABLE",
+        "PIECE_TIMEOUT",
+        "PIECE_EGRESS_DENIED",
+        "PIECE_RESPONSE_INVALID",
+        "PIECE_RUNTIME_FAILED",
+        "PIECE_INVALID_INPUT",
+        "PIECE_OUTPUT_LIMIT",
+      ];
+      for (const errorCode of [...allowedErrorCodes, "SECRET_UNREVIEWED_CODE"]) {
+        writeFileSync(responsePath, JSON.stringify({ protocolVersion: 1, ok: false, errorCode }));
+        const codeOutput = execFileSync(process.execPath, ["-", logsPath, responsePath, requestId], {
+          encoding: "utf8",
+          input: helper,
+        });
+        const expected = allowedErrorCodes.includes(errorCode) ? errorCode : "UNKNOWN";
+        assert.match(codeOutput, new RegExp(`^PROVIDER_RESPONSE_DIAGNOSTIC_ERROR_CODE=${expected}$`, "m"));
+        assert.equal(codeOutput.includes("SECRET_UNREVIEWED_CODE"), false);
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+
+    const failureCall = 'print_gateway_failure_diagnostics "$ARTIFACT_DIR/live-gateway-logs.txt" "$ARTIFACT_DIR/response.json" "$REQUEST_ID" || true';
+    assert.equal(harness.split(failureCall).length - 1, 1);
+    const evidenceValidation = harness.indexOf('if ! node - "$ARTIFACT_DIR/live-gateway-logs.txt"');
+    const diagnosticCall = harness.indexOf(failureCall, evidenceValidation);
+    const exactFailure = harness.indexOf("fail 'Gateway DNS/connection evidence validation failed.'", diagnosticCall);
+    const evidencePass = harness.indexOf("printf 'POST_RELEASE_GATEWAY_EVIDENCE=PASS\\n'", exactFailure);
+    assert.ok(evidenceValidation >= 0 && evidenceValidation < diagnosticCall && diagnosticCall < exactFailure && exactFailure < evidencePass);
+    assert.match(harness.slice(evidenceValidation, diagnosticCall), /outcome === 'SAFE'/);
+    assert.match(harness.slice(evidenceValidation, diagnosticCall), /outcome === 'PIECE_GATEWAY_SUCCEEDED'/);
   });
 });

@@ -685,6 +685,119 @@ if (JSON.stringify(value).length > 2048) process.exit(1);
 NODE
 }
 
+print_gateway_failure_diagnostics() {
+  local logs="$1"
+  local response="$2"
+  local request_id="$3"
+  node - "$logs" "$response" "$request_id" <<'NODE'
+const fs = require('node:fs');
+
+const MAX_GATEWAY_LOG_BYTES = 256 * 1024;
+const MAX_RESPONSE_BYTES = 16 * 1024;
+const CAPABILITY_ID = 'hubspot.get_contact';
+const HOSTNAME = 'api.hubapi.com';
+const PORT = 443;
+const RESPONSE_ERROR_CODES = new Set([
+  'PIECE_AUTH_FAILED',
+  'PIECE_RATE_LIMITED',
+  'PIECE_PROVIDER_UNAVAILABLE',
+  'PIECE_TIMEOUT',
+  'PIECE_EGRESS_DENIED',
+  'PIECE_RESPONSE_INVALID',
+  'PIECE_RUNTIME_FAILED',
+  'PIECE_INVALID_INPUT',
+  'PIECE_OUTPUT_LIMIT',
+]);
+
+function readBounded(path, maxBytes) {
+  let descriptor;
+  const buffer = Buffer.alloc(maxBytes + 1);
+  try {
+    descriptor = fs.openSync(path, 'r');
+    const bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, 0);
+    if (bytesRead > maxBytes) return { present: true, text: null };
+    return { present: true, text: buffer.subarray(0, bytesRead).toString('utf8') };
+  } catch {
+    return { present: false, text: null };
+  } finally {
+    buffer.fill(0);
+    if (descriptor !== undefined) {
+      try { fs.closeSync(descriptor); } catch {}
+    }
+  }
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+const counters = {
+  dnsEvents: 0,
+  dnsSafeEvents: 0,
+  connectionEvents: 0,
+  connectionSucceeded: 0,
+  connectionTimeout: 0,
+  connectionProviderUnavailable: 0,
+  connectionEgressDenied: 0,
+  connectionResponseInvalid: 0,
+  connectionOther: 0,
+};
+
+const logRead = readBounded(process.argv[2], MAX_GATEWAY_LOG_BYTES);
+if (logRead.text !== null) {
+  for (const line of logRead.text.split(/\r?\n/)) {
+    if (!line) continue;
+    let event;
+    try { event = JSON.parse(line); } catch { continue; }
+    if (!isRecord(event) || event.requestId !== process.argv[4] || event.capabilityId !== CAPABILITY_ID) continue;
+    if (event.hostname !== HOSTNAME || event.port !== PORT) continue;
+    if (event.event === 'piece_gateway_dns') {
+      counters.dnsEvents += 1;
+      if (event.outcome === 'SAFE') counters.dnsSafeEvents += 1;
+      continue;
+    }
+    if (event.event !== 'piece_gateway_connection') continue;
+    counters.connectionEvents += 1;
+    if (event.outcome === 'PIECE_GATEWAY_SUCCEEDED') counters.connectionSucceeded += 1;
+    else if (event.outcome === 'PIECE_TIMEOUT') counters.connectionTimeout += 1;
+    else if (event.outcome === 'PIECE_PROVIDER_UNAVAILABLE') counters.connectionProviderUnavailable += 1;
+    else if (event.outcome === 'PIECE_EGRESS_DENIED') counters.connectionEgressDenied += 1;
+    else if (event.outcome === 'PIECE_RESPONSE_INVALID') counters.connectionResponseInvalid += 1;
+    else counters.connectionOther += 1;
+  }
+}
+
+console.log(`GATEWAY_DIAGNOSTIC_DNS_EVENTS=${counters.dnsEvents}`);
+console.log(`GATEWAY_DIAGNOSTIC_DNS_SAFE_EVENTS=${counters.dnsSafeEvents}`);
+console.log(`GATEWAY_DIAGNOSTIC_CONNECTION_EVENTS=${counters.connectionEvents}`);
+console.log(`GATEWAY_DIAGNOSTIC_CONNECTION_SUCCEEDED=${counters.connectionSucceeded}`);
+console.log(`GATEWAY_DIAGNOSTIC_CONNECTION_TIMEOUT=${counters.connectionTimeout}`);
+console.log(`GATEWAY_DIAGNOSTIC_CONNECTION_PROVIDER_UNAVAILABLE=${counters.connectionProviderUnavailable}`);
+console.log(`GATEWAY_DIAGNOSTIC_CONNECTION_EGRESS_DENIED=${counters.connectionEgressDenied}`);
+console.log(`GATEWAY_DIAGNOSTIC_CONNECTION_RESPONSE_INVALID=${counters.connectionResponseInvalid}`);
+console.log(`GATEWAY_DIAGNOSTIC_CONNECTION_OTHER=${counters.connectionOther}`);
+
+const responseRead = readBounded(process.argv[3], MAX_RESPONSE_BYTES);
+let protocolVersion = 'INVALID';
+let ok = 'INVALID';
+let errorCode = 'UNKNOWN';
+if (responseRead.text !== null) {
+  try {
+    const response = JSON.parse(responseRead.text);
+    if (isRecord(response)) {
+      if (response.protocolVersion === 1) protocolVersion = '1';
+      if (typeof response.ok === 'boolean') ok = String(response.ok);
+      if (typeof response.errorCode === 'string' && RESPONSE_ERROR_CODES.has(response.errorCode)) errorCode = response.errorCode;
+    }
+  } catch {}
+}
+console.log(`PROVIDER_RESPONSE_DIAGNOSTIC_PRESENT=${responseRead.present ? 'YES' : 'NO'}`);
+console.log(`PROVIDER_RESPONSE_DIAGNOSTIC_PROTOCOL_VERSION=${protocolVersion}`);
+console.log(`PROVIDER_RESPONSE_DIAGNOSTIC_OK=${ok}`);
+console.log(`PROVIDER_RESPONSE_DIAGNOSTIC_ERROR_CODE=${errorCode}`);
+NODE
+}
+
 assert_no_docker_socket_mount() {
   local container="$1"
   docker inspect --format '{{range .Mounts}}{{println .Destination}}{{end}}' "$container" | grep -qx '/var/run/docker.sock' && \
@@ -952,6 +1065,7 @@ const connection = events.find((event) => event.event === 'piece_gateway_connect
 if (!dns || !connection) process.exit(1);
 NODE
 then
+  print_gateway_failure_diagnostics "$ARTIFACT_DIR/live-gateway-logs.txt" "$ARTIFACT_DIR/response.json" "$REQUEST_ID" || true
   fail 'Gateway DNS/connection evidence validation failed.'
 fi
 printf 'POST_RELEASE_GATEWAY_EVIDENCE=PASS\n'

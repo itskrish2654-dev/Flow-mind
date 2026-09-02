@@ -351,6 +351,19 @@ can be drawn from this attempt, and the harness started no acceptance resources.
 The two exact reviewed paths must be added to the fail-closed source allowlist
 before another owner-host rerun. Step 5B.1 remains unaccepted.
 
+### Step 5B.1 owner-host attempt 7
+
+The corrected source gate passed on the owner host. The event-driven startup
+barrier passed through the `ALREADY_READY` path, the execute client completed,
+and topology validation passed. Gateway DNS/connection evidence validation then
+failed before the provider-result assertion was reached. Fail-closed cleanup
+removed all acceptance resources, and the protected Connector Runner,
+Activepieces app/worker, and Redis services remained unchanged. The exact
+gateway outcome is not yet known, so this result does not justify a gateway,
+DNS, egress, provider-normalization, or lifecycle redesign. A bounded,
+diagnostic-only harness correction is required before the next owner-host rerun.
+Step 5B.1 remains unaccepted.
+
 Step 5B.2 must still design and review the Connector Runner-to-UDS integration,
 production service ownership/group setup, deployment/rollback, stronger image
 identity pinning, production monitoring, real host restart/shutdown behavior,
