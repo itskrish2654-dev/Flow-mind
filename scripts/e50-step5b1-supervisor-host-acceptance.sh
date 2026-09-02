@@ -633,7 +633,6 @@ cd "$ROOT"
 [[ -z "$(git status --porcelain)" ]] || fail 'Working tree is not clean.'
 git merge-base --is-ancestor "$ACCEPTED_STEP5A" HEAD || fail 'Accepted Step 5A base is not an ancestor.'
 [[ "$(git merge-base HEAD "$ACCEPTED_STEP5A")" == "$ACCEPTED_STEP5A" ]] || fail 'Branch is not based on accepted Step 5A.'
-git fetch origin main --quiet
 [[ "$(git rev-parse origin/main)" == "$EXPECTED_ORIGIN_MAIN" ]] || fail 'origin/main changed from the reviewed production baseline.'
 while IFS= read -r file; do
   [[ "$file" =~ ^(services/piece-runtime/(Dockerfile\.supervisor|src/(docker-client|docker-piece-container-engine|supervisor-constants|supervisor-errors|supervisor-protocol|supervisor-service|supervisor-server|supervisor)\.mjs)|scripts/e50-step5b1-supervisor-host-acceptance\.sh|docs/piece-runtime/SUPERVISOR_V1\.md|tests/essential-fifty-step-five-b-supervisor\.test\.ts)$ ]] || fail "Out-of-scope file: $file"

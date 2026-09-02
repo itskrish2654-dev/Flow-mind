@@ -224,6 +224,8 @@ export class DockerPieceContainerEngine extends PieceContainerEngine {
         Container: plan.names.gateway,
         EndpointConfig: { Aliases: plan.gateway.internalAliases },
       });
+      await this.docker.startContainer(plan.names.gateway);
+      await this.waitForGateway(plan, signal);
       const gateway = await this.docker.inspectContainer(plan.names.gateway);
       const gatewayAddress = gateway?.NetworkSettings?.Networks?.[plan.names.internalNetwork]?.IPAddress ||
         gateway?.NetworkSettings?.Networks?.[plan.names.internalNetwork]?.GlobalIPv6Address;
@@ -233,8 +235,6 @@ export class DockerPieceContainerEngine extends PieceContainerEngine {
         sandboxContainerConfiguration(plan, labels, gatewayAddress),
       );
       state.sandboxCreated = true;
-      await this.docker.startContainer(plan.names.gateway);
-      await this.waitForGateway(plan, signal);
       envelope = Buffer.from(JSON.stringify({ request, credentialBase64: credential.toString("base64") }), "utf8");
       const output = await this.docker.attachAndRun({
         name: plan.names.sandbox,

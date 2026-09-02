@@ -156,18 +156,20 @@ internal network is Docker `Internal=true`. The gateway starts on egress and is
 then attached to internal using only its generated gateway alias. It never
 receives `api.hubapi.com` as an alias or host override.
 
-The supervisor inspects the gateway after attachment and discovers its actual
-address in that invocation's internal network. The sandbox joins only the
-internal network and receives the exact reviewed provider hostname mapped to
-that discovered address. There is no global hardcoded gateway address. The
-gateway independently resolves real provider DNS, rejects the complete answer
-set if any address is unsafe, pins one validated numeric address, and enforces
-canonical SNI.
+The supervisor starts the attached gateway, waits for its real readiness event,
+and only then inspects the running gateway to discover its actual address in
+that invocation's internal network. A valid address is required before the
+sandbox is created. The sandbox joins only the internal network and receives
+the exact reviewed provider hostname mapped to that discovered address. There
+is no global hardcoded gateway address. The gateway independently resolves real
+provider DNS, rejects the complete answer set if any address is unsafe, pins one
+validated numeric address, and enforces canonical SNI.
 
 Lifecycle order is internal network, egress network, gateway create/attach,
-dynamic address discovery, sandbox create, gateway readiness, sandbox attach,
-one stdin write, one action attempt, bounded result, and finally sandbox,
-gateway, internal network, egress network removal. Timeout, disconnect, crash,
+gateway start, real gateway readiness, started-gateway address discovery and
+validation, sandbox create/attach, one stdin write, one action attempt, bounded
+result, and finally sandbox, gateway, internal network, egress network removal.
+Timeout, disconnect, crash,
 malformed output, Docker failure, provider failure, shutdown, and internal
 exception all enter the same idempotent cleanup boundary. Absence is verified
 before an invocation slot is released. If cleanup or the absence check fails,
@@ -225,6 +227,12 @@ repository proofs in Step 5B.1; the owner harness deliberately emits no host
 PASS marker for them because staging the race without a production test hook is
 not deterministic enough for acceptance.
 
+The owner-host acceptance command must perform a fresh remote fetch and verify
+the reviewed feature commit plus `origin/main` immediately before invoking the
+harness. The harness consumes that already-verified local tracking state and
+does not perform a second GitHub fetch. A missing or mismatched `origin/main`
+tracking ref fails closed; there is no alternate source fallback.
+
 Harness cleanup is resource-specific: it uses only exact acceptance names,
 exact invocation labels, and explicit creation/build state. It never performs
 owner-label-wide destructive cleanup. Pre-existing production supervisor
@@ -263,6 +271,24 @@ Connector Runner, Activepieces app/worker, and Redis were unchanged. This is
 classified as a harness observation race; it did not establish a runtime
 security failure. The provider result from this attempt was not accepted
 because the remaining evidence checks had not completed.
+
+### Step 5B.1 owner-host attempt 3
+
+The next owner-host attempt proved a runtime lifecycle-ordering defect before
+the sandbox was created. Docker event history showed that both invocation
+networks and the exact gateway container were created, but the gateway was
+never started and cleanup removed all owned resources. A separate disposable
+host probe confirmed that this Docker host exposes no usable network address
+for the gateway before container start and exposes valid internal and egress
+addresses after start. The old runtime inspected and required the internal
+address before starting the gateway, so it failed closed before the acceptance
+harness could observe a running gateway.
+
+The corrected runtime order is: **CREATE NETWORKS -> CREATE/CONNECT GATEWAY ->
+START GATEWAY -> REAL GATEWAY READY -> INSPECT VALID INTERNAL ADDRESS -> CREATE
+SANDBOX -> EXECUTE SANDBOX**. No subnet or address is predicted or hardcoded.
+Gateway start, readiness, and address validation must all succeed before the
+sandbox is created; failures retain exact owned-resource cleanup.
 
 Static review found that the first acceptance-only pause barrier still had a
 readiness-to-repause scheduler race: after gateway readiness, the supervisor

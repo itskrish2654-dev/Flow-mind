@@ -102,6 +102,8 @@ class FakeDocker {
   networks = new Map<string, Record<string, any>>();
   failAt: string | null = null;
   gatewayAddress = "10.90.0.7";
+  gatewayAddressBeforeStart: string | null = null;
+  gatewayAddressAssignedOnStart = false;
   workerOutput: Buffer;
   lastReturnedOutput: Buffer | null = null;
   listedContainers: Array<Record<string, any>> | null = null;
@@ -138,7 +140,8 @@ class FakeDocker {
     this.record("connectNetwork", name, configuration);
     const container = this.containers.get(configuration.Container);
     if (!container) throw new DockerClientError("not_found", 404);
-    container.NetworkSettings.Networks[name] = { IPAddress: this.gatewayAddress };
+    container.NetworkSettings.Networks[name] = { IPAddress: "" };
+    this.gatewayAddressBeforeStart = container.NetworkSettings.Networks[name].IPAddress;
   }
 
   async removeNetwork(name: string) {
@@ -153,7 +156,7 @@ class FakeDocker {
       Id: name,
       Config: { Labels: configuration.Labels },
       State: { Running: false },
-      NetworkSettings: { Networks: { [network]: { IPAddress: this.gatewayAddress } } },
+      NetworkSettings: { Networks: { [network]: { IPAddress: "" } } },
       configuration,
     });
     return { Id: name };
@@ -164,6 +167,10 @@ class FakeDocker {
     const container = this.containers.get(name);
     if (!container) throw new DockerClientError("not_found", 404);
     container.State.Running = true;
+    for (const endpoint of Object.values(container.NetworkSettings.Networks) as Array<Record<string, any>>) {
+      if (!endpoint.IPAddress && !endpoint.GlobalIPv6Address) endpoint.IPAddress = this.gatewayAddress;
+    }
+    this.gatewayAddressAssignedOnStart = true;
   }
 
   async inspectContainer(name: string) {
@@ -277,6 +284,26 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.deepEqual(sandbox.HostConfig.ExtraHosts, [`api.hubapi.com:${docker.gatewayAddress}`]);
     assert.deepEqual(sandbox.HostConfig.Mounts, []);
     assert.equal(JSON.stringify({ gateway, sandbox }).includes("/var/run/docker.sock"), false);
+    assert.equal(docker.gatewayAddressBeforeStart, "");
+    assert.equal(docker.gatewayAddressAssignedOnStart, true);
+
+    const internalCreate = docker.calls.findIndex(({ method, args }) => method === "createNetwork" && (args[0] as any).Name === plan.names.internalNetwork);
+    const egressCreate = docker.calls.findIndex(({ method, args }) => method === "createNetwork" && (args[0] as any).Name === plan.names.egressNetwork);
+    const gatewayCreate = docker.calls.findIndex(({ method, args }) => method === "createContainer" && args[0] === plan.names.gateway);
+    const gatewayConnect = docker.calls.findIndex(({ method, args }) => method === "connectNetwork" && args[0] === plan.names.internalNetwork);
+    const gatewayStart = docker.calls.findIndex(({ method, args }) => method === "startContainer" && args[0] === plan.names.gateway);
+    const readyLog = docker.calls.findIndex(({ method, args }) => method === "containerLogs" && args[0] === plan.names.gateway);
+    const startedGatewayInspect = docker.calls.findIndex(({ method, args }, index) => index > readyLog && method === "inspectContainer" && args[0] === plan.names.gateway);
+    const sandboxCreate = docker.calls.findIndex(({ method, args }) => method === "createContainer" && args[0] === plan.names.sandbox);
+    const sandboxRun = docker.calls.findIndex(({ method, args }) => method === "attachAndRun" && (args[0] as any).name === plan.names.sandbox);
+    assert.ok(internalCreate < egressCreate);
+    assert.ok(egressCreate < gatewayCreate);
+    assert.ok(gatewayCreate < gatewayConnect);
+    assert.ok(gatewayConnect < gatewayStart);
+    assert.ok(gatewayStart < readyLog);
+    assert.ok(readyLog < startedGatewayInspect);
+    assert.ok(startedGatewayInspect < sandboxCreate);
+    assert.ok(sandboxCreate < sandboxRun);
     await engine.cleanupInvocation(plan);
     assert.equal(docker.containers.size, 0);
     assert.equal(docker.networks.size, 0);
@@ -505,6 +532,45 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.ok(singletonList >= 0 && firstRemove > singletonList);
   });
 
+  test("gateway start, readiness, and valid started address gate sandbox creation", async () => {
+    const scenarios = [
+      { name: "gateway start", failAt: "startContainer", gatewayAddress: "10.90.0.7" },
+      { name: "gateway readiness", failAt: "containerLogs", gatewayAddress: "10.90.0.7" },
+      { name: "started gateway address", failAt: null, gatewayAddress: "" },
+    ];
+
+    for (const scenario of scenarios) {
+      const docker = new FakeDocker();
+      docker.failAt = scenario.failAt;
+      docker.gatewayAddress = scenario.gatewayAddress;
+      const engine = dockerEngine(docker);
+      const request = invocation(`request-${scenario.name.replaceAll(" ", "-")}`);
+      const plan = buildInvocationPlan(request);
+
+      await assert.rejects(
+        engine.runInvocation({ plan, request, credential: Buffer.from("synthetic-token") }),
+        PieceRuntimeError,
+      );
+      assert.equal(
+        docker.calls.some(({ method, args }) => method === "createContainer" && args[0] === plan.names.sandbox),
+        false,
+        scenario.name,
+      );
+      assert.equal(
+        docker.calls.some(({ method }) => method === "attachAndRun"),
+        false,
+        scenario.name,
+      );
+
+      docker.failAt = null;
+      await engine.cleanupInvocation(plan);
+      assert.equal(docker.containers.size, 0, scenario.name);
+      assert.equal(docker.networks.size, 0, scenario.name);
+      assert.equal(docker.calls.filter(({ method }) => method === "removeContainer").length, 1, scenario.name);
+      assert.equal(docker.calls.filter(({ method }) => method === "removeNetwork").length, 2, scenario.name);
+    }
+  });
+
   test("zero active supervisors fails closed before orphan deletion", async () => {
     const docker = new FakeDocker();
     const labels = { ...supervisorLabels(), [SUPERVISOR_INVOCATION_RESOURCE_LABEL.key]: SUPERVISOR_INVOCATION_RESOURCE_LABEL.value };
@@ -670,6 +736,13 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.match(harness, /E50_EXPECTED_STEP5B1_COMMIT/);
     assert.match(harness, /353b2c4821b1b959aeb7f485beade3a5eaf219fd/);
     assert.match(harness, /20c23d7e85123eaa77a916ce43f4a9ef5ca8a5e7/);
+    assert.doesNotMatch(harness, /git fetch origin main/);
+    assert.match(harness, /git rev-parse origin\/main/);
+    assert.match(harness, /origin\/main changed from the reviewed production baseline/);
+    assert.match(harness, /git branch --show-current/);
+    assert.match(harness, /git rev-parse HEAD/);
+    assert.match(harness, /git status --porcelain/);
+    assert.match(harness, /git merge-base --is-ancestor "\$ACCEPTED_STEP5A" HEAD/);
     assert.match(harness, /--network none/);
     assert.match(harness, /--read-only/);
     assert.match(harness, /--cap-drop=ALL/);
@@ -952,5 +1025,9 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.match(docs, /readiness-to-repause scheduler race/);
     assert.match(docs, /SUPERVISOR FROZEN -> GATEWAY UNPAUSED -> REAL READY/);
     assert.match(docs, /GATEWAY PAUSED -> SUPERVISOR RESUMED -> SANDBOX STARTS AGAINST PAUSED/);
+    assert.match(docs, /fresh remote fetch and verify/);
+    assert.match(docs, /does not perform a second GitHub fetch/);
+    assert.match(docs, /missing or mismatched `origin\/main`\s+tracking ref fails closed/);
+    assert.match(docs, /START GATEWAY -> REAL GATEWAY READY -> INSPECT VALID INTERNAL ADDRESS/);
   });
 });
