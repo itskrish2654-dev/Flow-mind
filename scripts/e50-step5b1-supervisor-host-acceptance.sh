@@ -487,24 +487,72 @@ if (destination.hostname !== 'api.hubapi.com' || destination.port !== 443 || des
 NODE
 }
 
-wait_for_gateway_start_and_pause() {
+acceptance_container_is_absent() {
+  local name="$1"
+  local matches
+  if docker inspect "$name" >/dev/null 2>&1; then
+    return 1
+  fi
+  matches="$(docker ps -a --filter "name=^/${name}$" --format '{{.Names}}' 2>/dev/null)" || return 1
+  [[ -z "$matches" ]]
+}
+
+wait_for_gateway_start_event_and_hold() {
   local name="$1"
   local invocation="$2"
-  local id_output="$3"
+  local sandbox_name="$3"
+  local supervisor_id="$4"
+  local supervisor_name="$5"
+  local since="$6"
+  local id_output="$7"
+  local status_output="$8"
+  local event
+  local action
+  local event_id
+  local event_name
+  local event_owner
+  local event_resource
+  local event_invocation
+  local event_pipe="$ARTIFACT_DIR/observation-start-events.pipe"
+  local event_pid=''
   local id
-  local deadline=$((SECONDS + 5))
-  while (( SECONDS < deadline )); do
-    if docker inspect "$name" >/dev/null 2>&1; then
-      id="$(acceptance_invocation_container_id_exact "$name" "$invocation")" || return 1
-      if [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$id" 2>/dev/null)" == 'true|false' ]]; then
-        pause_acceptance_gateway_exact "$id" "$name" "$invocation" || return 1
-        printf '%s\n' "$id" >"$id_output"
-        return 0
-      fi
-    fi
-    sleep 0.01
-  done
-  return 1
+
+  printf 'waiting_for_start_event\n' >"$status_output"
+  mkfifo "$event_pipe" || { printf 'start_event_stream_failed\n' >"$status_output"; return 1; }
+  timeout --signal=TERM --kill-after=2s 8s docker events \
+    --since "$since" \
+    --filter type=container \
+    --filter event=start \
+    --filter "container=$name" \
+    --format '{{.Action}}|{{.Actor.ID}}|{{index .Actor.Attributes "name"}}|{{index .Actor.Attributes "crazyloops.runtime"}}|{{index .Actor.Attributes "crazyloops.resource"}}|{{index .Actor.Attributes "crazyloops.invocation"}}' \
+    >"$event_pipe" 2>/dev/null &
+  event_pid=$!
+  if ! IFS= read -r -t 8 event <"$event_pipe"; then
+    kill "$event_pid" >/dev/null 2>&1 || true
+    wait "$event_pid" >/dev/null 2>&1 || true
+    rm -f -- "$event_pipe"
+    printf 'start_event_missing\n' >"$status_output"
+    return 1
+  fi
+  kill "$event_pid" >/dev/null 2>&1 || true
+  wait "$event_pid" >/dev/null 2>&1 || true
+  rm -f -- "$event_pipe"
+  IFS='|' read -r action event_id event_name event_owner event_resource event_invocation <<<"$event"
+  [[ "$action" == 'start' && "$event_name" == "$name" && "$event_owner" == "$OWNER_LABEL_VALUE" && "$event_resource" == 'invocation' && "$event_invocation" == "$invocation" ]] || {
+    printf 'start_event_invalid\n' >"$status_output"
+    return 1
+  }
+  id="$(acceptance_invocation_container_id_exact "$name" "$invocation")" || { printf 'gateway_identity_invalid\n' >"$status_output"; return 1; }
+  [[ "$id" == "$event_id" ]] || { printf 'gateway_identity_invalid\n' >"$status_output"; return 1; }
+  printf '%s\n' "$id" >"$id_output"
+  printf 'START_EVENT_OBSERVED=PASS\n'
+
+  pause_acceptance_supervisor_exact "$supervisor_id" "$supervisor_name" || { printf 'supervisor_freeze_failed\n' >"$status_output"; return 1; }
+  printf 'SUPERVISOR_STARTUP_FREEZE=PASS\n'
+  pause_acceptance_gateway_exact "$id" "$name" "$invocation" || { printf 'gateway_hold_failed\n' >"$status_output"; return 1; }
+  printf 'GATEWAY_STARTUP_HOLD=PASS\n'
+  acceptance_container_is_absent "$sandbox_name" || { printf 'sandbox_created\n' >"$status_output"; return 1; }
+  printf 'startup_barrier_held\n' >"$status_output"
 }
 
 start_gateway_log_watcher() {
@@ -524,6 +572,8 @@ hold_gateway_after_ready() {
   local supervisor_name="$5"
   local request_id="$6"
   local log_file="$7"
+  local initial_log_file="$8"
+  local sandbox_name="$9"
   local ready=0
   local started_ms
   local now_ms
@@ -533,31 +583,41 @@ hold_gateway_after_ready() {
   acceptance_supervisor_id_is_exact "$supervisor_id" "$supervisor_name" || return 1
   [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$gateway_id" 2>/dev/null)" == 'true|true' ]] || return 1
   [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$supervisor_id" 2>/dev/null)" == 'true|true' ]] || return 1
-  ! grep -Fq '"event":"piece_gateway_ready"' "$log_file" 2>/dev/null || return 1
+  acceptance_container_is_absent "$sandbox_name" || return 1
 
-  unpause_acceptance_gateway_exact "$gateway_id" "$gateway_name" "$invocation" || return 1
-  OBSERVATION_GATEWAY_PAUSED=0
-  started_ms="$(date +%s%3N)"
-  deadline_ms=$((started_ms + READY_TRANSITION_TIMEOUT_MS))
-  while :; do
-    if grep -Fq '"event":"piece_gateway_ready"' "$log_file" 2>/dev/null; then
-      gateway_ready_event_is_exact "$log_file" "$request_id" || return 1
-      ready=1
-      break
-    fi
-    kill -0 "$OBSERVATION_WATCHER_PID" >/dev/null 2>&1 || return 1
-    now_ms="$(date +%s%3N)"
-    (( now_ms < deadline_ms )) || break
-    sleep 0.005
-  done
+  if grep -Fq '"event":"piece_gateway_ready"' "$initial_log_file" 2>/dev/null; then
+    gateway_ready_event_is_exact "$initial_log_file" "$request_id" || return 1
+    ready=1
+    printf 'READY_PATH=ALREADY_READY\n'
+  else
+    unpause_acceptance_gateway_exact "$gateway_id" "$gateway_name" "$invocation" || return 1
+    OBSERVATION_GATEWAY_PAUSED=0
+    started_ms="$(date +%s%3N)"
+    deadline_ms=$((started_ms + READY_TRANSITION_TIMEOUT_MS))
+    while :; do
+      if grep -Fq '"event":"piece_gateway_ready"' "$log_file" 2>/dev/null; then
+        gateway_ready_event_is_exact "$log_file" "$request_id" || return 1
+        ready=1
+        break
+      fi
+      kill -0 "$OBSERVATION_WATCHER_PID" >/dev/null 2>&1 || return 1
+      now_ms="$(date +%s%3N)"
+      (( now_ms < deadline_ms )) || break
+      sleep 0.005
+    done
+
+    [[ "$ready" == '1' ]] || return 1
+    pause_acceptance_gateway_exact "$gateway_id" "$gateway_name" "$invocation" || return 1
+    OBSERVATION_GATEWAY_PAUSED=1
+    printf 'READY_PATH=TRANSITION_READY\n'
+  fi
 
   [[ "$ready" == '1' ]] || return 1
-  pause_acceptance_gateway_exact "$gateway_id" "$gateway_name" "$invocation" || return 1
-  OBSERVATION_GATEWAY_PAUSED=1
   acceptance_invocation_container_id_is_exact "$gateway_id" "$gateway_name" "$invocation" || return 1
   acceptance_supervisor_id_is_exact "$supervisor_id" "$supervisor_name" || return 1
   [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$gateway_id" 2>/dev/null)" == 'true|true' ]] || return 1
   [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$supervisor_id" 2>/dev/null)" == 'true|true' ]] || return 1
+  acceptance_container_is_absent "$sandbox_name" || return 1
   printf 'OBSERVATION_HELD\n' >"$ARTIFACT_DIR/observation-held.txt"
   OBSERVATION_HELD=1
 }
@@ -774,29 +834,47 @@ HOST_INVOCATION_STARTED=1
 OBSERVATION_GATEWAY_NAME="$GATEWAY_NAME"
 OBSERVATION_INVOCATION_ID="$INVOCATION_ID"
 create_execute_client "$ARTIFACT_DIR/uds-execute-client-inspect.json"
-wait_for_gateway_start_and_pause "$GATEWAY_NAME" "$INVOCATION_ID" "$ARTIFACT_DIR/observation-gateway-id.txt" &
+START_EVENT_SINCE="$(date --utc +%Y-%m-%dT%H:%M:%S.%NZ)"
+printf '%s\n' "$START_EVENT_SINCE" >"$ARTIFACT_DIR/observation-start-since.txt"
+wait_for_gateway_start_event_and_hold \
+  "$GATEWAY_NAME" \
+  "$INVOCATION_ID" \
+  "$SANDBOX_NAME" \
+  "$OBSERVATION_SUPERVISOR_ID" \
+  "$SUPERVISOR_NAME" \
+  "$START_EVENT_SINCE" \
+  "$ARTIFACT_DIR/observation-gateway-id.txt" \
+  "$ARTIFACT_DIR/observation-start-status.txt" &
 OBSERVATION_WATCHER_PID=$!
-ps -o pid=,args= -p "$OBSERVATION_WATCHER_PID" >"$ARTIFACT_DIR/observation-start-watcher-process.txt"
+kill -0 "$OBSERVATION_WATCHER_PID" >/dev/null 2>&1 || fail 'Docker start-event watcher could not be armed.'
+ps -o pid=,args= -p "$OBSERVATION_WATCHER_PID" >"$ARTIFACT_DIR/observation-start-watcher-process.txt" || fail 'Docker start-event watcher could not be inspected.'
+printf 'START_EVENT_WATCHER_ARMED=PASS\n'
 start_execute_client "$ARTIFACT_DIR/request.json" "$ARTIFACT_DIR/response.json" 2>/dev/null &
 EXECUTE_PID=$!
 if ! wait "$OBSERVATION_WATCHER_PID"; then
   OBSERVATION_WATCHER_PID=''
+  if [[ "$(<"$ARTIFACT_DIR/observation-start-status.txt")" == 'sandbox_created' ]]; then
+    fail 'Sandbox was created before the event-driven startup barrier.'
+  fi
   fail 'Exact acceptance gateway could not be held at startup.'
 fi
 OBSERVATION_WATCHER_PID=''
 OBSERVATION_GATEWAY_ID="$(<"$ARTIFACT_DIR/observation-gateway-id.txt")"
 acceptance_invocation_container_id_is_exact "$OBSERVATION_GATEWAY_ID" "$GATEWAY_NAME" "$INVOCATION_ID" || fail 'Startup-held gateway identity changed.'
+acceptance_supervisor_id_is_exact "$OBSERVATION_SUPERVISOR_ID" "$SUPERVISOR_NAME" || fail 'Startup-frozen supervisor identity changed.'
+[[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$OBSERVATION_SUPERVISOR_ID" 2>/dev/null)" == 'true|true' ]] || fail 'Startup supervisor freeze was not proven.'
+OBSERVATION_SUPERVISOR_PAUSED=1
+printf 'OBSERVATION_SUPERVISOR_PAUSED\n' >"$ARTIFACT_DIR/observation-supervisor-paused.txt"
 [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$OBSERVATION_GATEWAY_ID" 2>/dev/null)" == 'true|true' ]] || fail 'Startup gateway hold was not proven.'
 OBSERVATION_GATEWAY_PAUSED=1
 printf 'STARTUP_GATEWAY_HELD\n' >"$ARTIFACT_DIR/observation-start-held.txt"
+acceptance_container_is_absent "$SANDBOX_NAME" || fail 'Sandbox was created before the event-driven startup barrier.'
 start_gateway_log_watcher "$OBSERVATION_GATEWAY_ID" "$ARTIFACT_DIR/live-gateway-logs.txt" || fail 'Bounded gateway log watcher could not attach.'
 docker logs "$OBSERVATION_GATEWAY_ID" >"$ARTIFACT_DIR/pre-transition-gateway-logs.txt" 2>&1
-! grep -Fq '"event":"piece_gateway_ready"' "$ARTIFACT_DIR/pre-transition-gateway-logs.txt" || fail 'Gateway became ready before the supervisor freeze was established.'
-pause_acceptance_supervisor_exact "$OBSERVATION_SUPERVISOR_ID" "$SUPERVISOR_NAME" || fail 'Exact disposable acceptance supervisor could not be frozen.'
-OBSERVATION_SUPERVISOR_PAUSED=1
-printf 'OBSERVATION_SUPERVISOR_PAUSED\n' >"$ARTIFACT_DIR/observation-supervisor-paused.txt"
-hold_gateway_after_ready "$OBSERVATION_GATEWAY_ID" "$GATEWAY_NAME" "$INVOCATION_ID" "$OBSERVATION_SUPERVISOR_ID" "$SUPERVISOR_NAME" "$REQUEST_ID" "$ARTIFACT_DIR/live-gateway-logs.txt" || fail 'Gateway readiness observation barrier was not established.'
+hold_gateway_after_ready "$OBSERVATION_GATEWAY_ID" "$GATEWAY_NAME" "$INVOCATION_ID" "$OBSERVATION_SUPERVISOR_ID" "$SUPERVISOR_NAME" "$REQUEST_ID" "$ARTIFACT_DIR/live-gateway-logs.txt" "$ARTIFACT_DIR/pre-transition-gateway-logs.txt" "$SANDBOX_NAME" || fail 'Gateway readiness observation barrier was not established.'
 [[ "$OBSERVATION_HELD" == '1' && "$OBSERVATION_GATEWAY_PAUSED" == '1' && "$OBSERVATION_SUPERVISOR_PAUSED" == '1' && "$OBSERVATION_RELEASED" == '0' ]] || fail 'Observation held state is invalid.'
+acceptance_container_is_absent "$SANDBOX_NAME" || fail 'Sandbox was created before the event-driven startup barrier.'
+printf 'STARTUP_OBSERVATION_BARRIER=PASS\n'
 unpause_acceptance_supervisor_exact "$OBSERVATION_SUPERVISOR_ID" "$SUPERVISOR_NAME" || fail 'Exact disposable acceptance supervisor could not resume.'
 OBSERVATION_SUPERVISOR_PAUSED=0
 printf 'OBSERVATION_SUPERVISOR_RESUMED\n' >"$ARTIFACT_DIR/observation-supervisor-resumed.txt"

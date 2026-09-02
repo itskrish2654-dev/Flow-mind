@@ -921,12 +921,31 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
       assert.doesNotMatch(`${pause}\n${unpause}\n${pauseSupervisor}\n${unpauseSupervisor}`, new RegExp(protectedName));
     }
 
-    const startWait = harness.match(/wait_for_gateway_start_and_pause\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
-    assert.match(startWait, /deadline=\$\(\(SECONDS \+ 5\)\)/);
-    assert.match(startWait, /acceptance_invocation_container_id_exact/);
-    assert.match(startWait, /pause_acceptance_gateway_exact "\$id" "\$name" "\$invocation"/);
-    assert.match(startWait, /printf '%s\\n' "\$id" >"\$id_output"/);
-    assert.doesNotMatch(startWait, /sleep [1-9]/);
+    const startBarrier = harness.match(/wait_for_gateway_start_event_and_hold\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    assert.doesNotMatch(harness, /wait_for_gateway_start_and_pause/);
+    assert.match(startBarrier, /timeout --signal=TERM --kill-after=2s 8s docker events/);
+    assert.match(startBarrier, /--since "\$since"/);
+    assert.match(startBarrier, /--filter type=container/);
+    assert.match(startBarrier, /--filter event=start/);
+    assert.match(startBarrier, /--filter "container=\$name"/);
+    assert.match(startBarrier, /mkfifo "\$event_pipe"/);
+    assert.match(startBarrier, /IFS= read -r -t 8 event <"\$event_pipe"/);
+    assert.match(startBarrier, /kill "\$event_pid"/);
+    assert.match(startBarrier, /wait "\$event_pid"/);
+    assert.match(startBarrier, /crazyloops\.runtime/);
+    assert.match(startBarrier, /crazyloops\.resource/);
+    assert.match(startBarrier, /crazyloops\.invocation/);
+    assert.match(startBarrier, /acceptance_invocation_container_id_exact/);
+    assert.match(startBarrier, /\[\[ "\$id" == "\$event_id" \]\]/);
+    const supervisorFreeze = startBarrier.indexOf("pause_acceptance_supervisor_exact");
+    const gatewayPause = startBarrier.indexOf("pause_acceptance_gateway_exact");
+    const sandboxAbsent = startBarrier.indexOf("acceptance_container_is_absent");
+    assert.ok(supervisorFreeze >= 0 && supervisorFreeze < gatewayPause && gatewayPause < sandboxAbsent);
+    assert.match(startBarrier, /printf '%s\\n' "\$id" >"\$id_output"/);
+    assert.match(startBarrier, /START_EVENT_OBSERVED=PASS/);
+    assert.match(startBarrier, /SUPERVISOR_STARTUP_FREEZE=PASS/);
+    assert.match(startBarrier, /GATEWAY_STARTUP_HOLD=PASS/);
+    assert.doesNotMatch(startBarrier, /while \(\( SECONDS|sleep 0\.01/);
 
     const watcher = harness.match(/start_gateway_log_watcher\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
     assert.match(watcher, /timeout --signal=TERM --kill-after=2s 25s docker logs --follow "\$id"/);
@@ -959,13 +978,20 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
 
     const hold = harness.match(/hold_gateway_after_ready\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
     const supervisorProof = hold.indexOf("acceptance_supervisor_id_is_exact");
+    const alreadyReady = hold.indexOf("READY_PATH=ALREADY_READY");
     const gatewayUnpause = hold.indexOf("unpause_acceptance_gateway_exact");
     const readyProof = hold.indexOf("gateway_ready_event_is_exact");
-    const gatewayRepause = hold.indexOf('\n  pause_acceptance_gateway_exact');
+    const gatewayRepause = hold.indexOf('\n    pause_acceptance_gateway_exact');
+    const transitionReady = hold.indexOf("READY_PATH=TRANSITION_READY");
     const heldMarker = hold.indexOf("OBSERVATION_HELD");
-    assert.ok(supervisorProof >= 0 && supervisorProof < gatewayUnpause);
-    assert.ok(gatewayUnpause < readyProof && readyProof < gatewayRepause && gatewayRepause < heldMarker);
-    assert.match(hold, /! grep -Fq '"event":"piece_gateway_ready"'/);
+    assert.ok(supervisorProof >= 0 && supervisorProof < alreadyReady);
+    assert.ok(alreadyReady < gatewayUnpause);
+    assert.ok(gatewayUnpause < gatewayRepause && gatewayRepause < transitionReady && transitionReady < heldMarker);
+    assert.ok(readyProof >= 0);
+    assert.match(hold, /if grep -Fq '"event":"piece_gateway_ready"' "\$initial_log_file"/);
+    assert.match(hold, /gateway_ready_event_is_exact "\$initial_log_file" "\$request_id"/);
+    assert.match(hold, /gateway_ready_event_is_exact "\$log_file" "\$request_id"/);
+    assert.match(hold, /acceptance_container_is_absent "\$sandbox_name"/);
     assert.match(hold, /started_ms="\$\(date \+%s%3N\)"/);
     assert.match(hold, /deadline_ms=\$\(\(started_ms \+ READY_TRANSITION_TIMEOUT_MS\)\)/);
     assert.match(hold, /acceptance_invocation_container_id_is_exact/);
@@ -973,24 +999,29 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.doesNotMatch(hold, /SECONDS \+ 3|sleep [1-9]/);
 
     const main = harness.slice(harness.indexOf("HOST_INVOCATION_STARTED=1"), harness.indexOf("assert_zero_invocation_resources 'Invocation resources survived request completion.'"));
-    const startupPause = main.indexOf("wait_for_gateway_start_and_pause");
+    const eventCursor = main.indexOf("START_EVENT_SINCE=");
+    const startupPause = main.indexOf("wait_for_gateway_start_event_and_hold");
+    const executeStart = main.indexOf("start_execute_client");
+    const startupWait = main.indexOf('wait "$OBSERVATION_WATCHER_PID"');
     const watcher = main.indexOf("start_gateway_log_watcher");
     const preReady = main.indexOf("pre-transition-gateway-logs.txt");
-    const supervisorPause = main.indexOf("pause_acceptance_supervisor_exact");
     const held = main.indexOf("hold_gateway_after_ready");
+    const heldState = main.indexOf("Observation held state is invalid");
     const supervisorResume = main.indexOf("unpause_acceptance_supervisor_exact");
     const sandboxWait = main.indexOf("wait_for_sandbox_running_exact");
     const capture = main.indexOf('docker inspect "$SANDBOX_NAME" "$GATEWAY_NAME"');
     const release = main.indexOf('unpause_acceptance_gateway_exact "$OBSERVATION_GATEWAY_ID"');
     const completion = main.indexOf('wait "$EXECUTE_PID"');
     const providerResult = main.indexOf("expect_error \"$ARTIFACT_DIR/response.json\" 'PIECE_AUTH_FAILED'");
-    assert.ok(startupPause >= 0 && startupPause < watcher && watcher < preReady);
-    assert.ok(preReady < supervisorPause && supervisorPause < held && held < supervisorResume);
+    assert.ok(eventCursor >= 0 && eventCursor < startupPause && startupPause < executeStart && executeStart < startupWait);
+    assert.ok(startupWait < watcher && watcher < preReady && preReady < held);
+    assert.ok(held < heldState && heldState < supervisorResume);
     assert.ok(supervisorResume < sandboxWait && sandboxWait < capture);
     assert.ok(capture < release && release < completion && completion < providerResult);
     assert.doesNotMatch(main, /for _ in \$\(seq 1 500\)[\s\S]*TOPOLOGY_CAPTURED/);
     assert.match(main, /OBSERVATION_HELD.*OBSERVATION_GATEWAY_PAUSED.*OBSERVATION_SUPERVISOR_PAUSED.*OBSERVATION_RELEASED/);
-    assert.match(main, /Gateway became ready before the supervisor freeze was established/);
+    assert.doesNotMatch(main, /Gateway became ready before the supervisor freeze was established/);
+    assert.match(main, /Sandbox was created before the event-driven startup barrier/);
     assert.match(main, /OBSERVATION_SUPERVISOR_PAUSED=1/);
     assert.match(main, /OBSERVATION_SUPERVISOR_PAUSED=0/);
     assert.match(main, /wait_for_execute_client_running/);
@@ -998,7 +1029,10 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.doesNotMatch(main, /docker exec "\$GATEWAY_NAME"[^\n]*\/etc\/hosts/);
     assert.match(main, /'true\|false'.*Exact acceptance gateway release was not proven/);
     assert.match(main, /OBSERVATION_RELEASED=1/);
-    assert.ok(main.indexOf("wait_for_gateway_start_and_pause") < main.indexOf("start_execute_client"));
+    assert.ok(main.indexOf("wait_for_gateway_start_event_and_hold") < main.indexOf("start_execute_client"));
+    assert.match(main, /observation-start-since\.txt/);
+    assert.match(main, /kill -0 "\$OBSERVATION_WATCHER_PID"[\s\S]*START_EVENT_WATCHER_ARMED=PASS[\s\S]*start_execute_client/);
+    assert.match(main, /STARTUP_OBSERVATION_BARRIER=PASS/);
     assert.match(main, /observation-start-watcher-process\.txt/);
     assert.match(main, /STARTUP_GATEWAY_HELD/);
 
@@ -1023,13 +1057,17 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.match(docs, /be6414cb34570082a8f06200ce6e70b9d88bb678/);
     assert.match(docs, /harness observation race/);
     assert.match(docs, /provider result from this attempt was not accepted/i);
-    assert.match(docs, /readiness-to-repause scheduler race/);
+    assert.match(docs, /readiness-to-repause scheduler\s+race/);
     assert.match(docs, /SUPERVISOR FROZEN -> GATEWAY UNPAUSED -> REAL READY/);
-    assert.match(docs, /GATEWAY PAUSED -> SUPERVISOR RESUMED -> SANDBOX STARTS AGAINST PAUSED/);
+    assert.match(docs, /GATEWAY\s+PAUSED -> EXACT READY PROVEN -> SANDBOX ABSENT -> SUPERVISOR RESUMED/);
     assert.match(docs, /fresh remote fetch and verify/);
     assert.match(docs, /does not perform a second GitHub fetch/);
     assert.match(docs, /missing or mismatched `origin\/main`\s+tracking ref fails closed/);
     assert.match(docs, /START GATEWAY -> REAL GATEWAY READY -> INSPECT VALID INTERNAL ADDRESS/);
+    assert.match(docs, /bounded, replay-safe Docker start-event/);
+    assert.match(docs, /gateway identity, invocation labels, and immutable container ID/);
+    assert.match(docs, /sandbox must be absent before readiness/);
+    assert.match(docs, /If the exact ready event was already emitted/);
   });
 
   test("post-release acceptance checks fail with bounded stage diagnostics", () => {
@@ -1062,7 +1100,7 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
 
     const changedRuntimeFiles = execFileSync(
       "git",
-      ["diff", "--name-only", "840fdc0abbbdfa2cd973355e2cc82f4aeec06546", "--", "services/piece-runtime/src"],
+      ["diff", "--name-only", "6b6153d478f0c205574ca79e13dcaa312f20952b", "--", "services/piece-runtime/src"],
       { cwd: ROOT, encoding: "utf8" },
     ).trim();
     assert.equal(changedRuntimeFiles, "");

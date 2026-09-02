@@ -290,22 +290,39 @@ SANDBOX -> EXECUTE SANDBOX**. No subnet or address is predicted or hardcoded.
 Gateway start, readiness, and address validation must all succeed before the
 sandbox is created; failures retain exact owned-resource cleanup.
 
-Static review found that the first acceptance-only pause barrier still had a
-readiness-to-repause scheduler race: after gateway readiness, the supervisor
-could observe the same event and start the sandbox before the harness re-paused
-the gateway. The final host harness closes that race by freezing only the exact,
-label-verified disposable acceptance supervisor while the exact invocation
-gateway crosses its real readiness transition. Both pause operations use the
-immutable inspected container IDs after exact name and ownership-label checks.
+### Step 5B.1 owner-host attempt 4
 
-The final invariant is: **SUPERVISOR FROZEN -> GATEWAY UNPAUSED -> REAL READY
-EVENT -> GATEWAY PAUSED -> SUPERVISOR RESUMED -> SANDBOX STARTS AGAINST PAUSED
-GATEWAY -> TOPOLOGY CAPTURE -> GATEWAY RELEASE -> REAL PROVIDER RESULT**. The
-ready transition is bounded to 750 ms and fails closed. The gateway log watcher
-is bounded and credential-blind, and both the gateway and supervisor must be
-proved running and paused before the supervisor resumes. These pause boundaries
-exist only in the disposable acceptance harness; they are not part of the
-runtime or product.
+The lifecycle correction then reached gateway readiness, sandbox creation and
+execution, topology/process capture, gateway release, provider completion, and
+exact owned-resource cleanup on the real owner host. Protected Runner,
+Activepieces, and Redis containers remained running with restart count zero.
+This proves the corrected runtime lifecycle. The remaining failure was an
+acceptance-harness startup observation race: Docker events showed the gateway
+start and sandbox create occurred roughly 200 ms apart, while the polling
+observer did not pause the gateway until after sandbox creation had begun. The
+sandbox did not execute before the gateway pause, so this did not establish a
+runtime-boundary escape.
+
+The acceptance harness now uses a bounded, replay-safe Docker start-event
+barrier armed before the execute client. It validates the exact start event,
+gateway identity, invocation labels, and immutable container ID, then freezes
+the exact disposable supervisor before pausing the gateway. Both containers
+must be running and paused and the sandbox must be absent before readiness
+evidence is accepted. A pre-created sandbox fails closed.
+
+This event barrier is separate from the earlier readiness-to-repause scheduler
+race correction, which remains intact for a gateway that has not emitted its
+ready event when the startup hold is established.
+
+If the exact ready event was already emitted, it is validated in place while
+both containers remain paused. Otherwise the 750 ms transition remains:
+**SUPERVISOR FROZEN -> GATEWAY UNPAUSED -> REAL READY EVENT -> GATEWAY PAUSED**.
+Both paths converge on: **GATEWAY START EVENT -> SUPERVISOR FROZEN -> GATEWAY
+PAUSED -> EXACT READY PROVEN -> SANDBOX ABSENT -> SUPERVISOR RESUMED -> SANDBOX
+STARTS AGAINST PAUSED GATEWAY -> TOPOLOGY CAPTURE -> GATEWAY RELEASE -> REAL
+PROVIDER RESULT**. The gateway log watcher remains bounded and credential-blind.
+These pause boundaries exist only in the disposable acceptance harness; they
+are not part of the runtime or product.
 
 Step 5B.2 must still design and review the Connector Runner-to-UDS integration,
 production service ownership/group setup, deployment/rollback, stronger image
