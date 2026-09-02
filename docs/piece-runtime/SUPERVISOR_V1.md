@@ -304,11 +304,13 @@ sandbox did not execute before the gateway pause, so this did not establish a
 runtime-boundary escape.
 
 The acceptance harness now uses a bounded, replay-safe Docker start-event
-barrier armed before the execute client. It validates the exact start event,
-gateway identity, invocation labels, and immutable container ID, then freezes
-the exact disposable supervisor before pausing the gateway. Both containers
-must be running and paused and the sandbox must be absent before readiness
-evidence is accepted. A pre-created sandbox fails closed.
+barrier armed before the execute client. It validates the bounded start-event
+fields in memory, then immediately pauses the already-prevalidated immutable
+supervisor Docker ID. Only after proving the supervisor identity and paused
+state does it inspect the gateway, match its immutable ID to the event actor,
+and pause it. Both containers must be running and paused and the sandbox must
+be absent before readiness evidence is accepted. A pre-created sandbox fails
+closed.
 
 This event barrier is separate from the earlier readiness-to-repause scheduler
 race correction, which remains intact for a gateway that has not emitted its

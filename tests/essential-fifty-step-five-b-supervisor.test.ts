@@ -935,12 +935,27 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.match(startBarrier, /crazyloops\.runtime/);
     assert.match(startBarrier, /crazyloops\.resource/);
     assert.match(startBarrier, /crazyloops\.invocation/);
-    assert.match(startBarrier, /acceptance_invocation_container_id_exact/);
-    assert.match(startBarrier, /\[\[ "\$id" == "\$event_id" \]\]/);
-    const supervisorFreeze = startBarrier.indexOf("pause_acceptance_supervisor_exact");
+    const eventValidation = startBarrier.indexOf('[[ "$action" == \'start\'');
+    const supervisorFreeze = startBarrier.indexOf('docker pause "$supervisor_id"');
+    const supervisorIdentityProof = startBarrier.indexOf("acceptance_supervisor_id_is_exact", supervisorFreeze);
+    const supervisorStateProof = startBarrier.indexOf(".State.Running", supervisorIdentityProof);
+    const gatewayIdentityAfterFreeze = startBarrier.indexOf("acceptance_invocation_container_id_exact", supervisorStateProof);
+    const eventIdMatch = startBarrier.indexOf('[[ "$id" == "$event_id" ]]', gatewayIdentityAfterFreeze);
     const gatewayPause = startBarrier.indexOf("pause_acceptance_gateway_exact");
     const sandboxAbsent = startBarrier.indexOf("acceptance_container_is_absent");
-    assert.ok(supervisorFreeze >= 0 && supervisorFreeze < gatewayPause && gatewayPause < sandboxAbsent);
+    assert.ok(eventValidation >= 0 && eventValidation < supervisorFreeze);
+    assert.ok(supervisorFreeze < supervisorIdentityProof && supervisorIdentityProof < supervisorStateProof);
+    assert.ok(supervisorStateProof < gatewayIdentityAfterFreeze && gatewayIdentityAfterFreeze < eventIdMatch);
+    assert.ok(eventIdMatch < gatewayPause && gatewayPause < sandboxAbsent);
+    const fastPauseWindow = startBarrier.slice(eventValidation, supervisorFreeze);
+    assert.doesNotMatch(fastPauseWindow, /docker (?:inspect|ps|network)|sleep|acceptance_invocation_container_id_exact|acceptance_supervisor_id_is_exact/);
+    assert.match(startBarrier, /\[\[ "\$action" == 'start' && -n "\$event_id"/);
+    assert.match(startBarrier, /docker pause "\$supervisor_id"/);
+    assert.doesNotMatch(startBarrier, /docker pause "\$supervisor_name"/);
+    assert.match(startBarrier, /acceptance_supervisor_id_is_exact "\$supervisor_id" "\$supervisor_name"/);
+    assert.match(startBarrier, /\.State\.Running.*\.State\.Paused.*"\$supervisor_id"[\s\S]*'true\|true'/);
+    assert.match(startBarrier, /acceptance_invocation_container_id_exact/);
+    assert.match(startBarrier, /\[\[ "\$id" == "\$event_id" \]\]/);
     assert.match(startBarrier, /printf '%s\\n' "\$id" >"\$id_output"/);
     assert.match(startBarrier, /START_EVENT_OBSERVED=PASS/);
     assert.match(startBarrier, /SUPERVISOR_STARTUP_FREEZE=PASS/);
@@ -1065,8 +1080,8 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.match(docs, /missing or mismatched `origin\/main`\s+tracking ref fails closed/);
     assert.match(docs, /START GATEWAY -> REAL GATEWAY READY -> INSPECT VALID INTERNAL ADDRESS/);
     assert.match(docs, /bounded, replay-safe Docker start-event/);
-    assert.match(docs, /gateway identity, invocation labels, and immutable container ID/);
-    assert.match(docs, /sandbox must be absent before readiness/);
+    assert.match(docs, /match its immutable ID to the event actor/);
+    assert.match(docs, /sandbox must\s+be absent before readiness/);
     assert.match(docs, /If the exact ready event was already emitted/);
   });
 
@@ -1100,7 +1115,7 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
 
     const changedRuntimeFiles = execFileSync(
       "git",
-      ["diff", "--name-only", "6b6153d478f0c205574ca79e13dcaa312f20952b", "--", "services/piece-runtime/src"],
+      ["diff", "--name-only", "0b1fb0f2e6d165df25684b69cf0393ae46d7fa0c", "--", "services/piece-runtime/src"],
       { cwd: ROOT, encoding: "utf8" },
     ).trim();
     assert.equal(changedRuntimeFiles, "");

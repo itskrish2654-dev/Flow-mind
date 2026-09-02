@@ -534,23 +534,30 @@ wait_for_gateway_start_event_and_hold() {
     printf 'start_event_missing\n' >"$status_output"
     return 1
   fi
-  kill "$event_pid" >/dev/null 2>&1 || true
-  wait "$event_pid" >/dev/null 2>&1 || true
-  rm -f -- "$event_pipe"
   IFS='|' read -r action event_id event_name event_owner event_resource event_invocation <<<"$event"
-  [[ "$action" == 'start' && "$event_name" == "$name" && "$event_owner" == "$OWNER_LABEL_VALUE" && "$event_resource" == 'invocation' && "$event_invocation" == "$invocation" ]] || {
+  [[ "$action" == 'start' && -n "$event_id" && "$event_name" == "$name" && "$event_owner" == "$OWNER_LABEL_VALUE" && "$event_resource" == 'invocation' && "$event_invocation" == "$invocation" ]] || {
+    kill "$event_pid" >/dev/null 2>&1 || true
+    wait "$event_pid" >/dev/null 2>&1 || true
+    rm -f -- "$event_pipe"
     printf 'start_event_invalid\n' >"$status_output"
     return 1
   }
-  id="$(acceptance_invocation_container_id_exact "$name" "$invocation")" || { printf 'gateway_identity_invalid\n' >"$status_output"; return 1; }
-  [[ "$id" == "$event_id" ]] || { printf 'gateway_identity_invalid\n' >"$status_output"; return 1; }
+
+  docker pause "$supervisor_id" >/dev/null || { kill "$event_pid" >/dev/null 2>&1 || true; wait "$event_pid" >/dev/null 2>&1 || true; rm -f -- "$event_pipe"; printf 'supervisor_freeze_failed\n' >"$status_output"; return 1; }
+  acceptance_supervisor_id_is_exact "$supervisor_id" "$supervisor_name" || { kill "$event_pid" >/dev/null 2>&1 || true; wait "$event_pid" >/dev/null 2>&1 || true; rm -f -- "$event_pipe"; printf 'supervisor_identity_invalid\n' >"$status_output"; return 1; }
+  [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$supervisor_id" 2>/dev/null)" == 'true|true' ]] || { kill "$event_pid" >/dev/null 2>&1 || true; wait "$event_pid" >/dev/null 2>&1 || true; rm -f -- "$event_pipe"; printf 'supervisor_freeze_unproven\n' >"$status_output"; return 1; }
+  printf 'SUPERVISOR_STARTUP_FREEZE=PASS\n'
+
+  id="$(acceptance_invocation_container_id_exact "$name" "$invocation")" || { kill "$event_pid" >/dev/null 2>&1 || true; wait "$event_pid" >/dev/null 2>&1 || true; rm -f -- "$event_pipe"; printf 'gateway_identity_invalid\n' >"$status_output"; return 1; }
+  [[ "$id" == "$event_id" ]] || { kill "$event_pid" >/dev/null 2>&1 || true; wait "$event_pid" >/dev/null 2>&1 || true; rm -f -- "$event_pipe"; printf 'gateway_identity_invalid\n' >"$status_output"; return 1; }
   printf '%s\n' "$id" >"$id_output"
   printf 'START_EVENT_OBSERVED=PASS\n'
 
-  pause_acceptance_supervisor_exact "$supervisor_id" "$supervisor_name" || { printf 'supervisor_freeze_failed\n' >"$status_output"; return 1; }
-  printf 'SUPERVISOR_STARTUP_FREEZE=PASS\n'
-  pause_acceptance_gateway_exact "$id" "$name" "$invocation" || { printf 'gateway_hold_failed\n' >"$status_output"; return 1; }
+  pause_acceptance_gateway_exact "$id" "$name" "$invocation" || { kill "$event_pid" >/dev/null 2>&1 || true; wait "$event_pid" >/dev/null 2>&1 || true; rm -f -- "$event_pipe"; printf 'gateway_hold_failed\n' >"$status_output"; return 1; }
   printf 'GATEWAY_STARTUP_HOLD=PASS\n'
+  kill "$event_pid" >/dev/null 2>&1 || true
+  wait "$event_pid" >/dev/null 2>&1 || true
+  rm -f -- "$event_pipe"
   acceptance_container_is_absent "$sandbox_name" || { printf 'sandbox_created\n' >"$status_output"; return 1; }
   printf 'startup_barrier_held\n' >"$status_output"
 }
