@@ -264,13 +264,22 @@ classified as a harness observation race; it did not establish a runtime
 security failure. The provider result from this attempt was not accepted
 because the remaining evidence checks had not completed.
 
-The corrected host harness establishes an acceptance-only observation barrier.
-It arms a bounded start observer before submitting the UDS request, pauses only
-the exact, label-verified invocation gateway, attaches a bounded
-credential-blind log watcher, requires the real structured
-`piece_gateway_ready` event, and proves the gateway is running and paused before
-capturing topology. The gateway is unpaused before the real provider request is
-allowed to complete. This pause boundary is not part of the runtime or product.
+Static review found that the first acceptance-only pause barrier still had a
+readiness-to-repause scheduler race: after gateway readiness, the supervisor
+could observe the same event and start the sandbox before the harness re-paused
+the gateway. The final host harness closes that race by freezing only the exact,
+label-verified disposable acceptance supervisor while the exact invocation
+gateway crosses its real readiness transition. Both pause operations use the
+immutable inspected container IDs after exact name and ownership-label checks.
+
+The final invariant is: **SUPERVISOR FROZEN -> GATEWAY UNPAUSED -> REAL READY
+EVENT -> GATEWAY PAUSED -> SUPERVISOR RESUMED -> SANDBOX STARTS AGAINST PAUSED
+GATEWAY -> TOPOLOGY CAPTURE -> GATEWAY RELEASE -> REAL PROVIDER RESULT**. The
+ready transition is bounded to 750 ms and fails closed. The gateway log watcher
+is bounded and credential-blind, and both the gateway and supervisor must be
+proved running and paused before the supervisor resumes. These pause boundaries
+exist only in the disposable acceptance harness; they are not part of the
+runtime or product.
 
 Step 5B.2 must still design and review the Connector Runner-to-UDS integration,
 production service ownership/group setup, deployment/rollback, stronger image

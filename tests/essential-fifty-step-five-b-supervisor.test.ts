@@ -800,74 +800,129 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.match(harness, /SOCKET_MODE=660/);
   });
 
-  test("owner harness uses an exact-label deterministic gateway observation barrier", () => {
+  test("owner harness uses immutable exact identities and fail-safe observation cleanup", () => {
     const harness = readFileSync(resolve(ROOT, "scripts/e50-step5b1-supervisor-host-acceptance.sh"), "utf8");
-    const docs = readFileSync(resolve(ROOT, "docs/piece-runtime/SUPERVISOR_V1.md"), "utf8");
+    assert.match(harness, /OBSERVATION_GATEWAY_ID=''/);
     assert.match(harness, /OBSERVATION_GATEWAY_PAUSED=0/);
+    assert.match(harness, /OBSERVATION_SUPERVISOR_ID=''/);
+    assert.match(harness, /OBSERVATION_SUPERVISOR_PAUSED=0/);
     assert.match(harness, /OBSERVATION_WATCHER_PID=''/);
     assert.match(harness, /OBSERVATION_HELD=0/);
     assert.match(harness, /OBSERVATION_RELEASED=0/);
 
-    const identity = harness.match(/acceptance_invocation_container_has_exact_identity\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
-    assert.match(identity, /crazyloops\.runtime/);
-    assert.match(identity, /crazyloops\.resource/);
-    assert.match(identity, /crazyloops\.invocation/);
-    assert.match(identity, /OWNER_LABEL_VALUE\|invocation\|\$invocation/);
+    const gatewayIdentity = harness.match(/acceptance_invocation_container_id_is_exact\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    assert.match(gatewayIdentity, /\.Name/);
+    assert.match(gatewayIdentity, /crazyloops\.runtime/);
+    assert.match(gatewayIdentity, /crazyloops\.resource/);
+    assert.match(gatewayIdentity, /crazyloops\.invocation/);
+    assert.match(gatewayIdentity, /\/\$name\|\$OWNER_LABEL_VALUE\|invocation\|\$invocation/);
+    const gatewayId = harness.match(/acceptance_invocation_container_id_exact\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    assert.match(gatewayId, /docker inspect --format '\{\{\.Id\}\}' "\$name"/);
+    assert.match(gatewayId, /acceptance_invocation_container_id_is_exact "\$id" "\$name" "\$invocation"/);
+
+    const supervisorIdentity = harness.match(/acceptance_supervisor_id_is_exact\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    assert.match(supervisorIdentity, /\.Name/);
+    assert.match(supervisorIdentity, /crazyloops\.runtime/);
+    assert.match(supervisorIdentity, /crazyloops\.resource/);
+    assert.match(supervisorIdentity, /\/\$name\|\$OWNER_LABEL_VALUE\|supervisor/);
 
     const pause = harness.match(/pause_acceptance_gateway_exact\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
     const unpause = harness.match(/unpause_acceptance_gateway_exact\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
-    assert.match(pause, /acceptance_invocation_container_has_exact_identity/);
+    const pauseSupervisor = harness.match(/pause_acceptance_supervisor_exact\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    const unpauseSupervisor = harness.match(/unpause_acceptance_supervisor_exact\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    assert.match(pause, /acceptance_invocation_container_id_is_exact/);
     assert.match(pause, /'true\|false'/);
-    assert.match(pause, /docker pause "\$name"/);
+    assert.match(pause, /docker pause "\$id"/);
     assert.match(pause, /'true\|true'/);
-    assert.match(unpause, /acceptance_invocation_container_has_exact_identity/);
-    assert.match(unpause, /docker unpause "\$name"/);
-    assert.match(unpause, /== 'false'/);
+    assert.match(unpause, /acceptance_invocation_container_id_is_exact/);
+    assert.match(unpause, /docker unpause "\$id"/);
+    assert.match(unpause, /'true\|false'/);
+    assert.match(pauseSupervisor, /acceptance_supervisor_id_is_exact/);
+    assert.match(pauseSupervisor, /docker pause "\$id"/);
+    assert.match(pauseSupervisor, /'true\|true'/);
+    assert.match(unpauseSupervisor, /acceptance_supervisor_id_is_exact/);
+    assert.match(unpauseSupervisor, /docker unpause "\$id"/);
+    assert.match(unpauseSupervisor, /'true\|false'/);
     for (const protectedName of ["crazyloops-connector-runner", "activepieces-app", "activepieces-worker-1", "redis"]) {
-      assert.doesNotMatch(`${pause}\n${unpause}`, new RegExp(protectedName));
+      assert.doesNotMatch(`${pause}\n${unpause}\n${pauseSupervisor}\n${unpauseSupervisor}`, new RegExp(protectedName));
     }
 
     const startWait = harness.match(/wait_for_gateway_start_and_pause\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
     assert.match(startWait, /deadline=\$\(\(SECONDS \+ 5\)\)/);
-    assert.match(startWait, /docker inspect "\$name"/);
-    assert.match(startWait, /pause_acceptance_gateway_exact/);
+    assert.match(startWait, /acceptance_invocation_container_id_exact/);
+    assert.match(startWait, /pause_acceptance_gateway_exact "\$id" "\$name" "\$invocation"/);
+    assert.match(startWait, /printf '%s\\n' "\$id" >"\$id_output"/);
     assert.doesNotMatch(startWait, /sleep [1-9]/);
 
     const watcher = harness.match(/start_gateway_log_watcher\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
-    assert.match(watcher, /timeout --signal=TERM --kill-after=2s 25s docker logs --follow/);
+    assert.match(watcher, /timeout --signal=TERM --kill-after=2s 25s docker logs --follow "\$id"/);
     assert.match(watcher, /OBSERVATION_WATCHER_PID=\$!/);
     assert.match(watcher, /observation-watcher-process\.txt/);
     assert.doesNotMatch(watcher, /CANARY|CANARY_B64|credentialBase64|--env|--label/);
 
-    const hold = harness.match(/hold_gateway_after_ready\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
-    assert.match(hold, /gateway_ready_event_is_exact/);
-    assert.match(hold, /piece_gateway_ready/);
-    assert.match(hold, /unpause_acceptance_gateway_exact/);
-    assert.match(hold, /pause_acceptance_gateway_exact/);
-    assert.match(hold, /'true\|true'/);
-    assert.match(hold, /OBSERVATION_HELD/);
-
     const cleanup = harness.match(/\ncleanup\(\) \{\n([\s\S]*?)\n\}/)?.[1] ?? "";
     const watcherCleanup = cleanup.indexOf("stop_observation_watcher");
     const gatewayCleanup = cleanup.indexOf("release_observation_gateway_for_cleanup");
+    const supervisorRelease = cleanup.indexOf("release_observation_supervisor_for_cleanup");
+    const executeCleanup = cleanup.indexOf("stop_execute_process");
     const invocationCleanup = cleanup.indexOf('remove_invocation_topology_exact "$HOST_INVOCATION_ID"');
     const supervisorCleanup = cleanup.indexOf('remove_acceptance_supervisor_exact "$SUPERVISOR_NAME"');
     assert.ok(watcherCleanup >= 0 && watcherCleanup < gatewayCleanup);
-    assert.ok(gatewayCleanup < invocationCleanup && invocationCleanup < supervisorCleanup);
+    assert.ok(gatewayCleanup < supervisorRelease && supervisorRelease < executeCleanup);
+    assert.ok(executeCleanup < invocationCleanup && invocationCleanup < supervisorCleanup);
     assert.match(harness, /stop_observation_watcher\(\)[\s\S]*kill "\$OBSERVATION_WATCHER_PID"[\s\S]*wait "\$OBSERVATION_WATCHER_PID"/);
-    assert.match(harness, /release_observation_gateway_for_cleanup\(\)[\s\S]*acceptance_invocation_container_has_exact_identity[\s\S]*unpause_acceptance_gateway_exact/);
+    assert.match(harness, /release_observation_gateway_for_cleanup\(\)[\s\S]*acceptance_invocation_container_id_is_exact[\s\S]*unpause_acceptance_gateway_exact/);
+    assert.match(harness, /release_observation_supervisor_for_cleanup\(\)[\s\S]*acceptance_supervisor_id_is_exact[\s\S]*unpause_acceptance_supervisor_exact/);
+    assert.match(harness, /remove_acceptance_invocation_container_id_exact\(\)[\s\S]*acceptance_invocation_container_id_is_exact[\s\S]*docker rm -f "\$id"/);
+    assert.match(cleanup, /remove_invocation_topology_exact "\$HOST_INVOCATION_ID" "\$OBSERVATION_GATEWAY_ID"/);
+    assert.match(harness, /remove_acceptance_supervisor_exact "\$SUPERVISOR_NAME" "\$OBSERVATION_SUPERVISOR_ID"/);
+  });
+
+  test("owner harness freezes the supervisor across the strict real-ready transition", () => {
+    const harness = readFileSync(resolve(ROOT, "scripts/e50-step5b1-supervisor-host-acceptance.sh"), "utf8");
+    const docs = readFileSync(resolve(ROOT, "docs/piece-runtime/SUPERVISOR_V1.md"), "utf8");
+    assert.match(harness, /READY_TRANSITION_TIMEOUT_MS=750/);
+
+    const hold = harness.match(/hold_gateway_after_ready\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    const supervisorProof = hold.indexOf("acceptance_supervisor_id_is_exact");
+    const gatewayUnpause = hold.indexOf("unpause_acceptance_gateway_exact");
+    const readyProof = hold.indexOf("gateway_ready_event_is_exact");
+    const gatewayRepause = hold.indexOf('\n  pause_acceptance_gateway_exact');
+    const heldMarker = hold.indexOf("OBSERVATION_HELD");
+    assert.ok(supervisorProof >= 0 && supervisorProof < gatewayUnpause);
+    assert.ok(gatewayUnpause < readyProof && readyProof < gatewayRepause && gatewayRepause < heldMarker);
+    assert.match(hold, /! grep -Fq '"event":"piece_gateway_ready"'/);
+    assert.match(hold, /started_ms="\$\(date \+%s%3N\)"/);
+    assert.match(hold, /deadline_ms=\$\(\(started_ms \+ READY_TRANSITION_TIMEOUT_MS\)\)/);
+    assert.match(hold, /acceptance_invocation_container_id_is_exact/);
+    assert.match(hold, /'true\|true'/);
+    assert.doesNotMatch(hold, /SECONDS \+ 3|sleep [1-9]/);
 
     const main = harness.slice(harness.indexOf("HOST_INVOCATION_STARTED=1"), harness.indexOf("assert_zero_invocation_resources 'Invocation resources survived request completion.'"));
+    const startupPause = main.indexOf("wait_for_gateway_start_and_pause");
+    const watcher = main.indexOf("start_gateway_log_watcher");
+    const preReady = main.indexOf("pre-transition-gateway-logs.txt");
+    const supervisorPause = main.indexOf("pause_acceptance_supervisor_exact");
     const held = main.indexOf("hold_gateway_after_ready");
+    const supervisorResume = main.indexOf("unpause_acceptance_supervisor_exact");
+    const sandboxWait = main.indexOf("wait_for_sandbox_running_exact");
     const capture = main.indexOf('docker inspect "$SANDBOX_NAME" "$GATEWAY_NAME"');
-    const release = main.indexOf('unpause_acceptance_gateway_exact "$GATEWAY_NAME"');
+    const release = main.indexOf('unpause_acceptance_gateway_exact "$OBSERVATION_GATEWAY_ID"');
     const completion = main.indexOf('wait "$EXECUTE_PID"');
     const providerResult = main.indexOf("expect_error \"$ARTIFACT_DIR/response.json\" 'PIECE_AUTH_FAILED'");
-    assert.ok(held >= 0 && held < capture && capture < release && release < completion && completion < providerResult);
+    assert.ok(startupPause >= 0 && startupPause < watcher && watcher < preReady);
+    assert.ok(preReady < supervisorPause && supervisorPause < held && held < supervisorResume);
+    assert.ok(supervisorResume < sandboxWait && sandboxWait < capture);
+    assert.ok(capture < release && release < completion && completion < providerResult);
     assert.doesNotMatch(main, /for _ in \$\(seq 1 500\)[\s\S]*TOPOLOGY_CAPTURED/);
-    assert.match(main, /OBSERVATION_HELD.*OBSERVATION_GATEWAY_PAUSED.*OBSERVATION_RELEASED/);
-    assert.match(main, /wait_for_sandbox_running_exact/);
+    assert.match(main, /OBSERVATION_HELD.*OBSERVATION_GATEWAY_PAUSED.*OBSERVATION_SUPERVISOR_PAUSED.*OBSERVATION_RELEASED/);
+    assert.match(main, /Gateway became ready before the supervisor freeze was established/);
+    assert.match(main, /OBSERVATION_SUPERVISOR_PAUSED=1/);
+    assert.match(main, /OBSERVATION_SUPERVISOR_PAUSED=0/);
     assert.match(main, /wait_for_execute_client_running/);
+    assert.match(main, /docker cp "\$OBSERVATION_GATEWAY_ID:\/etc\/hosts" "\$ARTIFACT_DIR\/gateway-etc-hosts"/);
+    assert.doesNotMatch(main, /docker exec "\$GATEWAY_NAME"[^\n]*\/etc\/hosts/);
+    assert.match(main, /'true\|false'.*Exact acceptance gateway release was not proven/);
     assert.match(main, /OBSERVATION_RELEASED=1/);
     assert.ok(main.indexOf("wait_for_gateway_start_and_pause") < main.indexOf("start_execute_client"));
     assert.match(main, /observation-start-watcher-process\.txt/);
@@ -886,11 +941,16 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.match(harness, /observation-watcher-process\.txt/);
     assert.match(harness, /observation-start-watcher-process\.txt/);
     assert.match(harness, /observation-start-held\.txt/);
+    assert.match(harness, /observation-supervisor-paused\.txt/);
+    assert.match(harness, /observation-supervisor-resumed\.txt/);
     assert.match(harness, /observation-held\.txt/);
     assert.match(harness, /observation-released\.txt/);
     assert.match(docs, /Step 5B\.1 owner-host attempt 2/);
     assert.match(docs, /be6414cb34570082a8f06200ce6e70b9d88bb678/);
     assert.match(docs, /harness observation race/);
     assert.match(docs, /provider result from this attempt was not accepted/i);
+    assert.match(docs, /readiness-to-repause scheduler race/);
+    assert.match(docs, /SUPERVISOR FROZEN -> GATEWAY UNPAUSED -> REAL READY/);
+    assert.match(docs, /GATEWAY PAUSED -> SUPERVISOR RESUMED -> SANDBOX STARTS AGAINST PAUSED/);
   });
 });

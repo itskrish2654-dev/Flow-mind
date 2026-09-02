@@ -43,11 +43,15 @@ CONTROL_DIR_RUNTIME_OWNED=0
 UDS_HEALTH_CLIENT_CREATED=0
 EXECUTE_PID=''
 OBSERVATION_GATEWAY_NAME=''
+OBSERVATION_GATEWAY_ID=''
 OBSERVATION_INVOCATION_ID=''
 OBSERVATION_GATEWAY_PAUSED=0
+OBSERVATION_SUPERVISOR_ID=''
+OBSERVATION_SUPERVISOR_PAUSED=0
 OBSERVATION_WATCHER_PID=''
 OBSERVATION_HELD=0
 OBSERVATION_RELEASED=0
+READY_TRANSITION_TIMEOUT_MS=750
 HOST_REQUEST_ID='step5b1-host-invocation'
 WORKER_FAILURE_REQUEST_ID='step5b1-negative-worker'
 HOST_INVOCATION_ID=''
@@ -61,11 +65,15 @@ fail() {
 
 remove_acceptance_supervisor_exact() {
   local name="$1"
+  local expected_id="${2:-}"
+  local id
   local labels
   docker inspect "$name" >/dev/null 2>&1 || return 0
-  labels="$(docker inspect --format '{{index .Config.Labels "crazyloops.runtime"}}|{{index .Config.Labels "crazyloops.resource"}}' "$name" 2>/dev/null)" || return 1
+  id="$(docker inspect --format '{{.Id}}' "$name" 2>/dev/null)" || return 1
+  [[ -z "$expected_id" || "$id" == "$expected_id" ]] || return 1
+  labels="$(docker inspect --format '{{index .Config.Labels "crazyloops.runtime"}}|{{index .Config.Labels "crazyloops.resource"}}' "$id" 2>/dev/null)" || return 1
   [[ "$labels" == "$OWNER_LABEL_VALUE|supervisor" ]] || return 1
-  docker rm -f "$name" >/dev/null 2>&1
+  docker rm -f "$id" >/dev/null 2>&1
 }
 
 remove_acceptance_container_exact() {
@@ -127,35 +135,87 @@ restore_control_dir_ownership() {
   CONTROL_DIR_RUNTIME_OWNED=0
 }
 
-acceptance_invocation_container_has_exact_identity() {
+acceptance_invocation_container_id_is_exact() {
+  local id="$1"
+  local name="$2"
+  local invocation="$3"
+  local identity
+  identity="$(docker inspect --format '{{.Name}}|{{index .Config.Labels "crazyloops.runtime"}}|{{index .Config.Labels "crazyloops.resource"}}|{{index .Config.Labels "crazyloops.invocation"}}' "$id" 2>/dev/null)" || return 1
+  [[ "$identity" == "/$name|$OWNER_LABEL_VALUE|invocation|$invocation" ]]
+}
+
+acceptance_invocation_container_id_exact() {
   local name="$1"
   local invocation="$2"
-  local labels
-  labels="$(docker inspect --format '{{index .Config.Labels "crazyloops.runtime"}}|{{index .Config.Labels "crazyloops.resource"}}|{{index .Config.Labels "crazyloops.invocation"}}' "$name" 2>/dev/null)" || return 1
-  [[ "$labels" == "$OWNER_LABEL_VALUE|invocation|$invocation" ]]
+  local id
+  id="$(docker inspect --format '{{.Id}}' "$name" 2>/dev/null)" || return 1
+  acceptance_invocation_container_id_is_exact "$id" "$name" "$invocation" || return 1
+  printf '%s\n' "$id"
+}
+
+acceptance_supervisor_id_is_exact() {
+  local id="$1"
+  local name="$2"
+  local identity
+  identity="$(docker inspect --format '{{.Name}}|{{index .Config.Labels "crazyloops.runtime"}}|{{index .Config.Labels "crazyloops.resource"}}' "$id" 2>/dev/null)" || return 1
+  [[ "$identity" == "/$name|$OWNER_LABEL_VALUE|supervisor" ]]
 }
 
 pause_acceptance_gateway_exact() {
-  local name="$1"
-  local invocation="$2"
-  acceptance_invocation_container_has_exact_identity "$name" "$invocation" || return 1
-  [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$name" 2>/dev/null)" == 'true|false' ]] || return 1
-  docker pause "$name" >/dev/null || return 1
-  acceptance_invocation_container_has_exact_identity "$name" "$invocation" || return 1
-  [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$name" 2>/dev/null)" == 'true|true' ]]
+  local id="$1"
+  local name="$2"
+  local invocation="$3"
+  acceptance_invocation_container_id_is_exact "$id" "$name" "$invocation" || return 1
+  [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$id" 2>/dev/null)" == 'true|false' ]] || return 1
+  docker pause "$id" >/dev/null || return 1
+  acceptance_invocation_container_id_is_exact "$id" "$name" "$invocation" || return 1
+  [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$id" 2>/dev/null)" == 'true|true' ]]
 }
 
 unpause_acceptance_gateway_exact() {
-  local name="$1"
-  local invocation="$2"
-  docker inspect "$name" >/dev/null 2>&1 || return 0
-  acceptance_invocation_container_has_exact_identity "$name" "$invocation" || return 1
-  if [[ "$(docker inspect --format '{{.State.Paused}}' "$name" 2>/dev/null)" == 'true' ]]; then
-    docker unpause "$name" >/dev/null || return 1
+  local id="$1"
+  local name="$2"
+  local invocation="$3"
+  docker inspect "$id" >/dev/null 2>&1 || return 0
+  acceptance_invocation_container_id_is_exact "$id" "$name" "$invocation" || return 1
+  if [[ "$(docker inspect --format '{{.State.Paused}}' "$id" 2>/dev/null)" == 'true' ]]; then
+    docker unpause "$id" >/dev/null || return 1
   fi
-  docker inspect "$name" >/dev/null 2>&1 || return 0
-  acceptance_invocation_container_has_exact_identity "$name" "$invocation" || return 1
-  [[ "$(docker inspect --format '{{.State.Paused}}' "$name" 2>/dev/null)" == 'false' ]]
+  docker inspect "$id" >/dev/null 2>&1 || return 0
+  acceptance_invocation_container_id_is_exact "$id" "$name" "$invocation" || return 1
+  [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$id" 2>/dev/null)" == 'true|false' ]]
+}
+
+pause_acceptance_supervisor_exact() {
+  local id="$1"
+  local name="$2"
+  acceptance_supervisor_id_is_exact "$id" "$name" || return 1
+  [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$id" 2>/dev/null)" == 'true|false' ]] || return 1
+  docker pause "$id" >/dev/null || return 1
+  acceptance_supervisor_id_is_exact "$id" "$name" || return 1
+  [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$id" 2>/dev/null)" == 'true|true' ]]
+}
+
+unpause_acceptance_supervisor_exact() {
+  local id="$1"
+  local name="$2"
+  docker inspect "$id" >/dev/null 2>&1 || return 0
+  acceptance_supervisor_id_is_exact "$id" "$name" || return 1
+  if [[ "$(docker inspect --format '{{.State.Paused}}' "$id" 2>/dev/null)" == 'true' ]]; then
+    docker unpause "$id" >/dev/null || return 1
+  fi
+  docker inspect "$id" >/dev/null 2>&1 || return 0
+  acceptance_supervisor_id_is_exact "$id" "$name" || return 1
+  [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$id" 2>/dev/null)" == 'true|false' ]]
+}
+
+remove_acceptance_invocation_container_id_exact() {
+  local id="$1"
+  local name="$2"
+  local invocation="$3"
+  docker inspect "$id" >/dev/null 2>&1 || return 0
+  acceptance_invocation_container_id_is_exact "$id" "$name" "$invocation" || return 1
+  docker rm -f "$id" >/dev/null 2>&1
 }
 
 stop_observation_watcher() {
@@ -168,12 +228,24 @@ stop_observation_watcher() {
 }
 
 release_observation_gateway_for_cleanup() {
-  [[ -n "$OBSERVATION_GATEWAY_NAME" && -n "$OBSERVATION_INVOCATION_ID" ]] || return 0
-  if docker inspect "$OBSERVATION_GATEWAY_NAME" >/dev/null 2>&1; then
-    acceptance_invocation_container_has_exact_identity "$OBSERVATION_GATEWAY_NAME" "$OBSERVATION_INVOCATION_ID" || return 1
-    unpause_acceptance_gateway_exact "$OBSERVATION_GATEWAY_NAME" "$OBSERVATION_INVOCATION_ID" || return 1
+  if [[ -z "$OBSERVATION_GATEWAY_ID" && -s "$ARTIFACT_DIR/observation-gateway-id.txt" ]]; then
+    OBSERVATION_GATEWAY_ID="$(<"$ARTIFACT_DIR/observation-gateway-id.txt")"
+  fi
+  [[ -n "$OBSERVATION_GATEWAY_ID" && -n "$OBSERVATION_GATEWAY_NAME" && -n "$OBSERVATION_INVOCATION_ID" ]] || return 0
+  if docker inspect "$OBSERVATION_GATEWAY_ID" >/dev/null 2>&1; then
+    acceptance_invocation_container_id_is_exact "$OBSERVATION_GATEWAY_ID" "$OBSERVATION_GATEWAY_NAME" "$OBSERVATION_INVOCATION_ID" || return 1
+    unpause_acceptance_gateway_exact "$OBSERVATION_GATEWAY_ID" "$OBSERVATION_GATEWAY_NAME" "$OBSERVATION_INVOCATION_ID" || return 1
   fi
   OBSERVATION_GATEWAY_PAUSED=0
+}
+
+release_observation_supervisor_for_cleanup() {
+  [[ -n "$OBSERVATION_SUPERVISOR_ID" ]] || return 0
+  if docker inspect "$OBSERVATION_SUPERVISOR_ID" >/dev/null 2>&1; then
+    acceptance_supervisor_id_is_exact "$OBSERVATION_SUPERVISOR_ID" "$SUPERVISOR_NAME" || return 1
+    unpause_acceptance_supervisor_exact "$OBSERVATION_SUPERVISOR_ID" "$SUPERVISOR_NAME" || return 1
+  fi
+  OBSERVATION_SUPERVISOR_PAUSED=0
 }
 
 stop_execute_process() {
@@ -187,9 +259,14 @@ stop_execute_process() {
 
 remove_invocation_topology_exact() {
   local invocation="$1"
+  local expected_gateway_id="${2:-}"
   [[ -n "$invocation" ]] || return 0
   remove_acceptance_container_exact "cl-piece-sandbox-$invocation" "$invocation" || true
-  remove_acceptance_container_exact "cl-piece-gateway-$invocation" "$invocation" || true
+  if [[ -n "$expected_gateway_id" ]]; then
+    remove_acceptance_invocation_container_id_exact "$expected_gateway_id" "cl-piece-gateway-$invocation" "$invocation" || true
+  else
+    remove_acceptance_container_exact "cl-piece-gateway-$invocation" "$invocation" || true
+  fi
   remove_acceptance_network_exact "cl-piece-internal-$invocation" "$invocation" || true
   remove_acceptance_network_exact "cl-piece-egress-$invocation" "$invocation" || true
 }
@@ -197,10 +274,11 @@ remove_invocation_topology_exact() {
 cleanup() {
   stop_observation_watcher || true
   release_observation_gateway_for_cleanup || true
+  release_observation_supervisor_for_cleanup || true
   stop_execute_process || true
-  if [[ "$HOST_INVOCATION_STARTED" == '1' ]]; then remove_invocation_topology_exact "$HOST_INVOCATION_ID"; fi
+  if [[ "$HOST_INVOCATION_STARTED" == '1' ]]; then remove_invocation_topology_exact "$HOST_INVOCATION_ID" "$OBSERVATION_GATEWAY_ID"; fi
   if [[ "$WORKER_FAILURE_INVOCATION_STARTED" == '1' ]]; then remove_invocation_topology_exact "$WORKER_FAILURE_INVOCATION_ID"; fi
-  if [[ "$SUPERVISOR_CREATED" == '1' ]]; then remove_acceptance_supervisor_exact "$SUPERVISOR_NAME" || true; fi
+  if [[ "$SUPERVISOR_CREATED" == '1' ]]; then remove_acceptance_supervisor_exact "$SUPERVISOR_NAME" "$OBSERVATION_SUPERVISOR_ID" || true; fi
   if [[ "$STALE_CONTAINER_CREATED" == '1' ]]; then remove_acceptance_container_exact "$STALE_CONTAINER_NAME" 'stale-proof' || true; fi
   if [[ "$STALE_NETWORK_CREATED" == '1' ]]; then remove_acceptance_network_exact "$STALE_NETWORK_NAME" 'stale-proof' || true; fi
   if [[ "$UNRELATED_NETWORK_CREATED" == '1' ]]; then remove_unrelated_acceptance_network_exact || true; fi
@@ -412,12 +490,15 @@ NODE
 wait_for_gateway_start_and_pause() {
   local name="$1"
   local invocation="$2"
+  local id_output="$3"
+  local id
   local deadline=$((SECONDS + 5))
   while (( SECONDS < deadline )); do
     if docker inspect "$name" >/dev/null 2>&1; then
-      acceptance_invocation_container_has_exact_identity "$name" "$invocation" || return 1
-      if [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$name" 2>/dev/null)" == 'true|false' ]]; then
-        pause_acceptance_gateway_exact "$name" "$invocation" || return 1
+      id="$(acceptance_invocation_container_id_exact "$name" "$invocation")" || return 1
+      if [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$id" 2>/dev/null)" == 'true|false' ]]; then
+        pause_acceptance_gateway_exact "$id" "$name" "$invocation" || return 1
+        printf '%s\n' "$id" >"$id_output"
         return 0
       fi
     fi
@@ -427,45 +508,56 @@ wait_for_gateway_start_and_pause() {
 }
 
 start_gateway_log_watcher() {
-  local name="$1"
+  local id="$1"
   local output="$2"
-  timeout --signal=TERM --kill-after=2s 25s docker logs --follow "$name" >"$output" 2>&1 &
+  timeout --signal=TERM --kill-after=2s 25s docker logs --follow "$id" >"$output" 2>&1 &
   OBSERVATION_WATCHER_PID=$!
   kill -0 "$OBSERVATION_WATCHER_PID" >/dev/null 2>&1 || return 1
   ps -o pid=,args= -p "$OBSERVATION_WATCHER_PID" >"$ARTIFACT_DIR/observation-watcher-process.txt"
 }
 
 hold_gateway_after_ready() {
-  local name="$1"
-  local invocation="$2"
-  local request_id="$3"
-  local log_file="$4"
+  local gateway_id="$1"
+  local gateway_name="$2"
+  local invocation="$3"
+  local supervisor_id="$4"
+  local supervisor_name="$5"
+  local request_id="$6"
+  local log_file="$7"
   local ready=0
+  local started_ms
+  local now_ms
+  local deadline_ms
 
-  if gateway_ready_event_is_exact "$log_file" "$request_id" 2>/dev/null; then
-    ready=1
-  else
-    unpause_acceptance_gateway_exact "$name" "$invocation" || return 1
-    OBSERVATION_GATEWAY_PAUSED=0
-    local deadline=$((SECONDS + 3))
-    while (( SECONDS < deadline )); do
-      if grep -Fq '"event":"piece_gateway_ready"' "$log_file" 2>/dev/null; then
-        gateway_ready_event_is_exact "$log_file" "$request_id" || return 1
-        ready=1
-        break
-      fi
-      kill -0 "$OBSERVATION_WATCHER_PID" >/dev/null 2>&1 || return 1
-      sleep 0.01
-    done
-  fi
+  acceptance_invocation_container_id_is_exact "$gateway_id" "$gateway_name" "$invocation" || return 1
+  acceptance_supervisor_id_is_exact "$supervisor_id" "$supervisor_name" || return 1
+  [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$gateway_id" 2>/dev/null)" == 'true|true' ]] || return 1
+  [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$supervisor_id" 2>/dev/null)" == 'true|true' ]] || return 1
+  ! grep -Fq '"event":"piece_gateway_ready"' "$log_file" 2>/dev/null || return 1
+
+  unpause_acceptance_gateway_exact "$gateway_id" "$gateway_name" "$invocation" || return 1
+  OBSERVATION_GATEWAY_PAUSED=0
+  started_ms="$(date +%s%3N)"
+  deadline_ms=$((started_ms + READY_TRANSITION_TIMEOUT_MS))
+  while :; do
+    if grep -Fq '"event":"piece_gateway_ready"' "$log_file" 2>/dev/null; then
+      gateway_ready_event_is_exact "$log_file" "$request_id" || return 1
+      ready=1
+      break
+    fi
+    kill -0 "$OBSERVATION_WATCHER_PID" >/dev/null 2>&1 || return 1
+    now_ms="$(date +%s%3N)"
+    (( now_ms < deadline_ms )) || break
+    sleep 0.005
+  done
 
   [[ "$ready" == '1' ]] || return 1
-  if [[ "$OBSERVATION_GATEWAY_PAUSED" != '1' ]]; then
-    pause_acceptance_gateway_exact "$name" "$invocation" || return 1
-    OBSERVATION_GATEWAY_PAUSED=1
-  fi
-  acceptance_invocation_container_has_exact_identity "$name" "$invocation" || return 1
-  [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$name" 2>/dev/null)" == 'true|true' ]] || return 1
+  pause_acceptance_gateway_exact "$gateway_id" "$gateway_name" "$invocation" || return 1
+  OBSERVATION_GATEWAY_PAUSED=1
+  acceptance_invocation_container_id_is_exact "$gateway_id" "$gateway_name" "$invocation" || return 1
+  acceptance_supervisor_id_is_exact "$supervisor_id" "$supervisor_name" || return 1
+  [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$gateway_id" 2>/dev/null)" == 'true|true' ]] || return 1
+  [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$supervisor_id" 2>/dev/null)" == 'true|true' ]] || return 1
   printf 'OBSERVATION_HELD\n' >"$ARTIFACT_DIR/observation-held.txt"
   OBSERVATION_HELD=1
 }
@@ -476,7 +568,7 @@ wait_for_sandbox_running_exact() {
   local deadline=$((SECONDS + 5))
   while (( SECONDS < deadline )); do
     if docker inspect "$name" >/dev/null 2>&1; then
-      acceptance_invocation_container_has_exact_identity "$name" "$invocation" || return 1
+      acceptance_invocation_container_id_exact "$name" "$invocation" >/dev/null || return 1
       [[ "$(docker inspect --format '{{.State.Running}}' "$name" 2>/dev/null)" == 'true' ]] && return 0
     fi
     sleep 0.01
@@ -603,6 +695,8 @@ mapfile -t active_supervisors < <(active_supervisor_ids)
 [[ "${#active_supervisors[@]}" == '1' ]] || fail 'Exactly one active Step 5B.1 supervisor was not proven.'
 SUPERVISOR_DOCKER_ID="$(docker inspect --format '{{.Id}}' "$SUPERVISOR_NAME")"
 [[ "${active_supervisors[0]}" == "$SUPERVISOR_DOCKER_ID" ]] || fail 'Active supervisor does not match its inspected self Docker identity.'
+OBSERVATION_SUPERVISOR_ID="$SUPERVISOR_DOCKER_ID"
+acceptance_supervisor_id_is_exact "$OBSERVATION_SUPERVISOR_ID" "$SUPERVISOR_NAME" || fail 'Acceptance supervisor identity or labels are invalid.'
 
 SOCKET_READY=0
 for _ in $(seq 1 100); do
@@ -681,7 +775,7 @@ HOST_INVOCATION_STARTED=1
 OBSERVATION_GATEWAY_NAME="$GATEWAY_NAME"
 OBSERVATION_INVOCATION_ID="$INVOCATION_ID"
 create_execute_client "$ARTIFACT_DIR/uds-execute-client-inspect.json"
-wait_for_gateway_start_and_pause "$GATEWAY_NAME" "$INVOCATION_ID" &
+wait_for_gateway_start_and_pause "$GATEWAY_NAME" "$INVOCATION_ID" "$ARTIFACT_DIR/observation-gateway-id.txt" &
 OBSERVATION_WATCHER_PID=$!
 ps -o pid=,args= -p "$OBSERVATION_WATCHER_PID" >"$ARTIFACT_DIR/observation-start-watcher-process.txt"
 start_execute_client "$ARTIFACT_DIR/request.json" "$ARTIFACT_DIR/response.json" &
@@ -691,13 +785,22 @@ if ! wait "$OBSERVATION_WATCHER_PID"; then
   fail 'Exact acceptance gateway could not be held at startup.'
 fi
 OBSERVATION_WATCHER_PID=''
-acceptance_invocation_container_has_exact_identity "$GATEWAY_NAME" "$INVOCATION_ID" || fail 'Startup-held gateway identity changed.'
-[[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$GATEWAY_NAME" 2>/dev/null)" == 'true|true' ]] || fail 'Startup gateway hold was not proven.'
+OBSERVATION_GATEWAY_ID="$(<"$ARTIFACT_DIR/observation-gateway-id.txt")"
+acceptance_invocation_container_id_is_exact "$OBSERVATION_GATEWAY_ID" "$GATEWAY_NAME" "$INVOCATION_ID" || fail 'Startup-held gateway identity changed.'
+[[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$OBSERVATION_GATEWAY_ID" 2>/dev/null)" == 'true|true' ]] || fail 'Startup gateway hold was not proven.'
 OBSERVATION_GATEWAY_PAUSED=1
 printf 'STARTUP_GATEWAY_HELD\n' >"$ARTIFACT_DIR/observation-start-held.txt"
-start_gateway_log_watcher "$GATEWAY_NAME" "$ARTIFACT_DIR/live-gateway-logs.txt" || fail 'Bounded gateway log watcher could not attach.'
-hold_gateway_after_ready "$GATEWAY_NAME" "$INVOCATION_ID" "$REQUEST_ID" "$ARTIFACT_DIR/live-gateway-logs.txt" || fail 'Gateway readiness observation barrier was not established.'
-[[ "$OBSERVATION_HELD" == '1' && "$OBSERVATION_GATEWAY_PAUSED" == '1' && "$OBSERVATION_RELEASED" == '0' ]] || fail 'Observation held state is invalid.'
+start_gateway_log_watcher "$OBSERVATION_GATEWAY_ID" "$ARTIFACT_DIR/live-gateway-logs.txt" || fail 'Bounded gateway log watcher could not attach.'
+docker logs "$OBSERVATION_GATEWAY_ID" >"$ARTIFACT_DIR/pre-transition-gateway-logs.txt" 2>&1
+! grep -Fq '"event":"piece_gateway_ready"' "$ARTIFACT_DIR/pre-transition-gateway-logs.txt" || fail 'Gateway became ready before the supervisor freeze was established.'
+pause_acceptance_supervisor_exact "$OBSERVATION_SUPERVISOR_ID" "$SUPERVISOR_NAME" || fail 'Exact disposable acceptance supervisor could not be frozen.'
+OBSERVATION_SUPERVISOR_PAUSED=1
+printf 'OBSERVATION_SUPERVISOR_PAUSED\n' >"$ARTIFACT_DIR/observation-supervisor-paused.txt"
+hold_gateway_after_ready "$OBSERVATION_GATEWAY_ID" "$GATEWAY_NAME" "$INVOCATION_ID" "$OBSERVATION_SUPERVISOR_ID" "$SUPERVISOR_NAME" "$REQUEST_ID" "$ARTIFACT_DIR/live-gateway-logs.txt" || fail 'Gateway readiness observation barrier was not established.'
+[[ "$OBSERVATION_HELD" == '1' && "$OBSERVATION_GATEWAY_PAUSED" == '1' && "$OBSERVATION_SUPERVISOR_PAUSED" == '1' && "$OBSERVATION_RELEASED" == '0' ]] || fail 'Observation held state is invalid.'
+unpause_acceptance_supervisor_exact "$OBSERVATION_SUPERVISOR_ID" "$SUPERVISOR_NAME" || fail 'Exact disposable acceptance supervisor could not resume.'
+OBSERVATION_SUPERVISOR_PAUSED=0
+printf 'OBSERVATION_SUPERVISOR_RESUMED\n' >"$ARTIFACT_DIR/observation-supervisor-resumed.txt"
 wait_for_sandbox_running_exact "$SANDBOX_NAME" "$INVOCATION_ID" || fail 'Exact acceptance sandbox did not reach the held topology.'
 wait_for_execute_client_running || fail 'UDS execute client did not remain inspectable during the held topology.'
 
@@ -708,11 +811,13 @@ validate_uds_client_inspect "$ARTIFACT_DIR/uds-execute-client-inspect.json"
 docker top "$SANDBOX_NAME" -eo pid,args >"$ARTIFACT_DIR/sandbox-processes.txt"
 docker top "$GATEWAY_NAME" -eo pid,args >"$ARTIFACT_DIR/gateway-processes.txt"
 docker top "$UDS_EXECUTE_CLIENT_NAME" -eo pid,args >"$ARTIFACT_DIR/uds-client-processes.txt"
-docker exec "$GATEWAY_NAME" sh -c '! grep -q "api.hubapi.com" /etc/hosts' || fail 'Gateway canonical hostname is shadowed.'
+docker cp "$OBSERVATION_GATEWAY_ID:/etc/hosts" "$ARTIFACT_DIR/gateway-etc-hosts"
+! grep -q 'api.hubapi.com' "$ARTIFACT_DIR/gateway-etc-hosts" || fail 'Gateway canonical hostname is shadowed.'
 printf 'SAFE\n' >"$ARTIFACT_DIR/gateway-self-shadow.txt"
 TOPOLOGY_CAPTURED=1
 
-unpause_acceptance_gateway_exact "$GATEWAY_NAME" "$INVOCATION_ID" || fail 'Exact acceptance gateway could not be released.'
+unpause_acceptance_gateway_exact "$OBSERVATION_GATEWAY_ID" "$GATEWAY_NAME" "$INVOCATION_ID" || fail 'Exact acceptance gateway could not be released.'
+[[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$OBSERVATION_GATEWAY_ID" 2>/dev/null)" == 'true|false' ]] || fail 'Exact acceptance gateway release was not proven.'
 OBSERVATION_GATEWAY_PAUSED=0
 OBSERVATION_RELEASED=1
 printf 'OBSERVATION_RELEASED\n' >"$ARTIFACT_DIR/observation-released.txt"
@@ -820,11 +925,16 @@ RUNTIME_SURFACES=(
   "$ARTIFACT_DIR/invocation-inspect.json"
   "$ARTIFACT_DIR/invocation-networks.json"
   "$ARTIFACT_DIR/live-gateway-logs.txt"
+  "$ARTIFACT_DIR/pre-transition-gateway-logs.txt"
+  "$ARTIFACT_DIR/observation-gateway-id.txt"
   "$ARTIFACT_DIR/observation-start-watcher-process.txt"
   "$ARTIFACT_DIR/observation-start-held.txt"
   "$ARTIFACT_DIR/observation-watcher-process.txt"
+  "$ARTIFACT_DIR/observation-supervisor-paused.txt"
+  "$ARTIFACT_DIR/observation-supervisor-resumed.txt"
   "$ARTIFACT_DIR/observation-held.txt"
   "$ARTIFACT_DIR/observation-released.txt"
+  "$ARTIFACT_DIR/gateway-etc-hosts"
   "$ARTIFACT_DIR/gateway-self-shadow.txt"
   "$ARTIFACT_DIR/supervisor-processes.txt"
   "$ARTIFACT_DIR/sandbox-processes.txt"
@@ -856,7 +966,7 @@ done < <(find "$CONTROL_DIR" -maxdepth 1 -type f -print0)
 docker stop --time 20 "$SUPERVISOR_NAME" >/dev/null
 [[ "$(count_active_supervisors)" == '0' ]] || fail 'Running Step 5B.1 supervisor count did not return to zero after graceful shutdown.'
 node -e 'const value=JSON.parse(process.argv[1])[0];if(value.State.Running||value.State.OOMKilled||value.State.ExitCode!==0)process.exit(1)' "$(docker inspect "$SUPERVISOR_NAME")" || fail 'Supervisor did not complete its bounded SIGTERM shutdown.'
-remove_acceptance_supervisor_exact "$SUPERVISOR_NAME" || fail 'Exact labelled acceptance supervisor could not be removed.'
+remove_acceptance_supervisor_exact "$SUPERVISOR_NAME" "$OBSERVATION_SUPERVISOR_ID" || fail 'Exact labelled acceptance supervisor could not be removed.'
 SUPERVISOR_CREATED=0
 remove_unrelated_acceptance_network_exact || fail 'Exact unrelated acceptance network could not be removed.'
 UNRELATED_NETWORK_CREATED=0
@@ -885,6 +995,7 @@ UDS_ONLY_CONTROL_PLANE=PASS
 DOCKER_SOCKET_SUPERVISOR_ONLY=PASS
 HEALTH_OVER_UDS=PASS
 DETERMINISTIC_OBSERVATION_BARRIER=PASS
+READY_TRANSITION_FREEZE=PASS
 OBSERVATION_GATEWAY_RELEASE=PASS
 CONCRETE_ENGINE_TOPOLOGY=PASS
 DYNAMIC_GATEWAY_IP=PASS
