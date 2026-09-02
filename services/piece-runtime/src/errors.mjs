@@ -31,6 +31,9 @@ function providerStatus(error) {
   for (const value of [top?.status, top?.statusCode, response?.status]) {
     if (Number.isInteger(value)) return value;
   }
+  if (Number.isInteger(top?.code) && top.code >= 100 && top.code <= 599) {
+    return top.code;
+  }
   return null;
 }
 

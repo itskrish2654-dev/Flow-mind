@@ -336,6 +336,15 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
       [{ status: 401, secret: "provider body" }, "PIECE_AUTH_FAILED", false],
       [{ status: 429, secret: "provider body" }, "PIECE_RATE_LIMITED", true],
       [{ status: 503, secret: "provider body" }, "PIECE_PROVIDER_UNAVAILABLE", true],
+      [{ code: 401, body: { secret: "provider body" } }, "PIECE_AUTH_FAILED", false],
+      [{ code: 403, body: { secret: "provider body" } }, "PIECE_AUTH_FAILED", false],
+      [{ code: 429, body: { secret: "provider body" } }, "PIECE_RATE_LIMITED", true],
+      [{ code: 503, body: { secret: "provider body" } }, "PIECE_PROVIDER_UNAVAILABLE", true],
+      [{ code: "401", body: { secret: "provider body" } }, "PIECE_RUNTIME_FAILED", false],
+      [{ code: 99, body: { secret: "provider body" } }, "PIECE_RUNTIME_FAILED", false],
+      [{ code: 600, body: { secret: "provider body" } }, "PIECE_RUNTIME_FAILED", false],
+      [{ code: "ETIMEDOUT", body: { secret: "provider body" } }, "PIECE_TIMEOUT", true],
+      [{ code: "ENOTFOUND", body: { secret: "provider body" } }, "PIECE_EGRESS_DENIED", false],
     ] as const;
     for (const [thrown, code, retryable] of scenarios) {
       const logs: unknown[] = [];

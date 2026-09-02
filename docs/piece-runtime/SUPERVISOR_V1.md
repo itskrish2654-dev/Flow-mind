@@ -326,6 +326,20 @@ PROVIDER RESULT**. The gateway log watcher remains bounded and credential-blind.
 These pause boundaries exist only in the disposable acceptance harness; they
 are not part of the runtime or product.
 
+### Step 5B.1 owner-host attempt 5
+
+The event-driven startup barrier passed on the real owner host using the
+`ALREADY_READY` path. Execute completion, topology capture, and gateway evidence
+also passed. The final provider-canary assertion failed only because the exact
+reviewed HubSpot SDK reports HTTP status through a top-level numeric
+`ApiException.code`, which the generic provider error normalizer did not yet
+recognize. Fail-closed cleanup left no acceptance resources, and the protected
+Connector Runner, Activepieces app/worker, and Redis services remained
+unchanged. No startup-barrier or runtime-lifecycle redesign is required; bounded
+numeric provider-status normalization is the remaining blocker. Step 5B.1 is
+not accepted until that correction is reviewed and the owner-host acceptance is
+rerun.
+
 Step 5B.2 must still design and review the Connector Runner-to-UDS integration,
 production service ownership/group setup, deployment/rollback, stronger image
 identity pinning, production monitoring, real host restart/shutdown behavior,

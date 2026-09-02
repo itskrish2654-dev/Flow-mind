@@ -1115,7 +1115,14 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
 
     const changedRuntimeFiles = execFileSync(
       "git",
-      ["diff", "--name-only", "0b1fb0f2e6d165df25684b69cf0393ae46d7fa0c", "--", "services/piece-runtime/src"],
+      [
+        "diff",
+        "--name-only",
+        "0b1fb0f2e6d165df25684b69cf0393ae46d7fa0c",
+        "20e7188b80f52035ed00c84c12c40fc999710845",
+        "--",
+        "services/piece-runtime/src",
+      ],
       { cwd: ROOT, encoding: "utf8" },
     ).trim();
     assert.equal(changedRuntimeFiles, "");
