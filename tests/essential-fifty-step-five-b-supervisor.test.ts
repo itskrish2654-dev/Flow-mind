@@ -786,7 +786,8 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.match(harness, /--user=65532:65532/);
     assert.match(harness, /--network none --read-only --cap-drop=ALL --security-opt=no-new-privileges/);
     assert.match(harness, /--mount type=bind,src="\$CONTROL_DIR",dst=\/control,readonly/);
-    assert.match(harness, /--entrypoint node -i "\$SUPERVISOR_IMAGE"[\s\S]*<"\$input" >"\$output"/);
+    assert.match(harness, /docker create --rm --interactive[\s\S]*--entrypoint node "\$SUPERVISOR_IMAGE"/);
+    assert.match(harness, /docker start --attach --interactive "\$UDS_EXECUTE_CLIENT_NAME" <"\$input" >"\$output"/);
     assert.doesNotMatch(harness, /--env[^\n]*(?:credential|CANARY)|--label[^\n]*(?:credential|CANARY)/i);
     assert.match(harness, /uds-client-inspect\.json/);
     assert.match(harness, /uds-execute-client-inspect\.json/);
@@ -797,5 +798,99 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.match(harness, /CONTROL_DIR_GID=65532/);
     assert.match(harness, /CONTROL_DIR_MODE=750/);
     assert.match(harness, /SOCKET_MODE=660/);
+  });
+
+  test("owner harness uses an exact-label deterministic gateway observation barrier", () => {
+    const harness = readFileSync(resolve(ROOT, "scripts/e50-step5b1-supervisor-host-acceptance.sh"), "utf8");
+    const docs = readFileSync(resolve(ROOT, "docs/piece-runtime/SUPERVISOR_V1.md"), "utf8");
+    assert.match(harness, /OBSERVATION_GATEWAY_PAUSED=0/);
+    assert.match(harness, /OBSERVATION_WATCHER_PID=''/);
+    assert.match(harness, /OBSERVATION_HELD=0/);
+    assert.match(harness, /OBSERVATION_RELEASED=0/);
+
+    const identity = harness.match(/acceptance_invocation_container_has_exact_identity\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    assert.match(identity, /crazyloops\.runtime/);
+    assert.match(identity, /crazyloops\.resource/);
+    assert.match(identity, /crazyloops\.invocation/);
+    assert.match(identity, /OWNER_LABEL_VALUE\|invocation\|\$invocation/);
+
+    const pause = harness.match(/pause_acceptance_gateway_exact\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    const unpause = harness.match(/unpause_acceptance_gateway_exact\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    assert.match(pause, /acceptance_invocation_container_has_exact_identity/);
+    assert.match(pause, /'true\|false'/);
+    assert.match(pause, /docker pause "\$name"/);
+    assert.match(pause, /'true\|true'/);
+    assert.match(unpause, /acceptance_invocation_container_has_exact_identity/);
+    assert.match(unpause, /docker unpause "\$name"/);
+    assert.match(unpause, /== 'false'/);
+    for (const protectedName of ["crazyloops-connector-runner", "activepieces-app", "activepieces-worker-1", "redis"]) {
+      assert.doesNotMatch(`${pause}\n${unpause}`, new RegExp(protectedName));
+    }
+
+    const startWait = harness.match(/wait_for_gateway_start_and_pause\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    assert.match(startWait, /deadline=\$\(\(SECONDS \+ 5\)\)/);
+    assert.match(startWait, /docker inspect "\$name"/);
+    assert.match(startWait, /pause_acceptance_gateway_exact/);
+    assert.doesNotMatch(startWait, /sleep [1-9]/);
+
+    const watcher = harness.match(/start_gateway_log_watcher\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    assert.match(watcher, /timeout --signal=TERM --kill-after=2s 25s docker logs --follow/);
+    assert.match(watcher, /OBSERVATION_WATCHER_PID=\$!/);
+    assert.match(watcher, /observation-watcher-process\.txt/);
+    assert.doesNotMatch(watcher, /CANARY|CANARY_B64|credentialBase64|--env|--label/);
+
+    const hold = harness.match(/hold_gateway_after_ready\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    assert.match(hold, /gateway_ready_event_is_exact/);
+    assert.match(hold, /piece_gateway_ready/);
+    assert.match(hold, /unpause_acceptance_gateway_exact/);
+    assert.match(hold, /pause_acceptance_gateway_exact/);
+    assert.match(hold, /'true\|true'/);
+    assert.match(hold, /OBSERVATION_HELD/);
+
+    const cleanup = harness.match(/\ncleanup\(\) \{\n([\s\S]*?)\n\}/)?.[1] ?? "";
+    const watcherCleanup = cleanup.indexOf("stop_observation_watcher");
+    const gatewayCleanup = cleanup.indexOf("release_observation_gateway_for_cleanup");
+    const invocationCleanup = cleanup.indexOf('remove_invocation_topology_exact "$HOST_INVOCATION_ID"');
+    const supervisorCleanup = cleanup.indexOf('remove_acceptance_supervisor_exact "$SUPERVISOR_NAME"');
+    assert.ok(watcherCleanup >= 0 && watcherCleanup < gatewayCleanup);
+    assert.ok(gatewayCleanup < invocationCleanup && invocationCleanup < supervisorCleanup);
+    assert.match(harness, /stop_observation_watcher\(\)[\s\S]*kill "\$OBSERVATION_WATCHER_PID"[\s\S]*wait "\$OBSERVATION_WATCHER_PID"/);
+    assert.match(harness, /release_observation_gateway_for_cleanup\(\)[\s\S]*acceptance_invocation_container_has_exact_identity[\s\S]*unpause_acceptance_gateway_exact/);
+
+    const main = harness.slice(harness.indexOf("HOST_INVOCATION_STARTED=1"), harness.indexOf("assert_zero_invocation_resources 'Invocation resources survived request completion.'"));
+    const held = main.indexOf("hold_gateway_after_ready");
+    const capture = main.indexOf('docker inspect "$SANDBOX_NAME" "$GATEWAY_NAME"');
+    const release = main.indexOf('unpause_acceptance_gateway_exact "$GATEWAY_NAME"');
+    const completion = main.indexOf('wait "$EXECUTE_PID"');
+    const providerResult = main.indexOf("expect_error \"$ARTIFACT_DIR/response.json\" 'PIECE_AUTH_FAILED'");
+    assert.ok(held >= 0 && held < capture && capture < release && release < completion && completion < providerResult);
+    assert.doesNotMatch(main, /for _ in \$\(seq 1 500\)[\s\S]*TOPOLOGY_CAPTURED/);
+    assert.match(main, /OBSERVATION_HELD.*OBSERVATION_GATEWAY_PAUSED.*OBSERVATION_RELEASED/);
+    assert.match(main, /wait_for_sandbox_running_exact/);
+    assert.match(main, /wait_for_execute_client_running/);
+    assert.match(main, /OBSERVATION_RELEASED=1/);
+    assert.ok(main.indexOf("wait_for_gateway_start_and_pause") < main.indexOf("start_execute_client"));
+    assert.match(main, /observation-start-watcher-process\.txt/);
+    assert.match(main, /STARTUP_GATEWAY_HELD/);
+
+    const createClient = harness.match(/create_execute_client\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    const startClient = harness.match(/start_execute_client\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    assert.match(createClient, /docker create --rm --interactive/);
+    assert.match(createClient, /--name "\$UDS_EXECUTE_CLIENT_NAME"/);
+    assert.match(createClient, /docker inspect "\$UDS_EXECUTE_CLIENT_NAME"/);
+    assert.match(createClient, /validate_uds_client_inspect/);
+    assert.doesNotMatch(createClient, /request\.json|credentialBase64|CANARY|CANARY_B64|docker\.sock/);
+    assert.match(startClient, /docker start --attach --interactive/);
+    assert.match(startClient, /<"\$input" >"\$output"/);
+    assert.ok(main.indexOf("create_execute_client") < main.indexOf("start_execute_client"));
+    assert.match(harness, /observation-watcher-process\.txt/);
+    assert.match(harness, /observation-start-watcher-process\.txt/);
+    assert.match(harness, /observation-start-held\.txt/);
+    assert.match(harness, /observation-held\.txt/);
+    assert.match(harness, /observation-released\.txt/);
+    assert.match(docs, /Step 5B\.1 owner-host attempt 2/);
+    assert.match(docs, /be6414cb34570082a8f06200ce6e70b9d88bb678/);
+    assert.match(docs, /harness observation race/);
+    assert.match(docs, /provider result from this attempt was not accepted/i);
   });
 });

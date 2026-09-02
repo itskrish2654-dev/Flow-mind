@@ -41,6 +41,13 @@ HOST_INVOCATION_STARTED=0
 WORKER_FAILURE_INVOCATION_STARTED=0
 CONTROL_DIR_RUNTIME_OWNED=0
 UDS_HEALTH_CLIENT_CREATED=0
+EXECUTE_PID=''
+OBSERVATION_GATEWAY_NAME=''
+OBSERVATION_INVOCATION_ID=''
+OBSERVATION_GATEWAY_PAUSED=0
+OBSERVATION_WATCHER_PID=''
+OBSERVATION_HELD=0
+OBSERVATION_RELEASED=0
 HOST_REQUEST_ID='step5b1-host-invocation'
 WORKER_FAILURE_REQUEST_ID='step5b1-negative-worker'
 HOST_INVOCATION_ID=''
@@ -120,6 +127,64 @@ restore_control_dir_ownership() {
   CONTROL_DIR_RUNTIME_OWNED=0
 }
 
+acceptance_invocation_container_has_exact_identity() {
+  local name="$1"
+  local invocation="$2"
+  local labels
+  labels="$(docker inspect --format '{{index .Config.Labels "crazyloops.runtime"}}|{{index .Config.Labels "crazyloops.resource"}}|{{index .Config.Labels "crazyloops.invocation"}}' "$name" 2>/dev/null)" || return 1
+  [[ "$labels" == "$OWNER_LABEL_VALUE|invocation|$invocation" ]]
+}
+
+pause_acceptance_gateway_exact() {
+  local name="$1"
+  local invocation="$2"
+  acceptance_invocation_container_has_exact_identity "$name" "$invocation" || return 1
+  [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$name" 2>/dev/null)" == 'true|false' ]] || return 1
+  docker pause "$name" >/dev/null || return 1
+  acceptance_invocation_container_has_exact_identity "$name" "$invocation" || return 1
+  [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$name" 2>/dev/null)" == 'true|true' ]]
+}
+
+unpause_acceptance_gateway_exact() {
+  local name="$1"
+  local invocation="$2"
+  docker inspect "$name" >/dev/null 2>&1 || return 0
+  acceptance_invocation_container_has_exact_identity "$name" "$invocation" || return 1
+  if [[ "$(docker inspect --format '{{.State.Paused}}' "$name" 2>/dev/null)" == 'true' ]]; then
+    docker unpause "$name" >/dev/null || return 1
+  fi
+  docker inspect "$name" >/dev/null 2>&1 || return 0
+  acceptance_invocation_container_has_exact_identity "$name" "$invocation" || return 1
+  [[ "$(docker inspect --format '{{.State.Paused}}' "$name" 2>/dev/null)" == 'false' ]]
+}
+
+stop_observation_watcher() {
+  [[ -n "$OBSERVATION_WATCHER_PID" ]] || return 0
+  if kill -0 "$OBSERVATION_WATCHER_PID" >/dev/null 2>&1; then
+    kill "$OBSERVATION_WATCHER_PID" >/dev/null 2>&1 || true
+  fi
+  wait "$OBSERVATION_WATCHER_PID" >/dev/null 2>&1 || true
+  OBSERVATION_WATCHER_PID=''
+}
+
+release_observation_gateway_for_cleanup() {
+  [[ -n "$OBSERVATION_GATEWAY_NAME" && -n "$OBSERVATION_INVOCATION_ID" ]] || return 0
+  if docker inspect "$OBSERVATION_GATEWAY_NAME" >/dev/null 2>&1; then
+    acceptance_invocation_container_has_exact_identity "$OBSERVATION_GATEWAY_NAME" "$OBSERVATION_INVOCATION_ID" || return 1
+    unpause_acceptance_gateway_exact "$OBSERVATION_GATEWAY_NAME" "$OBSERVATION_INVOCATION_ID" || return 1
+  fi
+  OBSERVATION_GATEWAY_PAUSED=0
+}
+
+stop_execute_process() {
+  [[ -n "$EXECUTE_PID" ]] || return 0
+  if kill -0 "$EXECUTE_PID" >/dev/null 2>&1; then
+    kill "$EXECUTE_PID" >/dev/null 2>&1 || true
+  fi
+  wait "$EXECUTE_PID" >/dev/null 2>&1 || true
+  EXECUTE_PID=''
+}
+
 remove_invocation_topology_exact() {
   local invocation="$1"
   [[ -n "$invocation" ]] || return 0
@@ -130,9 +195,12 @@ remove_invocation_topology_exact() {
 }
 
 cleanup() {
-  if [[ "$SUPERVISOR_CREATED" == '1' ]]; then remove_acceptance_supervisor_exact "$SUPERVISOR_NAME" || true; fi
+  stop_observation_watcher || true
+  release_observation_gateway_for_cleanup || true
+  stop_execute_process || true
   if [[ "$HOST_INVOCATION_STARTED" == '1' ]]; then remove_invocation_topology_exact "$HOST_INVOCATION_ID"; fi
   if [[ "$WORKER_FAILURE_INVOCATION_STARTED" == '1' ]]; then remove_invocation_topology_exact "$WORKER_FAILURE_INVOCATION_ID"; fi
+  if [[ "$SUPERVISOR_CREATED" == '1' ]]; then remove_acceptance_supervisor_exact "$SUPERVISOR_NAME" || true; fi
   if [[ "$STALE_CONTAINER_CREATED" == '1' ]]; then remove_acceptance_container_exact "$STALE_CONTAINER_NAME" 'stale-proof' || true; fi
   if [[ "$STALE_NETWORK_CREATED" == '1' ]]; then remove_acceptance_network_exact "$STALE_NETWORK_NAME" 'stale-proof' || true; fi
   if [[ "$UNRELATED_NETWORK_CREATED" == '1' ]]; then remove_unrelated_acceptance_network_exact || true; fi
@@ -261,16 +329,9 @@ snapshot_protected() {
   done
 }
 
-create_health_client() {
-  docker create --rm --name "$UDS_HEALTH_CLIENT_NAME" --label "$ACCEPTANCE_HELPER_LABEL" \
-    --network none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
-    --pids-limit=16 --memory=67108864 --memory-swap=67108864 --cpus=0.25 \
-    --user=65532:65532 \
-    --mount type=bind,src="$CONTROL_DIR",dst=/control,readonly \
-    --entrypoint node "$SUPERVISOR_IMAGE" -e "$UDS_CLIENT_SOURCE" GET 3000 >/dev/null
-  UDS_HEALTH_CLIENT_CREATED=1
-  docker inspect "$UDS_HEALTH_CLIENT_NAME" >"$ARTIFACT_DIR/uds-client-inspect.json"
-  node - "$ARTIFACT_DIR/uds-client-inspect.json" "$CONTROL_DIR" <<'NODE'
+validate_uds_client_inspect() {
+  local inspect_file="$1"
+  node - "$inspect_file" "$CONTROL_DIR" <<'NODE'
 const fs = require('node:fs');
 const value = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'))[0];
 const host = value.HostConfig;
@@ -289,6 +350,36 @@ if (JSON.stringify(value).includes('/var/run/docker.sock')) throw new Error('cli
 NODE
 }
 
+create_health_client() {
+  docker create --rm --name "$UDS_HEALTH_CLIENT_NAME" --label "$ACCEPTANCE_HELPER_LABEL" \
+    --network none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+    --pids-limit=16 --memory=67108864 --memory-swap=67108864 --cpus=0.25 \
+    --user=65532:65532 \
+    --mount type=bind,src="$CONTROL_DIR",dst=/control,readonly \
+    --entrypoint node "$SUPERVISOR_IMAGE" -e "$UDS_CLIENT_SOURCE" GET 3000 >/dev/null
+  UDS_HEALTH_CLIENT_CREATED=1
+  docker inspect "$UDS_HEALTH_CLIENT_NAME" >"$ARTIFACT_DIR/uds-client-inspect.json"
+  validate_uds_client_inspect "$ARTIFACT_DIR/uds-client-inspect.json"
+}
+
+create_execute_client() {
+  local inspect_file="$1"
+  docker create --rm --interactive --name "$UDS_EXECUTE_CLIENT_NAME" --label "$ACCEPTANCE_HELPER_LABEL" \
+    --network none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+    --pids-limit=16 --memory=67108864 --memory-swap=67108864 --cpus=0.25 \
+    --user=65532:65532 \
+    --mount type=bind,src="$CONTROL_DIR",dst=/control,readonly \
+    --entrypoint node "$SUPERVISOR_IMAGE" -e "$UDS_CLIENT_SOURCE" POST 15000 >/dev/null
+  docker inspect "$UDS_EXECUTE_CLIENT_NAME" >"$inspect_file"
+  validate_uds_client_inspect "$inspect_file"
+}
+
+start_execute_client() {
+  local input="$1"
+  local output="$2"
+  docker start --attach --interactive "$UDS_EXECUTE_CLIENT_NAME" <"$input" >"$output"
+}
+
 health() {
   create_health_client
   docker start --attach "$UDS_HEALTH_CLIENT_NAME"
@@ -298,13 +389,110 @@ health() {
 execute_file() {
   local input="$1"
   local output="$2"
-  docker run --rm --name "$UDS_EXECUTE_CLIENT_NAME" --label "$ACCEPTANCE_HELPER_LABEL" \
-    --network none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
-    --pids-limit=16 --memory=67108864 --memory-swap=67108864 --cpus=0.25 \
-    --user=65532:65532 \
-    --mount type=bind,src="$CONTROL_DIR",dst=/control,readonly \
-    --entrypoint node -i "$SUPERVISOR_IMAGE" -e "$UDS_CLIENT_SOURCE" POST 15000 \
-    <"$input" >"$output"
+  create_execute_client "$ARTIFACT_DIR/uds-execute-client-latest-inspect.json"
+  start_execute_client "$input" "$output"
+}
+
+gateway_ready_event_is_exact() {
+  local log_file="$1"
+  local request_id="$2"
+  node - "$log_file" "$request_id" <<'NODE'
+const fs = require('node:fs');
+const events = fs.readFileSync(process.argv[2], 'utf8').split(/\r?\n/).filter(Boolean).flatMap((line) => {
+  try { return [JSON.parse(line)]; } catch { return []; }
+});
+const ready = events.find((event) => event.event === 'piece_gateway_ready');
+if (!ready || ready.requestId !== process.argv[3] || ready.capabilityId !== 'hubspot.get_contact') process.exit(1);
+if (!Array.isArray(ready.destinations) || ready.destinations.length !== 1) process.exit(1);
+const [destination] = ready.destinations;
+if (destination.hostname !== 'api.hubapi.com' || destination.port !== 443 || destination.protocol !== 'tls') process.exit(1);
+NODE
+}
+
+wait_for_gateway_start_and_pause() {
+  local name="$1"
+  local invocation="$2"
+  local deadline=$((SECONDS + 5))
+  while (( SECONDS < deadline )); do
+    if docker inspect "$name" >/dev/null 2>&1; then
+      acceptance_invocation_container_has_exact_identity "$name" "$invocation" || return 1
+      if [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$name" 2>/dev/null)" == 'true|false' ]]; then
+        pause_acceptance_gateway_exact "$name" "$invocation" || return 1
+        return 0
+      fi
+    fi
+    sleep 0.01
+  done
+  return 1
+}
+
+start_gateway_log_watcher() {
+  local name="$1"
+  local output="$2"
+  timeout --signal=TERM --kill-after=2s 25s docker logs --follow "$name" >"$output" 2>&1 &
+  OBSERVATION_WATCHER_PID=$!
+  kill -0 "$OBSERVATION_WATCHER_PID" >/dev/null 2>&1 || return 1
+  ps -o pid=,args= -p "$OBSERVATION_WATCHER_PID" >"$ARTIFACT_DIR/observation-watcher-process.txt"
+}
+
+hold_gateway_after_ready() {
+  local name="$1"
+  local invocation="$2"
+  local request_id="$3"
+  local log_file="$4"
+  local ready=0
+
+  if gateway_ready_event_is_exact "$log_file" "$request_id" 2>/dev/null; then
+    ready=1
+  else
+    unpause_acceptance_gateway_exact "$name" "$invocation" || return 1
+    OBSERVATION_GATEWAY_PAUSED=0
+    local deadline=$((SECONDS + 3))
+    while (( SECONDS < deadline )); do
+      if grep -Fq '"event":"piece_gateway_ready"' "$log_file" 2>/dev/null; then
+        gateway_ready_event_is_exact "$log_file" "$request_id" || return 1
+        ready=1
+        break
+      fi
+      kill -0 "$OBSERVATION_WATCHER_PID" >/dev/null 2>&1 || return 1
+      sleep 0.01
+    done
+  fi
+
+  [[ "$ready" == '1' ]] || return 1
+  if [[ "$OBSERVATION_GATEWAY_PAUSED" != '1' ]]; then
+    pause_acceptance_gateway_exact "$name" "$invocation" || return 1
+    OBSERVATION_GATEWAY_PAUSED=1
+  fi
+  acceptance_invocation_container_has_exact_identity "$name" "$invocation" || return 1
+  [[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$name" 2>/dev/null)" == 'true|true' ]] || return 1
+  printf 'OBSERVATION_HELD\n' >"$ARTIFACT_DIR/observation-held.txt"
+  OBSERVATION_HELD=1
+}
+
+wait_for_sandbox_running_exact() {
+  local name="$1"
+  local invocation="$2"
+  local deadline=$((SECONDS + 5))
+  while (( SECONDS < deadline )); do
+    if docker inspect "$name" >/dev/null 2>&1; then
+      acceptance_invocation_container_has_exact_identity "$name" "$invocation" || return 1
+      [[ "$(docker inspect --format '{{.State.Running}}' "$name" 2>/dev/null)" == 'true' ]] && return 0
+    fi
+    sleep 0.01
+  done
+  return 1
+}
+
+wait_for_execute_client_running() {
+  local deadline=$((SECONDS + 5))
+  while (( SECONDS < deadline )); do
+    if docker inspect "$UDS_EXECUTE_CLIENT_NAME" >/dev/null 2>&1; then
+      [[ "$(docker inspect --format '{{index .Config.Labels "crazyloops.acceptance"}}|{{.State.Running}}' "$UDS_EXECUTE_CLIENT_NAME" 2>/dev/null)" == 'step5b1-control-helper|true' ]] && return 0
+    fi
+    sleep 0.01
+  done
+  return 1
 }
 
 count_invocation_containers() {
@@ -490,36 +678,49 @@ cat >"$ARTIFACT_DIR/request.json" <<JSON
 {"protocolVersion":1,"request":{"protocolVersion":1,"requestId":"$REQUEST_ID","executionId":"step5b1-host-execution","capabilityId":"hubspot.get_contact","capabilityVersion":1,"mode":"TEST","idempotencyKey":"step5b1-host-idempotency","input":{"contactId":"synthetic-contact","properties":["firstname"]}},"credentialBase64":"$CANARY_B64"}
 JSON
 HOST_INVOCATION_STARTED=1
-execute_file "$ARTIFACT_DIR/request.json" "$ARTIFACT_DIR/response.json" &
+OBSERVATION_GATEWAY_NAME="$GATEWAY_NAME"
+OBSERVATION_INVOCATION_ID="$INVOCATION_ID"
+create_execute_client "$ARTIFACT_DIR/uds-execute-client-inspect.json"
+wait_for_gateway_start_and_pause "$GATEWAY_NAME" "$INVOCATION_ID" &
+OBSERVATION_WATCHER_PID=$!
+ps -o pid=,args= -p "$OBSERVATION_WATCHER_PID" >"$ARTIFACT_DIR/observation-start-watcher-process.txt"
+start_execute_client "$ARTIFACT_DIR/request.json" "$ARTIFACT_DIR/response.json" &
 EXECUTE_PID=$!
-GATEWAY_WATCHER_PID=''
-for _ in $(seq 1 500); do
-  if docker inspect "$GATEWAY_NAME" >/dev/null 2>&1; then
-    timeout 20 docker logs --follow "$GATEWAY_NAME" >"$ARTIFACT_DIR/live-gateway-logs.txt" 2>&1 &
-    GATEWAY_WATCHER_PID=$!
-    break
-  fi
-  sleep 0.01
-done
-[[ -n "$GATEWAY_WATCHER_PID" ]] || fail 'Live gateway log watcher could not attach.'
-TOPOLOGY_CAPTURED=0
-for _ in $(seq 1 500); do
-  if docker inspect "$SANDBOX_NAME" "$GATEWAY_NAME" >"$ARTIFACT_DIR/invocation-inspect.json" 2>/dev/null && \
-    docker network inspect "$INTERNAL_NAME" "$EGRESS_NAME" >"$ARTIFACT_DIR/invocation-networks.json" 2>/dev/null && \
-    docker inspect "$UDS_EXECUTE_CLIENT_NAME" >"$ARTIFACT_DIR/uds-execute-client-inspect.json" 2>/dev/null && \
-    docker top "$SANDBOX_NAME" -eo pid,args >"$ARTIFACT_DIR/sandbox-processes.txt" 2>/dev/null && \
-    docker top "$GATEWAY_NAME" -eo pid,args >"$ARTIFACT_DIR/gateway-processes.txt" 2>/dev/null && \
-    docker top "$UDS_EXECUTE_CLIENT_NAME" -eo pid,args >"$ARTIFACT_DIR/uds-client-processes.txt" 2>/dev/null && \
-    docker exec "$GATEWAY_NAME" sh -c '! grep -q "api.hubapi.com" /etc/hosts'; then
-    printf 'SAFE\n' >"$ARTIFACT_DIR/gateway-self-shadow.txt"
-    TOPOLOGY_CAPTURED=1
-    break
-  fi
-  sleep 0.01
-done
+if ! wait "$OBSERVATION_WATCHER_PID"; then
+  OBSERVATION_WATCHER_PID=''
+  fail 'Exact acceptance gateway could not be held at startup.'
+fi
+OBSERVATION_WATCHER_PID=''
+acceptance_invocation_container_has_exact_identity "$GATEWAY_NAME" "$INVOCATION_ID" || fail 'Startup-held gateway identity changed.'
+[[ "$(docker inspect --format '{{.State.Running}}|{{.State.Paused}}' "$GATEWAY_NAME" 2>/dev/null)" == 'true|true' ]] || fail 'Startup gateway hold was not proven.'
+OBSERVATION_GATEWAY_PAUSED=1
+printf 'STARTUP_GATEWAY_HELD\n' >"$ARTIFACT_DIR/observation-start-held.txt"
+start_gateway_log_watcher "$GATEWAY_NAME" "$ARTIFACT_DIR/live-gateway-logs.txt" || fail 'Bounded gateway log watcher could not attach.'
+hold_gateway_after_ready "$GATEWAY_NAME" "$INVOCATION_ID" "$REQUEST_ID" "$ARTIFACT_DIR/live-gateway-logs.txt" || fail 'Gateway readiness observation barrier was not established.'
+[[ "$OBSERVATION_HELD" == '1' && "$OBSERVATION_GATEWAY_PAUSED" == '1' && "$OBSERVATION_RELEASED" == '0' ]] || fail 'Observation held state is invalid.'
+wait_for_sandbox_running_exact "$SANDBOX_NAME" "$INVOCATION_ID" || fail 'Exact acceptance sandbox did not reach the held topology.'
+wait_for_execute_client_running || fail 'UDS execute client did not remain inspectable during the held topology.'
+
+docker inspect "$SANDBOX_NAME" "$GATEWAY_NAME" >"$ARTIFACT_DIR/invocation-inspect.json"
+docker network inspect "$INTERNAL_NAME" "$EGRESS_NAME" >"$ARTIFACT_DIR/invocation-networks.json"
+docker inspect "$UDS_EXECUTE_CLIENT_NAME" >"$ARTIFACT_DIR/uds-execute-client-inspect.json"
+validate_uds_client_inspect "$ARTIFACT_DIR/uds-execute-client-inspect.json"
+docker top "$SANDBOX_NAME" -eo pid,args >"$ARTIFACT_DIR/sandbox-processes.txt"
+docker top "$GATEWAY_NAME" -eo pid,args >"$ARTIFACT_DIR/gateway-processes.txt"
+docker top "$UDS_EXECUTE_CLIENT_NAME" -eo pid,args >"$ARTIFACT_DIR/uds-client-processes.txt"
+docker exec "$GATEWAY_NAME" sh -c '! grep -q "api.hubapi.com" /etc/hosts' || fail 'Gateway canonical hostname is shadowed.'
+printf 'SAFE\n' >"$ARTIFACT_DIR/gateway-self-shadow.txt"
+TOPOLOGY_CAPTURED=1
+
+unpause_acceptance_gateway_exact "$GATEWAY_NAME" "$INVOCATION_ID" || fail 'Exact acceptance gateway could not be released.'
+OBSERVATION_GATEWAY_PAUSED=0
+OBSERVATION_RELEASED=1
+printf 'OBSERVATION_RELEASED\n' >"$ARTIFACT_DIR/observation-released.txt"
 wait "$EXECUTE_PID"
-wait "$GATEWAY_WATCHER_PID" || true
-[[ "$TOPOLOGY_CAPTURED" == '1' ]] || fail 'Invocation topology was not captured.'
+EXECUTE_PID=''
+wait "$OBSERVATION_WATCHER_PID" >/dev/null 2>&1 || true
+OBSERVATION_WATCHER_PID=''
+[[ "$TOPOLOGY_CAPTURED" == '1' && "$OBSERVATION_RELEASED" == '1' ]] || fail 'Topology capture did not complete before gateway release.'
 node - "$ARTIFACT_DIR/invocation-inspect.json" "$ARTIFACT_DIR/invocation-networks.json" "$INVOCATION_ID" "$INTERNAL_NAME" "$EGRESS_NAME" <<'NODE'
 const fs = require('node:fs');
 const [sandbox, gateway] = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
@@ -615,9 +816,16 @@ RUNTIME_SURFACES=(
   "$ARTIFACT_DIR/supervisor-inspect.json"
   "$ARTIFACT_DIR/uds-client-inspect.json"
   "$ARTIFACT_DIR/uds-execute-client-inspect.json"
+  "$ARTIFACT_DIR/uds-execute-client-latest-inspect.json"
   "$ARTIFACT_DIR/invocation-inspect.json"
   "$ARTIFACT_DIR/invocation-networks.json"
   "$ARTIFACT_DIR/live-gateway-logs.txt"
+  "$ARTIFACT_DIR/observation-start-watcher-process.txt"
+  "$ARTIFACT_DIR/observation-start-held.txt"
+  "$ARTIFACT_DIR/observation-watcher-process.txt"
+  "$ARTIFACT_DIR/observation-held.txt"
+  "$ARTIFACT_DIR/observation-released.txt"
+  "$ARTIFACT_DIR/gateway-self-shadow.txt"
   "$ARTIFACT_DIR/supervisor-processes.txt"
   "$ARTIFACT_DIR/sandbox-processes.txt"
   "$ARTIFACT_DIR/gateway-processes.txt"
@@ -676,6 +884,8 @@ SUPERVISOR_HARDENING=PASS
 UDS_ONLY_CONTROL_PLANE=PASS
 DOCKER_SOCKET_SUPERVISOR_ONLY=PASS
 HEALTH_OVER_UDS=PASS
+DETERMINISTIC_OBSERVATION_BARRIER=PASS
+OBSERVATION_GATEWAY_RELEASE=PASS
 CONCRETE_ENGINE_TOPOLOGY=PASS
 DYNAMIC_GATEWAY_IP=PASS
 SANDBOX_INTERNAL_ONLY=PASS

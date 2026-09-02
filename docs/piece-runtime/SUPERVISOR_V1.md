@@ -250,6 +250,28 @@ occurred. Hardened cleanup passed, left zero Step 5B.1 resources, and left the
 Connector Runner, Activepieces app/worker, and Redis unchanged. This was an
 owner-harness ownership-transition failure, not a runtime security failure.
 
+### Step 5B.1 owner-host attempt 2
+
+The second Ubuntu owner-host attempt used source SHA
+`be6414cb34570082a8f06200ce6e70b9d88bb678`. The source and pre-run resource
+gates passed, all three acceptance images built, and the ownership/UDS-client
+correction passed the previous blocker. A real invocation reached the transient
+gateway/sandbox phase, but the harness failed before it could capture every
+short-lived topology surface simultaneously. Post-failure cleanup passed: all
+temporary containers, networks, helpers, and images were absent, and the
+Connector Runner, Activepieces app/worker, and Redis were unchanged. This is
+classified as a harness observation race; it did not establish a runtime
+security failure. The provider result from this attempt was not accepted
+because the remaining evidence checks had not completed.
+
+The corrected host harness establishes an acceptance-only observation barrier.
+It arms a bounded start observer before submitting the UDS request, pauses only
+the exact, label-verified invocation gateway, attaches a bounded
+credential-blind log watcher, requires the real structured
+`piece_gateway_ready` event, and proves the gateway is running and paused before
+capturing topology. The gateway is unpaused before the real provider request is
+allowed to complete. This pause boundary is not part of the runtime or product.
+
 Step 5B.2 must still design and review the Connector Runner-to-UDS integration,
 production service ownership/group setup, deployment/rollback, stronger image
 identity pinning, production monitoring, real host restart/shutdown behavior,
