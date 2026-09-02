@@ -340,6 +340,17 @@ numeric provider-status normalization is the remaining blocker. Step 5B.1 is
 not accepted until that correction is reviewed and the owner-host acceptance is
 rerun.
 
+### Step 5B.1 owner-host attempt 6
+
+The provider-normalization correction at `9b7c456` passed its static checks,
+push, and Vercel build gates. The subsequent owner-host rerun stopped in the
+source gate before any Docker or runtime execution because the harness allowlist
+did not yet include the reviewed `errors.mjs` correction and its Step 5A runtime
+test. No conclusion about provider normalization, runtime behavior, or security
+can be drawn from this attempt, and the harness started no acceptance resources.
+The two exact reviewed paths must be added to the fail-closed source allowlist
+before another owner-host rerun. Step 5B.1 remains unaccepted.
+
 Step 5B.2 must still design and review the Connector Runner-to-UDS integration,
 production service ownership/group setup, deployment/rollback, stronger image
 identity pinning, production monitoring, real host restart/shutdown behavior,

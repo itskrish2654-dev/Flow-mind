@@ -791,6 +791,51 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.doesNotMatch(harness, /--privileged|--network host|vercel deploy|git push|docker rm \$\(docker ps -aq\)/);
   });
 
+  test("owner harness source gate explicitly permits only reviewed Step 5B.1 files", () => {
+    const harness = readFileSync(resolve(ROOT, "scripts/e50-step5b1-supervisor-host-acceptance.sh"), "utf8");
+    const match = harness.match(/\[\[ "\$file" =~ \^\(([^\r\n]+)\)\$ \]\]/);
+    assert.ok(match);
+    const allowlistSource = match[1];
+    const allowed = new RegExp(`^(${allowlistSource})$`);
+
+    for (const file of [
+      "services/piece-runtime/Dockerfile.supervisor",
+      "services/piece-runtime/src/docker-client.mjs",
+      "services/piece-runtime/src/docker-piece-container-engine.mjs",
+      "services/piece-runtime/src/supervisor-constants.mjs",
+      "services/piece-runtime/src/supervisor-errors.mjs",
+      "services/piece-runtime/src/supervisor-protocol.mjs",
+      "services/piece-runtime/src/supervisor-service.mjs",
+      "services/piece-runtime/src/supervisor-server.mjs",
+      "services/piece-runtime/src/supervisor.mjs",
+      "services/piece-runtime/src/errors.mjs",
+      "scripts/e50-step5b1-supervisor-host-acceptance.sh",
+      "docs/piece-runtime/SUPERVISOR_V1.md",
+      "tests/essential-fifty-step-five-b-supervisor.test.ts",
+      "tests/essential-fifty-step-five-runtime.test.ts",
+    ]) {
+      assert.equal(allowed.test(file), true, file);
+    }
+
+    for (const file of [
+      "services/piece-runtime/src/runtime.mjs",
+      "services/piece-runtime/src/worker.mjs",
+      "services/piece-runtime/src/gateway.mjs",
+      "services/piece-runtime/src/manifest-registry.mjs",
+      "services/piece-runtime/src/build-registry.mjs",
+      "services/connector-runner/src/runner.mjs",
+      "app/page.tsx",
+      "lib/capability-registry.ts",
+    ]) {
+      assert.equal(allowed.test(file), false, file);
+    }
+
+    assert.doesNotMatch(allowlistSource, /services\/piece-runtime\/src\/(?:\\?\.\*|\[\^)/);
+    assert.match(harness, /E50_EXPECTED_STEP5B1_COMMIT/);
+    assert.match(harness, /git rev-parse origin\/main/);
+    assert.match(harness, /git merge-base --is-ancestor "\$ACCEPTED_STEP5A" HEAD/);
+  });
+
   test("owner harness cleanup is exact-resource scoped and safe on preflight failure", () => {
     const harness = readFileSync(resolve(ROOT, "scripts/e50-step5b1-supervisor-host-acceptance.sh"), "utf8");
     const cleanup = harness.match(/\ncleanup\(\) \{\n([\s\S]*?)\n\}/)?.[1];
