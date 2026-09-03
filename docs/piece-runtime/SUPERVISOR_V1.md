@@ -381,6 +381,27 @@ DNS retry, and the provider operation remains exactly one attempt with no safe
 automatic retry. Step 5B.1 remains unaccepted pending static review, push/build
 gates, and real owner-host proof.
 
+### Step 5B.1 owner-host attempt 9
+
+Commit `d14e643` passed static, push, and Vercel gates, but owner-host
+acceptance still failed after execution topology creation. DNS evidence remained
+zero, the connection outcome was `PIECE_EGRESS_DENIED`, and the provider result
+remained `PIECE_RUNTIME_FAILED`; the provider assertion was not reached. The
+independent failed-run cleanup passed with zero owner containers, zero owner
+networks, no acceptance images, and the Connector Runner, Activepieces app,
+Activepieces worker, and Redis still running with zero restarts. This does not
+prove the precise real-host resolver failure code.
+
+Intermittent pre-connect DNS resolution remains reproducible; `d14e643`'s
+family-coupled settlement is a confirmed resilience defect and is insufficient
+for stalled-family cases. Its raw A and AAAA promises still met at one
+`Promise.allSettled`, so a safe partial family could not survive a never-settling
+sibling before the total deadline. The narrow correction independently bounds
+each DNS family, reserves time for the permitted second attempt, and limits an
+invocation to four raw resolver operations. It does not redesign the gateway,
+resources, supervisor, provider execution, or credentials. Step 5B.1 remains
+unaccepted pending static review, push/build gates, and real owner-host proof.
+
 Step 5B.2 must still design and review the Connector Runner-to-UDS integration,
 production service ownership/group setup, deployment/rollback, stronger image
 identity pinning, production monitoring, real host restart/shutdown behavior,

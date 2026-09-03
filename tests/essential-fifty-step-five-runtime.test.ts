@@ -36,6 +36,35 @@ import { parseTlsClientHello } from "../services/piece-runtime/src/tls-client-he
 
 const ROOT = resolve(import.meta.dirname, "..");
 
+function deterministicFamilyDeadlines(
+  clock: { value: number },
+  windows: Array<{ attempt: number; family: number; windowMs: number }>,
+) {
+  const advancedAttempts = new Set<number>();
+  return (windowMs: number, context: { attempt: number; family: number }) => {
+    let active = true;
+    let handle: NodeJS.Immediate | undefined;
+    const promise = new Promise<void>((resolveDeadline) => {
+      handle = setImmediate(() => {
+        if (!active) return;
+        windows.push({ ...context, windowMs });
+        if (!advancedAttempts.has(context.attempt)) {
+          advancedAttempts.add(context.attempt);
+          clock.value += windowMs;
+        }
+        resolveDeadline();
+      });
+    });
+    return {
+      promise,
+      cancel() {
+        active = false;
+        if (handle) clearImmediate(handle);
+      },
+    };
+  };
+}
+
 function request(overrides: Record<string, unknown> = {}) {
   return {
     protocolVersion: 1,
@@ -506,6 +535,156 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
       },
     ));
     assert.equal(unknownCalls, 1);
+  });
+
+  test("DNS families settle independently when one or both resolvers never settle", async () => {
+    const destination = { hostname: "api.hubapi.com", port: 443, protocol: "tls" };
+    const safe4 = [{ address: "8.8.8.8", ttl: 60 }];
+    const safe6 = [{ address: "2606:4700:4700::1111", ttl: 60 }];
+    const never = () => new Promise<Array<{ address: string; ttl: number }>>(() => {});
+
+    let calls4 = 0;
+    let calls6 = 0;
+    let clock = { value: 0 };
+    let windows: Array<{ attempt: number; family: number; windowMs: number }> = [];
+    const safeA = await resolveManifestDestination(destination, {
+      resolve4: async () => { calls4 += 1; return safe4; },
+      resolve6: () => { calls6 += 1; return never(); },
+      timeoutMs: 100,
+      now: () => clock.value,
+      sleep: async (delayMs: number) => { clock.value += delayMs; },
+      createFamilyDeadline: deterministicFamilyDeadlines(clock, windows),
+    });
+    assert.equal(safeA.pinnedAddress, safe4[0].address);
+    assert.deepEqual([calls4, calls6], [1, 1]);
+    assert.ok(windows.every(({ attempt }) => attempt === 1));
+
+    calls4 = 0;
+    calls6 = 0;
+    clock = { value: 0 };
+    windows = [];
+    const safeAaaa = await resolveManifestDestination(destination, {
+      resolve4: () => { calls4 += 1; return never(); },
+      resolve6: async () => { calls6 += 1; return safe6; },
+      timeoutMs: 100,
+      now: () => clock.value,
+      sleep: async (delayMs: number) => { clock.value += delayMs; },
+      createFamilyDeadline: deterministicFamilyDeadlines(clock, windows),
+    });
+    assert.equal(safeAaaa.pinnedAddress, safe6[0].address);
+    assert.deepEqual([calls4, calls6], [1, 1]);
+
+    calls4 = 0;
+    calls6 = 0;
+    clock = { value: 0 };
+    windows = [];
+    const recovered = await resolveManifestDestination(destination, {
+      resolve4: () => { calls4 += 1; return calls4 === 1 ? never() : Promise.resolve(safe4); },
+      resolve6: () => { calls6 += 1; return calls6 === 1 ? never() : Promise.resolve(safe6); },
+      timeoutMs: 100,
+      now: () => clock.value,
+      sleep: async (delayMs: number) => { clock.value += delayMs; },
+      createFamilyDeadline: deterministicFamilyDeadlines(clock, windows),
+    });
+    assert.equal(recovered.pinnedAddress, safe4[0].address);
+    assert.deepEqual([calls4, calls6], [2, 2]);
+    assert.equal(calls4 + calls6, 4);
+    assert.ok(windows.some(({ attempt }) => attempt === 1));
+    assert.ok(clock.value < 100);
+  });
+
+  test("stalled DNS remains bounded and late resolver completion cannot alter the selected result", async () => {
+    const destination = { hostname: "api.hubapi.com", port: 443, protocol: "tls" };
+    const safe4 = [{ address: "8.8.8.8", ttl: 60 }];
+    const never = () => new Promise<Array<{ address: string; ttl: number }>>(() => {});
+    const dnsError = (code: string) => Object.assign(new Error("private resolver detail"), { code });
+    const denied = async (promise: Promise<unknown>) => assert.rejects(
+      promise,
+      (error: unknown) => error instanceof Error && "code" in error && ["PIECE_EGRESS_DENIED", "PIECE_TIMEOUT"].includes(String(error.code)),
+    );
+
+    let calls4 = 0;
+    let calls6 = 0;
+    let clock = { value: 0 };
+    let windows: Array<{ attempt: number; family: number; windowMs: number }> = [];
+    await denied(resolveManifestDestination(destination, {
+      resolve4: () => { calls4 += 1; return never(); },
+      resolve6: () => { calls6 += 1; return never(); },
+      timeoutMs: 100,
+      now: () => clock.value,
+      sleep: async (delayMs: number) => { clock.value += delayMs; },
+      createFamilyDeadline: deterministicFamilyDeadlines(clock, windows),
+    }));
+    assert.deepEqual([calls4, calls6], [2, 2]);
+    assert.equal(calls4 + calls6, 4);
+    assert.equal(clock.value, 100);
+    assert.ok(windows.filter(({ attempt }) => attempt === 1).every(({ windowMs }) => windowMs < 100));
+
+    for (const unsafeOrMalformed of [
+      [{ address: "10.0.0.1", ttl: 60 }],
+      [{ address: "not-an-address", ttl: 60 }],
+    ]) {
+      calls4 = 0;
+      calls6 = 0;
+      clock = { value: 0 };
+      windows = [];
+      await assert.rejects(
+        resolveManifestDestination(destination, {
+          resolve4: async () => { calls4 += 1; return unsafeOrMalformed; },
+          resolve6: () => { calls6 += 1; return never(); },
+          timeoutMs: 100,
+          now: () => clock.value,
+          sleep: async (delayMs: number) => { clock.value += delayMs; },
+          createFamilyDeadline: deterministicFamilyDeadlines(clock, windows),
+        }),
+        (error: unknown) => error instanceof Error && "code" in error && error.code === "PIECE_EGRESS_DENIED",
+      );
+      assert.deepEqual([calls4, calls6], [1, 1]);
+      assert.equal(clock.value, 0);
+    }
+
+    let resolveLate!: (records: Array<{ address: string; ttl: number }>) => void;
+    const lateResolution = new Promise<Array<{ address: string; ttl: number }>>((resolveLateRecords) => {
+      resolveLate = resolveLateRecords;
+    });
+    clock = { value: 0 };
+    windows = [];
+    const selected = await resolveManifestDestination(destination, {
+      resolve4: async () => safe4,
+      resolve6: () => lateResolution,
+      timeoutMs: 100,
+      now: () => clock.value,
+      sleep: async (delayMs: number) => { clock.value += delayMs; },
+      createFamilyDeadline: deterministicFamilyDeadlines(clock, windows),
+    });
+    resolveLate([{ address: "::1", ttl: 60 }]);
+    await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
+    assert.equal(selected.pinnedAddress, safe4[0].address);
+
+    let rejectLate!: (error: Error) => void;
+    const lateRejection = new Promise<Array<{ address: string; ttl: number }>>((_, rejectLateResolver) => {
+      rejectLate = rejectLateResolver;
+    });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      clock = { value: 0 };
+      windows = [];
+      await resolveManifestDestination(destination, {
+        resolve4: async () => safe4,
+        resolve6: () => lateRejection,
+        timeoutMs: 100,
+        now: () => clock.value,
+        sleep: async (delayMs: number) => { clock.value += delayMs; },
+        createFamilyDeadline: deterministicFamilyDeadlines(clock, windows),
+      });
+      rejectLate(dnsError("ESERVFAIL"));
+      await new Promise<void>((resolveTurn) => setImmediate(resolveTurn));
+      assert.deepEqual(unhandled, []);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 
   test("DNS retry is bounded to two pre-connect attempts under one total deadline", async () => {

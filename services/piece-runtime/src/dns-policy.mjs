@@ -12,6 +12,12 @@ const TRANSIENT_DNS_CODES = Object.freeze([
   "EREFUSED",
   "ECONNREFUSED",
 ]);
+const FAMILY_OUTCOME = Object.freeze({
+  SAFE_RECORDS: "SAFE_RECORDS",
+  NO_DATA: "NO_DATA",
+  TRANSIENT_FAILURE: "TRANSIENT_FAILURE",
+  FAIL_CLOSED: "FAIL_CLOSED",
+});
 
 function normalize(records, family) {
   if (!Array.isArray(records)) throw new PieceRuntimeError("PIECE_EGRESS_DENIED");
@@ -44,41 +50,91 @@ function timeoutFailure() {
   return new PieceRuntimeError("PIECE_TIMEOUT", true);
 }
 
-async function settleWithinDeadline(resolvers, deadline, now) {
-  const remainingMs = deadline - now();
-  if (remainingMs <= 0) throw timeoutFailure();
+function defaultFamilyDeadline(windowMs) {
   let timer;
+  return {
+    promise: new Promise((resolve) => {
+      timer = setTimeout(resolve, windowMs);
+    }),
+    cancel() {
+      if (timer) clearTimeout(timer);
+    },
+  };
+}
+
+function classifyRecords(records, family) {
   try {
-    const outcomes = await Promise.race([
-      Promise.allSettled(resolvers.map((resolver) => Promise.resolve().then(resolver))),
-      new Promise((_, reject) => {
-        timer = setTimeout(() => reject(timeoutFailure()), remainingMs);
-      }),
-    ]);
-    if (now() >= deadline) throw timeoutFailure();
-    return outcomes;
-  } finally {
-    if (timer) clearTimeout(timer);
+    const normalized = normalize(records, family);
+    if (!normalized.every((record) => isSafePublicAddress(record.address))) {
+      return { kind: FAMILY_OUTCOME.FAIL_CLOSED, records: [] };
+    }
+    return normalized.length > 0
+      ? { kind: FAMILY_OUTCOME.SAFE_RECORDS, records: normalized }
+      : { kind: FAMILY_OUTCOME.NO_DATA, records: [] };
+  } catch {
+    return { kind: FAMILY_OUTCOME.FAIL_CLOSED, records: [] };
   }
 }
 
-function validatedRecords(outcomes) {
-  const records = [];
-  for (let index = 0; index < outcomes.length; index += 1) {
-    const outcome = outcomes[index];
-    if (outcome.status === "fulfilled") {
-      records.push(...normalize(outcome.value, index === 0 ? 4 : 6));
-    }
+function classifyResolverError(error) {
+  if (noData(error)) return { kind: FAMILY_OUTCOME.NO_DATA, records: [] };
+  if (transientDnsFailure(error)) return { kind: FAMILY_OUTCOME.TRANSIENT_FAILURE, records: [] };
+  return { kind: FAMILY_OUTCOME.FAIL_CLOSED, records: [] };
+}
+
+function createFamilyResolution({ resolver, hostname, family, windowMs, attempt, createFamilyDeadline }) {
+  let cancelResolution;
+  const cancellation = new Promise((resolve) => {
+    cancelResolution = () => resolve({ kind: FAMILY_OUTCOME.TRANSIENT_FAILURE, records: [] });
+  });
+  const resolverOutcome = Promise.resolve()
+    .then(() => resolver(hostname))
+    .then(
+      (records) => classifyRecords(records, family),
+      (error) => classifyResolverError(error),
+    );
+  const deadline = createFamilyDeadline(windowMs, { attempt, family });
+  const deadlineOutcome = Promise.resolve(deadline.promise).then(
+    () => ({ kind: FAMILY_OUTCOME.TRANSIENT_FAILURE, records: [] }),
+    () => ({ kind: FAMILY_OUTCOME.FAIL_CLOSED, records: [] }),
+  );
+  const promise = Promise.race([resolverOutcome, deadlineOutcome, cancellation])
+    .finally(() => deadline.cancel());
+  return { promise, cancel: cancelResolution };
+}
+
+async function resolveFamilyPair({ resolve4, resolve6, hostname, windowMs, attempt, createFamilyDeadline }) {
+  const tasks = [
+    createFamilyResolution({ resolver: resolve4, hostname, family: 4, windowMs, attempt, createFamilyDeadline }),
+    createFamilyResolution({ resolver: resolve6, hostname, family: 6, windowMs, attempt, createFamilyDeadline }),
+  ];
+  const first = await Promise.race(tasks.map((task, index) => task.promise.then((outcome) => ({ index, outcome }))));
+  if (first.outcome.kind === FAMILY_OUTCOME.FAIL_CLOSED) {
+    const siblingIndex = first.index === 0 ? 1 : 0;
+    tasks[siblingIndex].cancel();
+    await tasks[siblingIndex].promise;
+    return first.index === 0
+      ? [first.outcome, { kind: FAMILY_OUTCOME.TRANSIENT_FAILURE, records: [] }]
+      : [{ kind: FAMILY_OUTCOME.TRANSIENT_FAILURE, records: [] }, first.outcome];
   }
-  if (!records.every((record) => isSafePublicAddress(record.address))) {
-    throw new PieceRuntimeError("PIECE_EGRESS_DENIED");
+  const siblingIndex = first.index === 0 ? 1 : 0;
+  const sibling = await tasks[siblingIndex].promise;
+  return first.index === 0 ? [first.outcome, sibling] : [sibling, first.outcome];
+}
+
+function attemptTiming(remainingMs, attemptsRemaining) {
+  const wholeRemainingMs = Math.floor(remainingMs);
+  if (wholeRemainingMs < 1) throw timeoutFailure();
+  if (attemptsRemaining === 1) {
+    return { windowMs: wholeRemainingMs, retryDelayMs: 0 };
   }
-  for (const outcome of outcomes) {
-    if (outcome.status === "rejected" && !noData(outcome.reason) && !transientDnsFailure(outcome.reason)) {
-      throw new PieceRuntimeError("PIECE_EGRESS_DENIED");
-    }
-  }
-  return records;
+  const retryDelayMs = Math.min(
+    DNS_RETRY_DELAY_MS,
+    Math.max(0, wholeRemainingMs - attemptsRemaining),
+  );
+  const windowMs = Math.floor((wholeRemainingMs - retryDelayMs) / attemptsRemaining);
+  if (windowMs < 1) throw timeoutFailure();
+  return { windowMs, retryDelayMs };
 }
 
 export async function resolveManifestDestination(destination, dependencies = {}) {
@@ -98,15 +154,24 @@ export async function resolveManifestDestination(destination, dependencies = {})
   const timeoutMs = dependencies.timeoutMs ?? 1_500;
   const now = dependencies.now ?? Date.now;
   const sleep = dependencies.sleep ?? ((delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)));
+  const createFamilyDeadline = dependencies.createFamilyDeadline ?? defaultFamilyDeadline;
   const deadline = now() + timeoutMs;
 
   for (let attempt = 1; attempt <= MAX_DNS_ATTEMPTS; attempt += 1) {
-    const outcomes = await settleWithinDeadline(
-      [() => resolve4(destination.hostname), () => resolve6(destination.hostname)],
-      deadline,
-      now,
-    );
-    const records = validatedRecords(outcomes);
+    const timing = attemptTiming(deadline - now(), MAX_DNS_ATTEMPTS - attempt + 1);
+    const outcomes = await resolveFamilyPair({
+      resolve4,
+      resolve6,
+      hostname: destination.hostname,
+      windowMs: timing.windowMs,
+      attempt,
+      createFamilyDeadline,
+    });
+    if (now() >= deadline) throw timeoutFailure();
+    if (outcomes.some((outcome) => outcome.kind === FAMILY_OUTCOME.FAIL_CLOSED)) {
+      throw new PieceRuntimeError("PIECE_EGRESS_DENIED");
+    }
+    const records = outcomes.flatMap((outcome) => outcome.records);
     if (records.length > 0) {
       return Object.freeze({
         hostname: destination.hostname,
@@ -118,8 +183,7 @@ export async function resolveManifestDestination(destination, dependencies = {})
     }
     if (attempt === MAX_DNS_ATTEMPTS) break;
     const remainingMs = deadline - now();
-    if (remainingMs <= 0) throw timeoutFailure();
-    const delayMs = Math.min(DNS_RETRY_DELAY_MS, Math.max(0, remainingMs - 1));
+    const delayMs = Math.min(timing.retryDelayMs, Math.max(0, Math.floor(remainingMs) - 1));
     if (delayMs > 0) await sleep(delayMs);
     if (now() >= deadline) throw timeoutFailure();
   }
