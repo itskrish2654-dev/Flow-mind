@@ -6,10 +6,14 @@ umask 077
 : "${E50_EXPECTED_COMMIT:?Set E50_EXPECTED_COMMIT to the reviewed branch commit.}"
 
 EXPECTED_ORIGIN_MAIN='20c23d7e85123eaa77a916ce43f4a9ef5ca8a5e7'
+HOST_UID="$(id -u)"
+HOST_GID="$(id -g)"
 BROKER_NAME='crazyloops-piece-egress-broker'
 BROKER_IMAGE='crazyloops/piece-egress-broker:step5b1'
 SUPERVISOR_NAME='cl-piece-step5b1-broker-supervisor'
 SUPERVISOR_IMAGE='crazyloops/piece-supervisor:step5b1-broker-acceptance'
+SUPERVISOR_HEALTH_NAME='cl-piece-step5b1-broker-health'
+CONTROL_RESTORE_NAME='cl-piece-step5b1-broker-control-restore'
 SANDBOX_IMAGE='crazyloops/piece-runtime-hubspot:0.8.10-step5a'
 CONTROL_VOLUME='crazyloops-piece-egress-control'
 SUPERVISOR_CONTROL="$(mktemp -d /tmp/cl-e50-step5b1-supervisor.XXXXXX)"
@@ -83,8 +87,23 @@ sanitize_failure_evidence() {
   CANARY_B64=''
 }
 
+restore_supervisor_control_ownership() {
+  [[ -d "$SUPERVISOR_CONTROL" ]] || return 0
+  [[ "$(stat -c '%u:%g' "$SUPERVISOR_CONTROL" 2>/dev/null)" == "$HOST_UID:$HOST_GID" ]] && return 0
+  docker rm -f "$CONTROL_RESTORE_NAME" >/dev/null 2>&1 || true
+  if ! timeout 15 docker run --rm --name "$CONTROL_RESTORE_NAME" --label "$OWNER_LABEL" \
+    --network none --read-only --cap-drop=ALL --cap-add=CHOWN --security-opt=no-new-privileges \
+    --pids-limit=8 --memory=33554432 --memory-swap=33554432 --cpus=0.1 --user=0:0 \
+    --mount type=bind,src="$SUPERVISOR_CONTROL",dst=/control \
+    --entrypoint /usr/bin/chown "$SUPERVISOR_IMAGE" "$HOST_UID:$HOST_GID" /control >/dev/null; then
+    return 1
+  fi
+  [[ "$(stat -c '%u:%g' "$SUPERVISOR_CONTROL" 2>/dev/null)" == "$HOST_UID:$HOST_GID" ]]
+}
+
 cleanup() {
   local status="$1"
+  local control_restored=1
   trap - EXIT INT TERM
   set +e
   if (( status != 0 )); then capture_failure_diagnostics; fi
@@ -94,8 +113,13 @@ cleanup() {
   docker ps -aq --filter "label=$OWNER_LABEL" | xargs -r docker rm -f >/dev/null 2>&1
   docker network ls -q --filter "label=$OWNER_LABEL" | xargs -r docker network rm >/dev/null 2>&1
   docker volume rm "$CONTROL_VOLUME" >/dev/null 2>&1
+  if ! restore_supervisor_control_ownership; then
+    control_restored=0
+    status=1
+    printf 'STEP5B1 cleanup could not restore supervisor control directory ownership.\n' >&2
+  fi
+  if (( control_restored == 1 )); then rm -rf -- "$SUPERVISOR_CONTROL"; fi
   docker image rm "$SUPERVISOR_IMAGE" "$BROKER_IMAGE" "$SANDBOX_IMAGE" >/dev/null 2>&1
-  rm -rf -- "$SUPERVISOR_CONTROL"
   sanitize_failure_evidence
   if (( status == 0 )); then
     rm -rf -- "$ARTIFACT_DIR"
@@ -130,7 +154,7 @@ snapshot_protected "$ARTIFACT_DIR/protected-before.txt"
 [[ "$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{}' http://127.0.0.1:8788/v1/execute)" == '401' ]] || fail 'Runner unsigned check failed.'
 [[ "$(docker exec redis redis-cli PING)" == 'PONG' ]] || fail 'Redis health failed.'
 
-for name in "$BROKER_NAME" "$SUPERVISOR_NAME"; do ! docker inspect "$name" >/dev/null 2>&1 || fail "Reserved acceptance name exists: $name"; done
+for name in "$BROKER_NAME" "$SUPERVISOR_NAME" "$SUPERVISOR_HEALTH_NAME" "$CONTROL_RESTORE_NAME"; do ! docker inspect "$name" >/dev/null 2>&1 || fail "Reserved acceptance name exists: $name"; done
 ! docker volume inspect "$CONTROL_VOLUME" >/dev/null 2>&1 || fail 'Broker control volume already exists.'
 
 trap - EXIT
@@ -182,8 +206,57 @@ docker run -d --name "$SUPERVISOR_NAME" --label 'crazyloops.runtime=piece-runtim
   --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock --mount type=bind,src="$SUPERVISOR_CONTROL",dst=/run/crazyloops-piece \
   --mount type=volume,src="$CONTROL_VOLUME",dst=/run/crazyloops-egress-control "$SUPERVISOR_IMAGE" >/dev/null
 
-for _ in $(seq 1 100); do [[ -S "$SUPERVISOR_CONTROL/piece-supervisor.sock" ]] && break; sleep 0.05; done
-[[ -S "$SUPERVISOR_CONTROL/piece-supervisor.sock" ]] || fail 'Supervisor UDS missing.'
+SUPERVISOR_ID_BEFORE="$(docker inspect --format '{{.Id}}' "$SUPERVISOR_NAME")"
+SUPERVISOR_SOCKET_READY=0
+for _ in $(seq 1 100); do
+  if docker exec "$SUPERVISOR_NAME" node -e 'const fs=require("node:fs");if(!fs.lstatSync("/run/crazyloops-piece/piece-supervisor.sock").isSocket())process.exit(1)' >/dev/null 2>&1; then
+    SUPERVISOR_SOCKET_READY=1
+    break
+  fi
+  sleep 0.05
+done
+[[ "$SUPERVISOR_SOCKET_READY" == '1' ]] || fail 'Supervisor UDS missing internally.'
+[[ "$(docker inspect --format '{{.Id}}' "$SUPERVISOR_NAME")" == "$SUPERVISOR_ID_BEFORE" ]] || fail 'Supervisor identity changed during startup.'
+[[ "$(docker inspect --format '{{.State.Running}}|{{.RestartCount}}' "$SUPERVISOR_NAME")" == 'true|0' ]] || fail 'Supervisor startup state invalid.'
+printf 'SUPERVISOR_UDS_INTERNAL=PASS\n'
+
+SUPERVISOR_HEALTH="$(
+  timeout 10 docker run --rm --name "$SUPERVISOR_HEALTH_NAME" --label "$OWNER_LABEL" \
+    --network none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+    --pids-limit=16 --memory=67108864 --memory-swap=67108864 --cpus=0.25 --user=65532:65532 \
+    --mount type=bind,src="$SUPERVISOR_CONTROL",dst=/control,readonly \
+    --entrypoint node "$SUPERVISOR_IMAGE" - <<'NODE'
+const http = require('node:http');
+const chunks = [];
+let bytes = 0;
+let settled = false;
+const finish = (error) => {
+  if (settled) return;
+  settled = true;
+  if (error) process.exitCode = 1;
+};
+const request = http.request({ socketPath: '/control/piece-supervisor.sock', path: '/v1/health', method: 'GET', headers: { connection: 'close' } }, (response) => {
+  if (response.statusCode !== 200) { response.resume(); finish(new Error('status')); return; }
+  response.on('data', (value) => {
+    const chunk = Buffer.from(value);
+    bytes += chunk.length;
+    if (bytes > 4096) { response.destroy(); finish(new Error('output_limit')); return; }
+    chunks.push(chunk);
+  });
+  response.once('error', () => finish(new Error('response')));
+  response.once('end', () => {
+    if (settled) return;
+    process.stdout.write(Buffer.concat(chunks, bytes));
+    finish();
+  });
+});
+request.setTimeout(3000, () => request.destroy(new Error('timeout')));
+request.once('error', () => finish(new Error('request')));
+request.end();
+NODE
+)" || fail 'Supervisor UDS health client failed.'
+node -e 'const value=JSON.parse(process.argv[1]);const keys=Object.keys(value).sort().join(",");if(keys!=="activeInvocations,concurrencyLimit,ok,protocolVersion,status"||value.ok!==true||value.protocolVersion!==1||value.status!=="ready"||value.activeInvocations!==0||value.concurrencyLimit!==2)process.exit(1)' "$SUPERVISOR_HEALTH" || fail 'Supervisor UDS health response invalid.'
+printf 'SUPERVISOR_UDS_HEALTH=PASS\n'
 
 CANARY="E50_STEP5B1_BROKER_$(openssl rand -hex 32)"
 CANARY_B64="$(printf '%s' "$CANARY" | base64 -w0)"

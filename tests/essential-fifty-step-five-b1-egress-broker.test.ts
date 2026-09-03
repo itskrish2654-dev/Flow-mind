@@ -460,6 +460,32 @@ describe("Essential 50 Step 5B.1 long-lived egress broker", () => {
     assert.match(harness, /PIECE_AUTH_FAILED/); assert.match(harness, /upstreamConnections === 1/);
     assert.match(harness, /PROTECTED_SERVICES_UNCHANGED=PASS/);
     assert.doesNotMatch(harness, /docker compose|systemctl restart|vercel|supabase/);
+    assert.match(harness, /HOST_UID="\$\(id -u\)"/);
+    assert.match(harness, /HOST_GID="\$\(id -g\)"/);
+    assert.doesNotMatch(harness, /\[\[ -S "\$SUPERVISOR_CONTROL\/piece-supervisor\.sock" \]\]/);
+    const internalUdsProof = harness.indexOf("fs.lstatSync(\"/run/crazyloops-piece/piece-supervisor.sock\").isSocket()");
+    const internalUdsMarker = harness.indexOf("SUPERVISOR_UDS_INTERNAL=PASS", internalUdsProof);
+    const healthClient = harness.indexOf('docker run --rm --name "$SUPERVISOR_HEALTH_NAME"', internalUdsMarker);
+    const healthPath = harness.indexOf("path: '/v1/health'", healthClient);
+    const healthMarker = harness.indexOf("SUPERVISOR_UDS_HEALTH=PASS", healthPath);
+    const canaryGeneration = harness.indexOf('CANARY="E50_STEP5B1_BROKER_', healthMarker);
+    assert.ok(internalUdsProof >= 0 && internalUdsProof < internalUdsMarker && internalUdsMarker < healthClient);
+    assert.ok(healthClient < healthPath && healthPath < healthMarker && healthMarker < canaryGeneration);
+    const healthProof = harness.slice(healthClient, canaryGeneration);
+    assert.match(healthProof, /--network none/);
+    assert.match(healthProof, /--user=65532:65532/);
+    assert.match(healthProof, /ok!==true/);
+    assert.match(healthProof, /protocolVersion!==1/);
+    assert.match(healthProof, /status!=="ready"/);
+
+    const cleanup = harness.match(/cleanup\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    const restore = harness.match(/restore_supervisor_control_ownership\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    assert.match(restore, /"\$HOST_UID:\$HOST_GID" \/control/);
+    assert.match(restore, /stat -c '%u:%g'.*HOST_UID:\$HOST_GID/);
+    assert.ok(cleanup.indexOf('docker rm -f "$SUPERVISOR_NAME"') < cleanup.indexOf("restore_supervisor_control_ownership"));
+    assert.ok(cleanup.indexOf("restore_supervisor_control_ownership") < cleanup.indexOf('rm -rf -- "$SUPERVISOR_CONTROL"'));
+    assert.ok(cleanup.indexOf('rm -rf -- "$SUPERVISOR_CONTROL"') < cleanup.indexOf('docker image rm "$SUPERVISOR_IMAGE"'));
+    assert.doesNotMatch(harness, /chmod 0777|\bsudo\b/);
 
     const sandboxPause = harness.indexOf('docker pause "$SANDBOX_NAME"');
     const registrationLog = harness.indexOf("broker-before-sandbox-unpause.log", sandboxPause);
