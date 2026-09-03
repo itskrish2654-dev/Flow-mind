@@ -406,3 +406,39 @@ Step 5B.2 must still design and review the Connector Runner-to-UDS integration,
 production service ownership/group setup, deployment/rollback, stronger image
 identity pinning, production monitoring, real host restart/shutdown behavior,
 and customer credential/OAuth enablement. None of those are accepted here.
+
+### Step 5B.1 architecture pivot: long-lived Egress Broker V1
+
+The `d14e643` bounded DNS correction and the subsequent `6bbc5b6`
+independent-family correction both failed owner-host acceptance before provider
+authentication. Each run produced zero safe DNS evidence and a pre-provider
+`PIECE_EGRESS_DENIED` connection result. The final failed-run cleanup passed:
+no owned invocation containers or networks remained, and the Connector Runner,
+Activepieces app/worker, and Redis remained healthy without restarts. These
+observations do not prove a precise resolver-code defect and do not establish
+that Node or Docker DNS is generally broken.
+
+The per-invocation gateway and per-invocation egress network are therefore
+retired from the active execution path. The replacement is a separate,
+long-lived, credential-blind Egress Broker. It starts before invocations on its
+normal egress-capable bridge, creates one stable Resolver at process startup,
+and reuses the unchanged `resolveManifestDestination()` policy. For each
+invocation, the supervisor creates one internal network, temporarily attaches
+the existing broker, registers a short-lived policy over the dedicated control
+UDS, and only then starts the sandbox. The sandbox reaches the broker through
+an exact `/etc/hosts` mapping. The broker authorizes by its exact invocation
+interface address plus exact reviewed TLS SNI, connects once to the internally
+pinned numeric provider address, and relays encrypted TCP without terminating
+TLS or receiving credentials.
+
+Cleanup revokes the policy, removes the sandbox, detaches the broker, and
+removes the invocation network. The broker service and its dedicated control
+volume persist. Historical gateway sources and tests remain for prior evidence,
+but the active engine does not instantiate them.
+
+This pivot deliberately removes DNS from the short per-invocation gateway
+lifecycle. It does not claim that the earlier precise resolver implementation
+was proven defective. Step 5B.1 remains unaccepted until the broker-specific
+static gates, branch review/push/build process, and the new real owner-host
+acceptance script all pass. The host script is prepared but must not be run by
+Codex or outside the accepted production-candidate host.

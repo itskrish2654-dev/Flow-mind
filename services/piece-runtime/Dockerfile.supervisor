@@ -2,6 +2,7 @@ FROM docker.io/library/node:24.8.0-bookworm-slim@sha256:cadbfafeb6baf87eaaffa40b
 
 WORKDIR /piece-supervisor
 COPY src/deep-freeze.mjs src/errors.mjs src/build-registry.mjs src/manifest-registry.mjs src/protocol.mjs src/container-engine.mjs ./src/
+COPY src/egress-broker-constants.mjs src/egress-broker-client.mjs ./src/
 COPY src/supervisor-constants.mjs src/supervisor-errors.mjs src/supervisor-protocol.mjs src/docker-client.mjs src/docker-piece-container-engine.mjs src/supervisor-service.mjs src/supervisor-server.mjs src/supervisor.mjs ./src/
 RUN chown -R 65532:65532 /piece-supervisor && chmod -R go-w /piece-supervisor
 

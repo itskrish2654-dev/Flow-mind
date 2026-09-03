@@ -118,6 +118,10 @@ export class DockerEngineClient {
     await this.request("POST", `/networks/${encodePath(name)}/connect`, configuration);
   }
 
+  async disconnectNetwork(name, configuration) {
+    await this.request("POST", `/networks/${encodePath(name)}/disconnect`, configuration);
+  }
+
   async removeNetwork(name) {
     await this.request("DELETE", `/networks/${encodePath(name)}`);
   }

@@ -446,13 +446,11 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
     const plan = buildInvocationPlan(request());
     assert.deepEqual(plan.sandbox.canonicalHostMappings, [{
       hostname: "api.hubapi.com",
-      target: "gateway_internal_ip",
-      gatewayName: plan.names.gateway,
+      target: "egress_broker_internal_ip",
     }]);
-    assert.deepEqual(plan.gateway.internalAliases, [plan.names.gateway]);
-    assert.deepEqual(plan.gateway.providerHostAliases, []);
-    assert.deepEqual(plan.gateway.resolverHostnames, ["api.hubapi.com"]);
-    assert.equal(plan.gateway.internalAliases.includes("api.hubapi.com"), false);
+    assert.equal("gateway" in plan.names, false);
+    assert.equal("egressNetwork" in plan.names, false);
+    assert.equal(plan.broker.containerName, "crazyloops-piece-egress-broker");
     assert.equal(plan.sandbox.canonicalHostMappings.some(({ hostname }: { hostname: string }) => hostname === "redirect.example"), false);
   });
 
@@ -818,7 +816,7 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
     assert.match(gatewayDockerfile, /src\/gateway-evidence\.mjs/);
   });
 
-  test("container plan preserves the accepted sandbox/gateway security policy", () => {
+  test("container plan preserves the accepted sandbox policy and delegates egress to the broker", () => {
     const plan = buildInvocationPlan(request());
     assert.equal(plan.sandbox.internalOnlyNetwork, true);
     assert.equal(plan.buildId, "activepieces-hubspot-0_8_10");
@@ -835,11 +833,9 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
     assert.equal(plan.sandbox.nofile, "64:64");
     assert.deepEqual(plan.sandbox.mounts, []);
     assert.equal(plan.sandbox.dockerSocket, false);
-    assert.equal(plan.gateway.user, "65532:65532");
-    assert.equal(plan.gateway.memoryBytes, 64 * 1024 * 1024);
-    assert.equal(plan.gateway.cpus, 0.25);
-    assert.equal(plan.gateway.credentialAccess, false);
-    assert.deepEqual(plan.gateway.publishedPorts, []);
+    assert.equal(plan.broker.containerName, "crazyloops-piece-egress-broker");
+    assert.equal(plan.broker.credentialAccess, false);
+    assert.equal(plan.broker.tlsTermination, false);
     assert.equal(JSON.stringify(plan).includes("credential"), true);
     assert.equal(JSON.stringify(plan).includes("synthetic-secret"), false);
     assert.equal(Object.isFrozen(plan), true);

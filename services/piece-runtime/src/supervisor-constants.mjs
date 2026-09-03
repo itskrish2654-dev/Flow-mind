@@ -1,4 +1,5 @@
 import { deepFreeze } from "./deep-freeze.mjs";
+import { EGRESS_BROKER_CONTROL_VOLUME, EGRESS_BROKER_SOCKET_DIRECTORY } from "./egress-broker-constants.mjs";
 
 export const SUPERVISOR_PROTOCOL_VERSION = 1;
 export const SUPERVISOR_SOCKET_PATH = "/run/crazyloops-piece/piece-supervisor.sock";
@@ -45,5 +46,6 @@ export const SUPERVISOR_RUNTIME_SPEC = deepFreeze({
   mounts: [
     { source: "/var/run/docker.sock", target: "/var/run/docker.sock", readOnly: false },
     { source: "trusted_control_directory", target: SUPERVISOR_SOCKET_DIRECTORY, readOnly: false },
+    { source: EGRESS_BROKER_CONTROL_VOLUME, target: EGRESS_BROKER_SOCKET_DIRECTORY, readOnly: false },
   ],
 });

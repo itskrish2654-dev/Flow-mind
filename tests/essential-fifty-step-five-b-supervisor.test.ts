@@ -8,6 +8,7 @@ import test, { describe } from "node:test";
 
 import { buildInvocationPlan, PieceContainerEngine } from "../services/piece-runtime/src/container-engine.mjs";
 import { DockerClientError } from "../services/piece-runtime/src/docker-client.mjs";
+import { EGRESS_BROKER_CONTAINER_NAME, EGRESS_BROKER_LABELS } from "../services/piece-runtime/src/egress-broker-constants.mjs";
 import {
   DockerPieceContainerEngine,
   supervisorContainerConfigurations,
@@ -45,7 +46,7 @@ function supervisorLabels() {
 }
 
 function dockerEngine(docker: FakeDocker) {
-  return new DockerPieceContainerEngine({ docker, selfContainerName: SELF_CONTAINER_NAME });
+  return new DockerPieceContainerEngine({ docker, brokerClient: docker.brokerClient, selfContainerName: SELF_CONTAINER_NAME });
 }
 
 function invocation(requestId = "request-supervisor-1", overrides: Record<string, unknown> = {}) {
@@ -104,8 +105,7 @@ class FakeDocker {
   networks = new Map<string, Record<string, any>>();
   failAt: string | null = null;
   gatewayAddress = "10.90.0.7";
-  gatewayAddressBeforeStart: string | null = null;
-  gatewayAddressAssignedOnStart = false;
+  brokerClient = new FakeBrokerClient();
   workerOutput: Buffer;
   lastReturnedOutput: Buffer | null = null;
   listedContainers: Array<Record<string, any>> | null = null;
@@ -118,6 +118,13 @@ class FakeDocker {
       errorCode: "PIECE_AUTH_FAILED",
       retryable: false,
     }) + "\n");
+    this.containers.set(EGRESS_BROKER_CONTAINER_NAME, {
+      Id: "persistent-broker-id",
+      Name: `/${EGRESS_BROKER_CONTAINER_NAME}`,
+      Config: { Labels: EGRESS_BROKER_LABELS },
+      State: { Running: true },
+      NetworkSettings: { Networks: { bridge: { IPAddress: "172.17.0.2" } } },
+    });
   }
 
   record(method: string, ...args: unknown[]) {
@@ -142,8 +149,14 @@ class FakeDocker {
     this.record("connectNetwork", name, configuration);
     const container = this.containers.get(configuration.Container);
     if (!container) throw new DockerClientError("not_found", 404);
-    container.NetworkSettings.Networks[name] = { IPAddress: "" };
-    this.gatewayAddressBeforeStart = container.NetworkSettings.Networks[name].IPAddress;
+    container.NetworkSettings.Networks[name] = { IPAddress: this.gatewayAddress };
+  }
+
+  async disconnectNetwork(name: string, configuration: Record<string, any>) {
+    this.record("disconnectNetwork", name, configuration);
+    const container = this.containers.get(configuration.Container);
+    if (!container?.NetworkSettings?.Networks?.[name]) throw new DockerClientError("not_found", 404);
+    delete container.NetworkSettings.Networks[name];
   }
 
   async removeNetwork(name: string) {
@@ -172,7 +185,6 @@ class FakeDocker {
     for (const endpoint of Object.values(container.NetworkSettings.Networks) as Array<Record<string, any>>) {
       if (!endpoint.IPAddress && !endpoint.GlobalIPv6Address) endpoint.IPAddress = this.gatewayAddress;
     }
-    this.gatewayAddressAssignedOnStart = true;
   }
 
   async inspectContainer(name: string) {
@@ -219,6 +231,18 @@ class FakeDocker {
     this.record("listNetworks", label);
     return [...this.networks.values()];
   }
+}
+
+class FakeBrokerClient {
+  calls: Array<{ method: string; value?: any }> = [];
+  failRegister = false;
+  async health() { this.calls.push({ method: "health" }); return { ok: true, protocolVersion: 1, operation: "health", status: "ready" }; }
+  async register(value: any) {
+    this.calls.push({ method: "register", value });
+    if (this.failRegister) throw new PieceRuntimeError("PIECE_EGRESS_DENIED");
+    return { ok: true, protocolVersion: 1, operation: "register", invocationId: value.plan.invocationId, expiresAt: Date.now() + 10_000, destinations: [{ hostname: "api.hubapi.com", port: 443, evidence: [{ family: 4, ttl: 60, classification: "SAFE" }] }] };
+  }
+  async revoke(value: any) { this.calls.push({ method: "revoke", value }); return { ok: true, protocolVersion: 1, operation: "revoke", invocationId: value.plan.invocationId }; }
 }
 
 class HoldingEngine extends PieceContainerEngine {
@@ -274,47 +298,38 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     const result = await engine.runInvocation({ plan, request, credential });
     assert.equal(result.errorCode, "PIECE_AUTH_FAILED");
     const networkCreates = docker.calls.filter(({ method }) => method === "createNetwork").map(({ args }) => args[0] as any);
-    assert.equal(networkCreates.length, 2);
+    assert.equal(networkCreates.length, 1);
     assert.equal(networkCreates.find(({ Name }) => Name === plan.names.internalNetwork).Internal, true);
-    assert.equal(networkCreates.find(({ Name }) => Name === plan.names.egressNetwork).Internal, false);
     const containerCreates = docker.calls.filter(({ method }) => method === "createContainer");
-    const gateway = containerCreates.find(({ args }) => args[0] === plan.names.gateway)?.args[1] as any;
     const sandbox = containerCreates.find(({ args }) => args[0] === plan.names.sandbox)?.args[1] as any;
-    assert.deepEqual(Object.keys(gateway.NetworkingConfig.EndpointsConfig), [plan.names.egressNetwork]);
-    assert.deepEqual(gateway.HostConfig.Mounts, []);
+    assert.equal(containerCreates.length, 1);
     assert.deepEqual(Object.keys(sandbox.NetworkingConfig.EndpointsConfig), [plan.names.internalNetwork]);
     assert.deepEqual(sandbox.HostConfig.ExtraHosts, [`api.hubapi.com:${docker.gatewayAddress}`]);
     assert.deepEqual(sandbox.HostConfig.Mounts, []);
-    assert.equal(JSON.stringify({ gateway, sandbox }).includes("/var/run/docker.sock"), false);
-    assert.equal(docker.gatewayAddressBeforeStart, "");
-    assert.equal(docker.gatewayAddressAssignedOnStart, true);
+    assert.equal(JSON.stringify(sandbox).includes("/var/run/docker.sock"), false);
 
     const internalCreate = docker.calls.findIndex(({ method, args }) => method === "createNetwork" && (args[0] as any).Name === plan.names.internalNetwork);
-    const egressCreate = docker.calls.findIndex(({ method, args }) => method === "createNetwork" && (args[0] as any).Name === plan.names.egressNetwork);
-    const gatewayCreate = docker.calls.findIndex(({ method, args }) => method === "createContainer" && args[0] === plan.names.gateway);
-    const gatewayConnect = docker.calls.findIndex(({ method, args }) => method === "connectNetwork" && args[0] === plan.names.internalNetwork);
-    const gatewayStart = docker.calls.findIndex(({ method, args }) => method === "startContainer" && args[0] === plan.names.gateway);
-    const readyLog = docker.calls.findIndex(({ method, args }) => method === "containerLogs" && args[0] === plan.names.gateway);
-    const startedGatewayInspect = docker.calls.findIndex(({ method, args }, index) => index > readyLog && method === "inspectContainer" && args[0] === plan.names.gateway);
+    const brokerConnect = docker.calls.findIndex(({ method, args }) => method === "connectNetwork" && args[0] === plan.names.internalNetwork);
+    const register = docker.brokerClient.calls.findIndex(({ method }) => method === "register");
     const sandboxCreate = docker.calls.findIndex(({ method, args }) => method === "createContainer" && args[0] === plan.names.sandbox);
     const sandboxRun = docker.calls.findIndex(({ method, args }) => method === "attachAndRun" && (args[0] as any).name === plan.names.sandbox);
-    assert.ok(internalCreate < egressCreate);
-    assert.ok(egressCreate < gatewayCreate);
-    assert.ok(gatewayCreate < gatewayConnect);
-    assert.ok(gatewayConnect < gatewayStart);
-    assert.ok(gatewayStart < readyLog);
-    assert.ok(readyLog < startedGatewayInspect);
-    assert.ok(startedGatewayInspect < sandboxCreate);
+    assert.ok(internalCreate < brokerConnect);
+    assert.ok(register >= 0);
+    assert.equal(docker.brokerClient.calls[register].value.brokerLocalAddress, docker.gatewayAddress);
+    assert.ok(brokerConnect < sandboxCreate);
     assert.ok(sandboxCreate < sandboxRun);
     await engine.cleanupInvocation(plan);
-    assert.equal(docker.containers.size, 0);
+    assert.equal(docker.containers.size, 1);
+    assert.equal(docker.containers.has(EGRESS_BROKER_CONTAINER_NAME), true);
     assert.equal(docker.networks.size, 0);
+    assert.equal(docker.brokerClient.calls.some(({ method }) => method === "revoke"), true);
+    assert.equal(docker.calls.some(({ method }) => method === "disconnectNetwork"), true);
   });
 
   test("trusted plans produce unique per-invocation resource identities", () => {
     const first = buildInvocationPlan(invocation("request-supervisor-a"));
     const second = buildInvocationPlan(invocation("request-supervisor-b"));
-    assert.equal(new Set([...Object.values(first.names), ...Object.values(second.names)]).size, 8);
+    assert.equal(new Set([...Object.values(first.names), ...Object.values(second.names)]).size, 4);
     assert.notEqual(first.invocationId, second.invocationId);
   });
 
@@ -332,10 +347,8 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     const plan = buildInvocationPlan(parsed.request);
     assert.equal(JSON.stringify(plan).includes("synthetic-token"), false);
     const labels = { [SUPERVISOR_OWNER_LABEL.key]: SUPERVISOR_OWNER_LABEL.value, [SUPERVISOR_INVOCATION_RESOURCE_LABEL.key]: SUPERVISOR_INVOCATION_RESOURCE_LABEL.value, "crazyloops.invocation": plan.invocationId };
-    const gateway = supervisorContainerConfigurations.gateway(plan, labels);
     const sandbox = supervisorContainerConfigurations.sandbox(plan, labels, "10.90.0.7");
-    assert.equal(JSON.stringify({ gateway, sandbox }).includes("synthetic-token"), false);
-    assert.deepEqual(gateway.HostConfig.Mounts, []);
+    assert.equal(JSON.stringify(sandbox).includes("synthetic-token"), false);
     assert.deepEqual(sandbox.HostConfig.Mounts, []);
     parsed.credential.fill(0);
   });
@@ -392,7 +405,7 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
       docker.failAt = null;
       await engine.cleanupInvocation(plan);
       await engine.cleanupInvocation(plan);
-      assert.equal(docker.containers.size, 0, failure);
+      assert.equal(docker.containers.size, 1, failure);
       assert.equal(docker.networks.size, 0, failure);
     }
   });
@@ -405,13 +418,13 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     await engine.runInvocation({ plan, request, credential: Buffer.from("synthetic-token") });
     docker.failAt = "removeContainer";
     await assert.rejects(engine.cleanupInvocation(plan), (error: any) => error.code === "PIECE_RUNTIME_FAILED");
-    assert.equal(docker.calls.filter(({ method }) => method === "removeContainer").length, 2);
-    assert.equal(docker.calls.filter(({ method }) => method === "removeNetwork").length, 2);
+    assert.equal(docker.calls.filter(({ method }) => method === "removeContainer").length, 1);
+    assert.equal(docker.calls.filter(({ method }) => method === "removeNetwork").length, 1);
     assert.equal(engine.resources.has(plan.invocationId), true);
     docker.failAt = null;
     await engine.cleanupInvocation(plan);
     assert.equal(engine.resources.has(plan.invocationId), false);
-    assert.equal(docker.containers.size, 0);
+    assert.equal(docker.containers.size, 1);
     assert.equal(docker.networks.size, 0);
   });
 
@@ -534,17 +547,18 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.ok(singletonList >= 0 && firstRemove > singletonList);
   });
 
-  test("gateway start, readiness, and valid started address gate sandbox creation", async () => {
+  test("broker health, registration, and valid attached address gate sandbox creation", async () => {
     const scenarios = [
-      { name: "gateway start", failAt: "startContainer", gatewayAddress: "10.90.0.7" },
-      { name: "gateway readiness", failAt: "containerLogs", gatewayAddress: "10.90.0.7" },
-      { name: "started gateway address", failAt: null, gatewayAddress: "" },
+      { name: "broker inspect", failAt: "inspectContainer", gatewayAddress: "10.90.0.7", failRegister: false },
+      { name: "broker registration", failAt: null, gatewayAddress: "10.90.0.7", failRegister: true },
+      { name: "attached broker address", failAt: null, gatewayAddress: "", failRegister: false },
     ];
 
     for (const scenario of scenarios) {
       const docker = new FakeDocker();
       docker.failAt = scenario.failAt;
       docker.gatewayAddress = scenario.gatewayAddress;
+      docker.brokerClient.failRegister = scenario.failRegister;
       const engine = dockerEngine(docker);
       const request = invocation(`request-${scenario.name.replaceAll(" ", "-")}`);
       const plan = buildInvocationPlan(request);
@@ -565,11 +579,12 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
       );
 
       docker.failAt = null;
+      docker.brokerClient.failRegister = false;
       await engine.cleanupInvocation(plan);
-      assert.equal(docker.containers.size, 0, scenario.name);
+      assert.equal(docker.containers.size, 1, scenario.name);
       assert.equal(docker.networks.size, 0, scenario.name);
-      assert.equal(docker.calls.filter(({ method }) => method === "removeContainer").length, 1, scenario.name);
-      assert.equal(docker.calls.filter(({ method }) => method === "removeNetwork").length, 2, scenario.name);
+      assert.equal(docker.calls.filter(({ method }) => method === "removeContainer").length, 0, scenario.name);
+      assert.equal(docker.calls.filter(({ method }) => method === "removeNetwork").length, scenario.name === "broker inspect" ? 0 : 1, scenario.name);
     }
   });
 
@@ -678,7 +693,7 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.equal(SUPERVISOR_SHUTDOWN_GRACE_MS, 8_000);
     assert.equal(SUPERVISOR_FORCE_CLOSE_MS, 2_000);
     assert.deepEqual(SUPERVISOR_SERVICE_RESOURCE_LABEL, { key: "crazyloops.resource", value: "supervisor" });
-    assert.deepEqual(SUPERVISOR_RUNTIME_SPEC.mounts.map(({ target }: any) => target), ["/var/run/docker.sock", "/run/crazyloops-piece"]);
+    assert.deepEqual(SUPERVISOR_RUNTIME_SPEC.mounts.map(({ target }: any) => target), ["/var/run/docker.sock", "/run/crazyloops-piece", "/run/crazyloops-egress-control"]);
     const server = readFileSync(resolve(ROOT, "services/piece-runtime/src/supervisor-server.mjs"), "utf8");
     assert.match(server, /server\.listen\(socketPath/);
     assert.doesNotMatch(server, /listen\([^\n]*(?:127\.0\.0\.1|0\.0\.0\.0|localhost|[0-9]{4})/);
