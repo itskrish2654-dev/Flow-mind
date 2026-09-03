@@ -364,6 +364,23 @@ DNS, egress, provider-normalization, or lifecycle redesign. A bounded,
 diagnostic-only harness correction is required before the next owner-host rerun.
 Step 5B.1 remains unaccepted.
 
+### Step 5B.1 owner-host attempt 8
+
+Repeated acceptance diagnostics reproduced a pre-provider DNS denial with no
+DNS evidence and one `PIECE_EGRESS_DENIED` connection outcome. Exact gateway
+lifecycle probes confirmed intermittent DNS behavior without requiring the
+pause barrier, while an exact resource/timing matrix passed 15 of 15 cases.
+Those results do not justify changing CPU, memory, PID, file-descriptor, or
+startup-delay limits. The narrow correction is bounded pre-provider DNS
+resilience: a safe result from either address family may be used when the other
+family has only no-data or an explicitly reviewed transient resolver failure.
+Every returned address remains validated and any unsafe or malformed answer
+still fails closed. Resolution is limited to two attempts under one total
+deadline; the optional delay is 25 ms. No upstream connection exists during a
+DNS retry, and the provider operation remains exactly one attempt with no safe
+automatic retry. Step 5B.1 remains unaccepted pending static review, push/build
+gates, and real owner-host proof.
+
 Step 5B.2 must still design and review the Connector Runner-to-UDS integration,
 production service ownership/group setup, deployment/rollback, stronger image
 identity pinning, production monitoring, real host restart/shutdown behavior,

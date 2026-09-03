@@ -427,6 +427,184 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
     assert.equal(plan.sandbox.canonicalHostMappings.some(({ hostname }: { hostname: string }) => hostname === "redirect.example"), false);
   });
 
+  test("DNS resolution accepts either safe family and fails closed on unsafe, malformed, or unknown results", async () => {
+    const destination = { hostname: "api.hubapi.com", port: 443, protocol: "tls" };
+    const safe4 = [{ address: "8.8.8.8", ttl: 60 }];
+    const safe6 = [{ address: "2606:4700:4700::1111", ttl: 60 }];
+    const dnsError = (code: string) => Object.assign(new Error("resolver detail must stay private"), { code });
+    const resolves = async (
+      resolve4: () => Promise<Array<{ address: string; ttl: number }>>,
+      resolve6: () => Promise<Array<{ address: string; ttl: number }>>,
+    ) => resolveManifestDestination(destination, { resolve4, resolve6, timeoutMs: 1_000 });
+    const denied = async (promise: Promise<unknown>) => assert.rejects(
+      promise,
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "PIECE_EGRESS_DENIED",
+    );
+
+    const dual = await resolves(async () => safe4, async () => safe6);
+    assert.equal(dual.pinnedAddress, safe4[0].address);
+    assert.equal(dual.family, 4);
+    assert.deepEqual(dual.evidence, [
+      { family: 4, ttl: 60, classification: "SAFE" },
+      { family: 6, ttl: 60, classification: "SAFE" },
+    ]);
+    assert.equal(JSON.stringify(dual.evidence).includes(safe4[0].address), false);
+    assert.equal(JSON.stringify(dual.evidence).includes(safe6[0].address), false);
+
+    const safe4Only = await resolves(async () => safe4, async () => { throw dnsError("ENODATA"); });
+    assert.equal(safe4Only.pinnedAddress, safe4[0].address);
+    const safe6Only = await resolves(async () => { throw dnsError("ENOTFOUND"); }, async () => safe6);
+    assert.equal(safe6Only.pinnedAddress, safe6[0].address);
+    assert.equal(safe6Only.family, 6);
+
+    const transientCodes = ["ETIMEOUT", "ESERVFAIL", "EREFUSED", "ECONNREFUSED"];
+    for (const code of transientCodes) {
+      assert.equal((await resolves(async () => safe4, async () => { throw dnsError(code); })).family, 4, code);
+      assert.equal((await resolves(async () => { throw dnsError(code); }, async () => safe6)).family, 6, code);
+    }
+    let partial4Calls = 0;
+    let partial6Calls = 0;
+    const partial = await resolves(
+      async () => { partial4Calls += 1; return safe4; },
+      async () => { partial6Calls += 1; throw dnsError("ETIMEOUT"); },
+    );
+    assert.equal(partial.family, 4);
+    assert.equal(partial4Calls, 1);
+    assert.equal(partial6Calls, 1);
+
+    let unsafeRetryCalls = 0;
+    await denied(resolves(
+      async () => {
+        unsafeRetryCalls += 1;
+        return [{ address: "10.0.0.1", ttl: 60 }];
+      },
+      async () => { throw dnsError("ETIMEOUT"); },
+    ));
+    assert.equal(unsafeRetryCalls, 1);
+
+    let malformedRetryCalls = 0;
+    await denied(resolves(
+      async () => {
+        malformedRetryCalls += 1;
+        return [{ address: "not-an-address", ttl: 60 }];
+      },
+      async () => safe6,
+    ));
+    assert.equal(malformedRetryCalls, 1);
+
+    await denied(resolves(
+      async () => safe4,
+      async () => [{ address: "::1", ttl: 60 }],
+    ));
+
+    let unknownCalls = 0;
+    await denied(resolves(
+      async () => safe4,
+      async () => {
+        unknownCalls += 1;
+        throw dnsError("EAI_AGAIN");
+      },
+    ));
+    assert.equal(unknownCalls, 1);
+  });
+
+  test("DNS retry is bounded to two pre-connect attempts under one total deadline", async () => {
+    const destination = { hostname: "api.hubapi.com", port: 443, protocol: "tls" };
+    const safe4 = [{ address: "8.8.8.8", ttl: 60 }];
+    const safe6 = [{ address: "2606:4700:4700::1111", ttl: 60 }];
+    const dnsError = (code: string) => Object.assign(new Error("private resolver detail"), { code });
+    const denied = async (promise: Promise<unknown>) => assert.rejects(
+      promise,
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "PIECE_EGRESS_DENIED",
+    );
+
+    let attempt4 = 0;
+    let attempt6 = 0;
+    const recovered = await resolveManifestDestination(destination, {
+      resolve4: async () => (++attempt4 === 1 ? Promise.reject(dnsError("ESERVFAIL")) : safe4),
+      resolve6: async () => (++attempt6 === 1 ? Promise.reject(dnsError("ETIMEOUT")) : safe6),
+      timeoutMs: 1_000,
+      sleep: async () => {},
+    });
+    assert.equal(recovered.pinnedAddress, safe4[0].address);
+    assert.equal(attempt4, 2);
+    assert.equal(attempt6, 2);
+
+    attempt4 = 0;
+    attempt6 = 0;
+    await denied(resolveManifestDestination(destination, {
+      resolve4: async () => { attempt4 += 1; throw dnsError("ECONNREFUSED"); },
+      resolve6: async () => { attempt6 += 1; throw dnsError("EREFUSED"); },
+      timeoutMs: 1_000,
+      sleep: async () => {},
+    }));
+    assert.equal(attempt4, 2);
+    assert.equal(attempt6, 2);
+
+    attempt4 = 0;
+    attempt6 = 0;
+    await denied(resolveManifestDestination(destination, {
+      resolve4: async () => { attempt4 += 1; throw dnsError("ENODATA"); },
+      resolve6: async () => { attempt6 += 1; throw dnsError("ENOTFOUND"); },
+      timeoutMs: 1_000,
+      sleep: async () => {},
+    }));
+    assert.equal(attempt4, 2);
+    assert.equal(attempt6, 2);
+
+    attempt4 = 0;
+    attempt6 = 0;
+    await denied(resolveManifestDestination(destination, {
+      resolve4: async () => {
+        attempt4 += 1;
+        if (attempt4 === 1) throw dnsError("ETIMEOUT");
+        return [{ address: "169.254.169.254", ttl: 60 }];
+      },
+      resolve6: async () => { attempt6 += 1; throw dnsError("ESERVFAIL"); },
+      timeoutMs: 1_000,
+      sleep: async () => {},
+    }));
+    assert.equal(attempt4, 2);
+    assert.equal(attempt6, 2);
+
+    let clock = 0;
+    const delays: number[] = [];
+    attempt4 = 0;
+    attempt6 = 0;
+    await assert.rejects(
+      resolveManifestDestination(destination, {
+        resolve4: async () => {
+          attempt4 += 1;
+          clock = attempt4 === 1 ? 80 : 120;
+          throw dnsError("ETIMEOUT");
+        },
+        resolve6: async () => {
+          attempt6 += 1;
+          throw dnsError("ESERVFAIL");
+        },
+        timeoutMs: 100,
+        now: () => clock,
+        sleep: async (delayMs: number) => {
+          delays.push(delayMs);
+          clock += delayMs;
+        },
+      }),
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "PIECE_TIMEOUT",
+    );
+    assert.equal(attempt4, 2);
+    assert.equal(attempt6, 2);
+    assert.deepEqual(delays, [19]);
+    assert.ok(delays.every((delayMs) => delayMs <= 100));
+  });
+
+  test("gateway resolves and validates DNS before opening the upstream connection", () => {
+    const gatewaySource = readFileSync(join(ROOT, "services/piece-runtime/src/gateway.mjs"), "utf8");
+    const resolution = gatewaySource.indexOf("resolveManifestDestination(destination");
+    const connection = gatewaySource.indexOf("connectTcp({ host: resolved.pinnedAddress");
+    assert.ok(resolution >= 0);
+    assert.ok(connection > resolution);
+  });
+
   test("gateway connection evidence retains only an approved reviewed SNI destination", () => {
     const spoofedBeforeApproval = {
       requestId: "request-123",
