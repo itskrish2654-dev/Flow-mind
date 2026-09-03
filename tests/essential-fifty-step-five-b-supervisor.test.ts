@@ -109,6 +109,7 @@ class FakeDocker {
   workerOutput: Buffer;
   lastReturnedOutput: Buffer | null = null;
   listedContainers: Array<Record<string, any>> | null = null;
+  replaceBrokerAfterRun = false;
 
   constructor() {
     this.workerOutput = Buffer.from(JSON.stringify({
@@ -214,6 +215,10 @@ class FakeDocker {
     this.record("attachAndRun", input);
     await this.startContainer(input.name);
     this.lastReturnedOutput = Buffer.from(this.workerOutput);
+    if (this.replaceBrokerAfterRun) {
+      const broker = this.containers.get(EGRESS_BROKER_CONTAINER_NAME);
+      if (broker) broker.Id = "replacement-broker-id";
+    }
     return this.lastReturnedOutput;
   }
 
@@ -236,13 +241,18 @@ class FakeDocker {
 class FakeBrokerClient {
   calls: Array<{ method: string; value?: any }> = [];
   failRegister = false;
+  failRevoke = false;
   async health() { this.calls.push({ method: "health" }); return { ok: true, protocolVersion: 1, operation: "health", status: "ready" }; }
   async register(value: any) {
     this.calls.push({ method: "register", value });
     if (this.failRegister) throw new PieceRuntimeError("PIECE_EGRESS_DENIED");
     return { ok: true, protocolVersion: 1, operation: "register", invocationId: value.plan.invocationId, expiresAt: Date.now() + 10_000, destinations: [{ hostname: "api.hubapi.com", port: 443, evidence: [{ family: 4, ttl: 60, classification: "SAFE" }] }] };
   }
-  async revoke(value: any) { this.calls.push({ method: "revoke", value }); return { ok: true, protocolVersion: 1, operation: "revoke", invocationId: value.plan.invocationId }; }
+  async revoke(value: any) {
+    this.calls.push({ method: "revoke", value });
+    if (this.failRevoke) throw new PieceRuntimeError("PIECE_RUNTIME_FAILED");
+    return { ok: true, protocolVersion: 1, operation: "revoke", invocationId: value.plan.invocationId };
+  }
 }
 
 class HoldingEngine extends PieceContainerEngine {
@@ -447,6 +457,52 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
     assert.deepEqual(shutdown, { clean: true, activeInvocations: 0 });
     assert.equal(engine.cleanupAttempts, 2);
     assert.equal(service.health().activeInvocations, 0);
+  });
+
+  test("broker revoke failure retains engine state and degrades service until cleanup retry succeeds", async () => {
+    const docker = new FakeDocker();
+    docker.brokerClient.failRevoke = true;
+    const engine = dockerEngine(docker);
+    const service = new PieceSupervisorService({ engine });
+    service.setReady();
+    const plan = buildInvocationPlan(invocation());
+
+    await assert.rejects(service.execute(envelope()), (error: any) => error.code === "PIECE_RUNTIME_FAILED");
+    assert.equal(engine.resources.has(plan.invocationId), true);
+    assert.equal(service.health().status, "unavailable");
+    assert.equal(service.health().activeInvocations, 1);
+    assert.equal(docker.containers.has(EGRESS_BROKER_CONTAINER_NAME), true);
+    assert.equal(docker.calls.some(({ method, args }) => method === "removeContainer" && args[0] === EGRESS_BROKER_CONTAINER_NAME), false);
+    assert.equal(docker.brokerClient.calls.filter(({ method }) => method === "revoke").length, 1);
+
+    docker.brokerClient.failRevoke = false;
+    const shutdown = await service.shutdown(500);
+    assert.deepEqual(shutdown, { clean: true, activeInvocations: 0 });
+    assert.equal(engine.resources.has(plan.invocationId), false);
+    assert.equal(docker.brokerClient.calls.filter(({ method }) => method === "revoke").length, 2);
+    assert.equal(docker.containers.has(EGRESS_BROKER_CONTAINER_NAME), true);
+  });
+
+  test("broker identity change after sandbox execution rejects the result and cleanup fails closed", async () => {
+    const docker = new FakeDocker();
+    docker.workerOutput = Buffer.from(`${JSON.stringify(successfulWorkerResult())}\n`);
+    docker.replaceBrokerAfterRun = true;
+    const engine = dockerEngine(docker);
+    const request = invocation();
+    const plan = buildInvocationPlan(request);
+
+    await assert.rejects(
+      engine.runInvocation({ plan, request, credential: Buffer.from("synthetic-token") }),
+      (error: any) => error.code === "PIECE_RUNTIME_FAILED",
+    );
+    await assert.rejects(engine.cleanupInvocation(plan), (error: any) => error.code === "PIECE_RUNTIME_FAILED");
+    assert.equal(engine.resources.has(plan.invocationId), true);
+    assert.equal(docker.containers.has(EGRESS_BROKER_CONTAINER_NAME), true);
+    assert.equal(docker.calls.some(({ method, args }) => method === "removeContainer" && args[0] === EGRESS_BROKER_CONTAINER_NAME), false);
+
+    docker.containers.get(EGRESS_BROKER_CONTAINER_NAME)!.Id = "persistent-broker-id";
+    await engine.cleanupInvocation(plan);
+    assert.equal(engine.resources.has(plan.invocationId), false);
   });
 
   test("malformed and oversized worker output fail with bounded vocabulary and no stderr", async () => {

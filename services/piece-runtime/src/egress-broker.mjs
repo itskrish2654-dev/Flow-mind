@@ -17,7 +17,17 @@ function safeLog(logger, event) {
   try { logger(Object.freeze(event)); } catch {}
 }
 
-export function handleBrokerClient(client, { policyStore, connectProvider = connectTcp, logger = () => undefined }) {
+/**
+ * @param {*} client
+ * @param {{policyStore: *, connectProvider?: Function, logger?: Function, setTimer?: Function, clearTimer?: Function}} options
+ */
+export function handleBrokerClient(client, {
+  policyStore,
+  connectProvider = connectTcp,
+  logger = () => undefined,
+  setTimer = setTimeout,
+  clearTimer = clearTimeout,
+}) {
   let clientHello = Buffer.alloc(0);
   let upstream = null;
   let lease = null;
@@ -32,9 +42,9 @@ export function handleBrokerClient(client, { policyStore, connectProvider = conn
   const finish = (outcome) => {
     if (finished) return;
     finished = true;
-    clearTimeout(handshakeTimer);
-    clearTimeout(connectTimer);
-    clearTimeout(lifetimeTimer);
+    clearTimer(handshakeTimer);
+    clearTimer(connectTimer);
+    clearTimer(lifetimeTimer);
     clientHello.fill(0);
     clientHello = Buffer.alloc(0);
     upstream?.destroy();
@@ -71,18 +81,18 @@ export function handleBrokerClient(client, { policyStore, connectProvider = conn
     }
     if (upstreamConnections !== 0) return finish("PIECE_EGRESS_DENIED");
     upstreamConnections = 1;
-    clearTimeout(handshakeTimer);
-    lifetimeTimer = setTimeout(() => finish("PIECE_TIMEOUT"), lease.limits.lifetimeTimeoutMs);
+    clearTimer(handshakeTimer);
+    lifetimeTimer = setTimer(() => finish("PIECE_TIMEOUT"), lease.limits.lifetimeTimeoutMs);
     upstream = connectProvider({
       host: lease.destination.pinnedAddress,
       port: lease.destination.port,
       family: lease.destination.family,
     });
     client.pause();
-    connectTimer = setTimeout(() => finish("PIECE_TIMEOUT"), lease.limits.connectTimeoutMs);
+    connectTimer = setTimer(() => finish("PIECE_TIMEOUT"), lease.limits.connectTimeoutMs);
     upstream.setTimeout(lease.limits.idleTimeoutMs, () => finish("PIECE_TIMEOUT"));
     upstream.once("connect", () => {
-      clearTimeout(connectTimer);
+      clearTimer(connectTimer);
       upstream.write(clientHello);
       clientHello.fill(0);
       clientHello = Buffer.alloc(0);
@@ -98,7 +108,7 @@ export function handleBrokerClient(client, { policyStore, connectProvider = conn
   });
   client.once("error", () => finish("PIECE_EGRESS_DENIED"));
   client.once("end", () => finish(upstream ? "PIECE_BROKER_SUCCEEDED" : "PIECE_EGRESS_DENIED"));
-  handshakeTimer = setTimeout(() => finish("PIECE_TIMEOUT"), 1_500);
+  handshakeTimer = setTimer(() => finish("PIECE_TIMEOUT"), 1_500);
   return Object.freeze({ finish });
 }
 

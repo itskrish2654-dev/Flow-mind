@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 # Owner-only, real Linux production-candidate host acceptance. Codex must not run this.
 : "${E50_EXPECTED_COMMIT:?Set E50_EXPECTED_COMMIT to the reviewed branch commit.}"
 
+EXPECTED_ORIGIN_MAIN='20c23d7e85123eaa77a916ce43f4a9ef5ca8a5e7'
 BROKER_NAME='crazyloops-piece-egress-broker'
 BROKER_IMAGE='crazyloops/piece-egress-broker:step5b1'
 SUPERVISOR_NAME='cl-piece-step5b1-broker-supervisor'
@@ -14,10 +16,14 @@ SUPERVISOR_CONTROL="$(mktemp -d /tmp/cl-e50-step5b1-supervisor.XXXXXX)"
 ARTIFACT_DIR="$(mktemp -d /tmp/cl-e50-step5b1-evidence.XXXXXX)"
 chmod 0755 "$ARTIFACT_DIR"
 OWNER_LABEL='crazyloops.acceptance=e50-step5b1-egress-broker'
-PROTECTED=(crazyloops-connector-runner activepieces-app activepieces-worker redis)
+PROTECTED=(crazyloops-connector-runner activepieces-app activepieces-worker-1 redis)
 CANARY=''
 CANARY_B64=''
 EXECUTE_PID=''
+REQUEST_ID='step5b1-broker-host'
+INVOCATION_ID=''
+SANDBOX_NAME=''
+INTERNAL_NAME=''
 
 fail() { printf 'STEP5B1 BROKER HOST ACCEPTANCE=FAIL: %s\n' "$*" >&2; exit 1; }
 
@@ -29,8 +35,59 @@ snapshot_protected() {
   done
 }
 
+capture_failure_diagnostics() {
+  docker logs "$BROKER_NAME" >"$ARTIFACT_DIR/broker.log" 2>/dev/null || true
+  docker inspect --format '{{.State.Running}}|{{.RestartCount}}' "$BROKER_NAME" >"$ARTIFACT_DIR/failure-broker-state.txt" 2>/dev/null || printf 'ABSENT\n' >"$ARTIFACT_DIR/failure-broker-state.txt"
+  docker inspect --format '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}} {{end}}' "$BROKER_NAME" >"$ARTIFACT_DIR/failure-broker-networks.txt" 2>/dev/null || printf 'ABSENT\n' >"$ARTIFACT_DIR/failure-broker-networks.txt"
+  if [[ -n "$SANDBOX_NAME" ]] && docker inspect "$SANDBOX_NAME" >/dev/null 2>&1; then printf 'YES\n' >"$ARTIFACT_DIR/failure-sandbox-present.txt"; else printf 'NO\n' >"$ARTIFACT_DIR/failure-sandbox-present.txt"; fi
+  if [[ -n "$INTERNAL_NAME" ]] && docker network inspect "$INTERNAL_NAME" >/dev/null 2>&1; then printf 'YES\n' >"$ARTIFACT_DIR/failure-network-present.txt"; else printf 'NO\n' >"$ARTIFACT_DIR/failure-network-present.txt"; fi
+  node - "$ARTIFACT_DIR" "$INVOCATION_ID" "$REQUEST_ID" >"$ARTIFACT_DIR/failure-summary.txt" 2>/dev/null <<'NODE' || true
+const fs = require('node:fs'); const path = require('node:path');
+const directory = process.argv[2]; const invocationId = process.argv[3]; const requestId = process.argv[4];
+const read = (name, fallback) => { try { return fs.readFileSync(path.join(directory, name), 'utf8').trim() || fallback; } catch { return fallback; } };
+const lines = read('broker.log', '').split(/\r?\n/).filter(Boolean); const events = [];
+for (const line of lines.slice(-500)) { try { const value = JSON.parse(line); if (value && typeof value === 'object' && !Array.isArray(value)) events.push(value); } catch {} }
+const exact = (event) => event.invocationId === invocationId && event.requestId === requestId && event.capabilityId === 'hubspot.get_contact';
+const registrations = events.filter((event) => event.event === 'piece_egress_broker_policy_registered' && exact(event));
+const safeRegistrations = registrations.filter((event) => Array.isArray(event.destinations) && event.destinations.some((destination) =>
+  destination?.hostname === 'api.hubapi.com' && destination?.port === 443 && Array.isArray(destination.evidence) && destination.evidence.length > 0 &&
+  destination.evidence.every((item) => item?.classification === 'SAFE' && (item.family === 4 || item.family === 6) && Number.isInteger(item.ttl))));
+const connections = events.filter((event) => event.event === 'piece_egress_broker_connection' && exact(event) && event.hostname === 'api.hubapi.com' && event.port === 443);
+const outcomes = ['PIECE_BROKER_SUCCEEDED', 'PIECE_EGRESS_DENIED', 'PIECE_PROVIDER_UNAVAILABLE', 'PIECE_RESPONSE_INVALID', 'PIECE_TIMEOUT'];
+const allowedErrors = new Set(['PIECE_AUTH_FAILED', 'PIECE_RATE_LIMITED', 'PIECE_PROVIDER_UNAVAILABLE', 'PIECE_TIMEOUT', 'PIECE_EGRESS_DENIED', 'PIECE_RESPONSE_INVALID', 'PIECE_RUNTIME_FAILED', 'PIECE_INVALID_INPUT', 'PIECE_OUTPUT_LIMIT']);
+let providerError = 'UNAVAILABLE';
+try { const response = JSON.parse(read('response.json', '{}')); providerError = allowedErrors.has(response?.errorCode) ? response.errorCode : 'UNKNOWN'; } catch { providerError = 'INVALID'; }
+console.log(`BROKER_RUNNING_RESTART=${read('failure-broker-state.txt', 'UNKNOWN')}`);
+console.log(`BROKER_NETWORKS=${read('failure-broker-networks.txt', 'UNKNOWN')}`);
+console.log(`SANDBOX_PRESENT=${read('failure-sandbox-present.txt', 'UNKNOWN')}`);
+console.log(`INTERNAL_NETWORK_PRESENT=${read('failure-network-present.txt', 'UNKNOWN')}`);
+console.log(`REGISTRATION_EVENT_COUNT=${registrations.length}`);
+console.log(`SAFE_REGISTRATION_COUNT=${safeRegistrations.length}`);
+console.log(`CONNECTION_EVENT_COUNT=${connections.length}`);
+for (const outcome of outcomes) console.log(`CONNECTION_${outcome}=${connections.filter((event) => event.outcome === outcome).length}`);
+console.log(`PROVIDER_RESPONSE_ERROR_CODE=${providerError}`);
+NODE
+}
+
+sanitize_failure_evidence() {
+  if [[ -f "$ARTIFACT_DIR/request.json" ]]; then
+    shred -u -z -- "$ARTIFACT_DIR/request.json" 2>/dev/null || { : >"$ARTIFACT_DIR/request.json"; rm -f -- "$ARTIFACT_DIR/request.json"; }
+  fi
+  local surface
+  while IFS= read -r -d '' surface; do
+    if { [[ -n "$CANARY" ]] && grep -Fq -- "$CANARY" "$surface"; } || { [[ -n "$CANARY_B64" ]] && grep -Fq -- "$CANARY_B64" "$surface"; }; then
+      rm -f -- "$surface"
+    fi
+  done < <(find "$ARTIFACT_DIR" -type f -print0)
+  CANARY=''
+  CANARY_B64=''
+}
+
 cleanup() {
+  local status="$1"
+  trap - EXIT INT TERM
   set +e
+  if (( status != 0 )); then capture_failure_diagnostics; fi
   [[ -n "$EXECUTE_PID" ]] && kill "$EXECUTE_PID" >/dev/null 2>&1
   docker rm -f "$SUPERVISOR_NAME" >/dev/null 2>&1
   docker rm -f "$BROKER_NAME" >/dev/null 2>&1
@@ -38,11 +95,31 @@ cleanup() {
   docker network ls -q --filter "label=$OWNER_LABEL" | xargs -r docker network rm >/dev/null 2>&1
   docker volume rm "$CONTROL_VOLUME" >/dev/null 2>&1
   docker image rm "$SUPERVISOR_IMAGE" "$BROKER_IMAGE" "$SANDBOX_IMAGE" >/dev/null 2>&1
-  rm -rf -- "$SUPERVISOR_CONTROL" "$ARTIFACT_DIR"
-  CANARY=''; CANARY_B64=''
+  rm -rf -- "$SUPERVISOR_CONTROL"
+  sanitize_failure_evidence
+  if (( status == 0 )); then
+    rm -rf -- "$ARTIFACT_DIR"
+  else
+    chmod 0700 "$ARTIFACT_DIR"
+    [[ -f "$ARTIFACT_DIR/failure-summary.txt" ]] && cat "$ARTIFACT_DIR/failure-summary.txt" >&2
+    printf 'EVIDENCE_DIR=%s\n' "$ARTIFACT_DIR" >&2
+  fi
+  exit "$status"
 }
-trap cleanup EXIT INT TERM
 
+preflight_cleanup() {
+  local status="$1"
+  trap - EXIT INT TERM
+  rm -rf -- "$SUPERVISOR_CONTROL" "$ARTIFACT_DIR"
+  exit "$status"
+}
+
+trap 'preflight_cleanup $?' EXIT
+trap 'exit 130' INT TERM
+
+git fetch origin main codex/e50-egress-broker
+[[ "$(git rev-parse origin/main)" == "$EXPECTED_ORIGIN_MAIN" ]] || fail 'origin/main changed.'
+[[ "$(git rev-parse origin/codex/e50-egress-broker)" == "$E50_EXPECTED_COMMIT" ]] || fail 'Remote acceptance branch differs.'
 [[ "$(git branch --show-current)" == 'codex/e50-egress-broker' ]] || fail 'Wrong branch.'
 [[ "$(git rev-parse HEAD)" == "$E50_EXPECTED_COMMIT" ]] || fail 'Wrong commit.'
 [[ -z "$(git status --porcelain)" ]] || fail 'Working tree is not clean.'
@@ -55,6 +132,9 @@ snapshot_protected "$ARTIFACT_DIR/protected-before.txt"
 
 for name in "$BROKER_NAME" "$SUPERVISOR_NAME"; do ! docker inspect "$name" >/dev/null 2>&1 || fail "Reserved acceptance name exists: $name"; done
 ! docker volume inspect "$CONTROL_VOLUME" >/dev/null 2>&1 || fail 'Broker control volume already exists.'
+
+trap - EXIT
+trap 'cleanup $?' EXIT
 
 docker build --no-cache --label "$OWNER_LABEL" -f services/piece-runtime/Dockerfile.egress-broker -t "$BROKER_IMAGE" services/piece-runtime >/dev/null
 docker build --no-cache --label "$OWNER_LABEL" -f services/piece-runtime/Dockerfile.sandbox -t "$SANDBOX_IMAGE" services/piece-runtime >/dev/null
@@ -137,6 +217,22 @@ const brokerIp = broker.NetworkSettings.Networks[network].IPAddress; if (!sandbo
 NODE
 [[ -z "$(docker ps -aq --filter 'name=cl-piece-gateway-')" ]] || fail 'Per-invocation gateway exists.'
 [[ -z "$(docker network ls -q --filter 'name=cl-piece-egress-')" ]] || fail 'Per-invocation egress network exists.'
+docker logs "$BROKER_NAME" >"$ARTIFACT_DIR/broker-before-sandbox-unpause.log" 2>&1
+node - "$ARTIFACT_DIR/broker-before-sandbox-unpause.log" "$INVOCATION_ID" "$REQUEST_ID" <<'NODE'
+const fs = require('node:fs'); const [path, invocationId, requestId] = process.argv.slice(2);
+const events = [];
+for (const line of fs.readFileSync(path, 'utf8').split(/\r?\n/).filter(Boolean)) { try { const value = JSON.parse(line); if (value && typeof value === 'object' && !Array.isArray(value)) events.push(value); } catch {} }
+const matches = events.filter((event) => event.event === 'piece_egress_broker_policy_registered' && event.invocationId === invocationId &&
+  event.requestId === requestId && event.capabilityId === 'hubspot.get_contact');
+if (matches.length !== 1) throw new Error('exact registration event');
+const destinations = matches[0].destinations;
+if (!Array.isArray(destinations) || destinations.length !== 1) throw new Error('destinations');
+const destination = destinations[0];
+if (destination?.hostname !== 'api.hubapi.com' || destination?.port !== 443 || !Array.isArray(destination.evidence) || destination.evidence.length < 1) throw new Error('reviewed destination');
+if (!destination.evidence.every((item) => item?.classification === 'SAFE' && (item.family === 4 || item.family === 6) && Number.isInteger(item.ttl))) throw new Error('safe evidence');
+if (JSON.stringify(matches[0]).includes('pinnedAddress')) throw new Error('pinned provider address exposed');
+NODE
+printf 'REGISTER_BEFORE_SANDBOX=PASS\n'
 docker unpause "$SANDBOX_NAME" >/dev/null
 wait "$EXECUTE_PID" || fail 'Supervisor request failed.'
 EXECUTE_PID=''
@@ -154,12 +250,16 @@ for _ in $(seq 1 200); do ! docker inspect "$SANDBOX_NAME" >/dev/null 2>&1 && ! 
 [[ "$(docker inspect --format '{{json .NetworkSettings.Networks}}' "$BROKER_NAME")" != *"$INTERNAL_NAME"* ]] || fail 'Broker remained attached.'
 
 docker logs "$BROKER_NAME" >"$ARTIFACT_DIR/broker.log" 2>&1
-grep -Fq '"event":"piece_egress_broker_policy_registered"' "$ARTIFACT_DIR/broker.log" || fail 'Registration evidence missing.'
-grep -Fq '"classification":"SAFE"' "$ARTIFACT_DIR/broker.log" || fail 'Safe DNS evidence missing.'
-grep -Fq '"event":"piece_egress_broker_policy_revoked"' "$ARTIFACT_DIR/broker.log" || fail 'Revocation evidence missing.'
-grep -Fq '"event":"piece_egress_broker_connection"' "$ARTIFACT_DIR/broker.log" || fail 'Broker connection evidence missing.'
-grep -Fq '"hostname":"api.hubapi.com"' "$ARTIFACT_DIR/broker.log" || fail 'Exact SNI evidence missing.'
-grep -Fq '"upstreamConnections":1' "$ARTIFACT_DIR/broker.log" || fail 'Exactly one provider connection not proven.'
+node - "$ARTIFACT_DIR/broker.log" "$INVOCATION_ID" "$REQUEST_ID" <<'NODE'
+const fs = require('node:fs'); const [path, invocationId, requestId] = process.argv.slice(2); const events = [];
+for (const line of fs.readFileSync(path, 'utf8').split(/\r?\n/).filter(Boolean)) { try { const value = JSON.parse(line); if (value && typeof value === 'object' && !Array.isArray(value)) events.push(value); } catch {} }
+const exact = (event) => event.invocationId === invocationId && event.requestId === requestId && event.capabilityId === 'hubspot.get_contact';
+const connections = events.filter((event) => event.event === 'piece_egress_broker_connection' && exact(event) &&
+  event.hostname === 'api.hubapi.com' && event.port === 443 && event.upstreamConnections === 1 && event.outcome === 'PIECE_BROKER_SUCCEEDED');
+if (connections.length !== 1) throw new Error('exact broker connection evidence');
+if (events.filter((event) => event.event === 'piece_egress_broker_policy_revoked' && exact(event)).length !== 1) throw new Error('exact revocation evidence');
+NODE
+printf 'CONNECTION_EVENT_JSON_PROOF=PASS\n'
 for surface in "$ARTIFACT_DIR"/*; do
   grep -Fq "$CANARY" "$surface" && fail 'Credential plaintext leaked.'
   grep -Fq "$CANARY_B64" "$surface" && [[ "$surface" != *request.json ]] && fail 'Credential encoding leaked.'
@@ -169,6 +269,6 @@ done
 snapshot_protected "$ARTIFACT_DIR/protected-after.txt"
 cmp -s "$ARTIFACT_DIR/protected-before.txt" "$ARTIFACT_DIR/protected-after.txt" || fail 'Protected services changed.'
 printf '%s\n' \
-  'SOURCE_GATE=PASS' 'BROKER_HARDENING=PASS' 'BROKER_PERSISTENCE=PASS' 'REGISTER_BEFORE_SANDBOX=PASS' \
+  'SOURCE_GATE=PASS' 'BROKER_HARDENING=PASS' 'BROKER_PERSISTENCE=PASS' \
   'TOPOLOGY=PASS' 'PROVIDER_NUMERIC_401=PASS' 'CREDENTIAL_CROSSOVER=0' 'PROTECTED_SERVICES_UNCHANGED=PASS' \
   'STEP5B1 LONG-LIVED EGRESS BROKER HOST ACCEPTANCE=PASS'

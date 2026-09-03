@@ -291,10 +291,33 @@ function safeResponse(value) {
   return serialized;
 }
 
-export async function startEgressBrokerControlServer({ policyStore, socketPath = EGRESS_BROKER_SOCKET_PATH } = {}) {
+const productionSocketLifecycle = Object.freeze({
+  async claim(path) { await claimSocket(path); },
+  secure(path) { chmodSync(path, EGRESS_BROKER_SOCKET_MODE); },
+  remove(path) { if (existsSync(path)) unlinkSync(path); },
+});
+
+/**
+ * @param {{
+ *   policyStore?: EgressBrokerPolicyStore,
+ *   socketPath?: string,
+ *   socketPathValidator?: Function,
+ *   socketLifecycle?: {claim: Function, secure: Function, remove: Function}
+ * }} options
+ */
+export async function startEgressBrokerControlServer({
+  policyStore,
+  socketPath = EGRESS_BROKER_SOCKET_PATH,
+  socketPathValidator = validateEgressBrokerSocketPath,
+  socketLifecycle = productionSocketLifecycle,
+} = {}) {
   if (!(policyStore instanceof EgressBrokerPolicyStore)) throw controlFailure();
-  validateEgressBrokerSocketPath(socketPath);
-  await claimSocket(socketPath);
+  if (
+    typeof socketPathValidator !== "function" || socketPathValidator(socketPath) !== socketPath ||
+    !socketLifecycle || typeof socketLifecycle.claim !== "function" ||
+    typeof socketLifecycle.secure !== "function" || typeof socketLifecycle.remove !== "function"
+  ) throw controlFailure();
+  await socketLifecycle.claim(socketPath);
   const sockets = new Set();
   const server = net.createServer((socket) => {
     sockets.add(socket);
@@ -345,14 +368,14 @@ export async function startEgressBrokerControlServer({ policyStore, socketPath =
     server.once("error", reject);
     server.listen(socketPath, resolve);
   });
-  chmodSync(socketPath, EGRESS_BROKER_SOCKET_MODE);
+  socketLifecycle.secure(socketPath);
   return Object.freeze({
     server,
     socketPath,
     async stop() {
       for (const socket of sockets) socket.destroy();
       await new Promise((resolve) => server.close(resolve));
-      if (existsSync(socketPath)) unlinkSync(socketPath);
+      socketLifecycle.remove(socketPath);
     },
   });
 }

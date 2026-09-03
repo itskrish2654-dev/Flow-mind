@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { EventEmitter } from "node:events";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { connect as connectSocket } from "node:net";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import test, { describe } from "node:test";
 
 import { buildInvocationPlan } from "../services/piece-runtime/src/container-engine.mjs";
@@ -14,7 +17,8 @@ import {
   EGRESS_BROKER_RUNTIME_SPEC,
   EGRESS_BROKER_SOCKET_PATH,
 } from "../services/piece-runtime/src/egress-broker-constants.mjs";
-import { EgressBrokerPolicyStore, validateBrokerControlMessage, validateEgressBrokerSocketPath } from "../services/piece-runtime/src/egress-broker-control.mjs";
+import { EgressBrokerPolicyStore, startEgressBrokerControlServer, validateBrokerControlMessage, validateEgressBrokerSocketPath } from "../services/piece-runtime/src/egress-broker-control.mjs";
+import { handleBrokerClient } from "../services/piece-runtime/src/egress-broker.mjs";
 import { validatedBrokerContainerName } from "../services/piece-runtime/src/docker-piece-container-engine.mjs";
 import { REVIEWED_MANIFESTS } from "../services/piece-runtime/src/manifest-registry.mjs";
 
@@ -46,6 +50,106 @@ function store(options: Record<string, unknown> = {}) {
   return new EgressBrokerPolicyStore({
     baselineAddresses: new Set([BASELINE]), listInterfaceAddresses: () => new Set([BASELINE, ADDRESS]),
     resolveDestination: async (destination: { hostname: string }) => resolved(destination.hostname), ...options,
+  });
+}
+
+function tlsHello(hostname = "api.hubapi.com") {
+  const name = Buffer.from(hostname, "ascii");
+  const list = Buffer.concat([Buffer.from([0, (name.length >> 8) & 0xff, name.length & 0xff]), name]);
+  const extensionData = Buffer.concat([Buffer.from([(list.length >> 8) & 0xff, list.length & 0xff]), list]);
+  const extension = Buffer.concat([Buffer.from([0, 0, (extensionData.length >> 8) & 0xff, extensionData.length & 0xff]), extensionData]);
+  const body = Buffer.concat([
+    Buffer.from([3, 3]), Buffer.alloc(32), Buffer.from([0]), Buffer.from([0, 2, 0x13, 0x01]),
+    Buffer.from([1, 0]), Buffer.from([(extension.length >> 8) & 0xff, extension.length & 0xff]), extension,
+  ]);
+  const handshake = Buffer.concat([Buffer.from([1, (body.length >> 16) & 0xff, (body.length >> 8) & 0xff, body.length & 0xff]), body]);
+  return Buffer.concat([Buffer.from([22, 3, 1, (handshake.length >> 8) & 0xff, handshake.length & 0xff]), handshake]);
+}
+
+class FakeClientSocket extends EventEmitter {
+  localAddress = ADDRESS;
+  writes: Buffer[] = [];
+  destroyed = false;
+  paused = false;
+  write(value: Buffer) { this.writes.push(Buffer.from(value)); return true; }
+  pause() { this.paused = true; return this; }
+  resume() { this.paused = false; return this; }
+  destroy() { this.destroyed = true; return this; }
+}
+
+class FakeProviderSocket extends EventEmitter {
+  writes: Buffer[] = [];
+  destroyed = false;
+  idleTimeoutMs: number | null = null;
+  idleHandler: (() => void) | null = null;
+  write(value: Buffer) { this.writes.push(Buffer.from(value)); return true; }
+  destroy() { this.destroyed = true; return this; }
+  setTimeout(delay: number, handler: () => void) { this.idleTimeoutMs = delay; this.idleHandler = handler; return this; }
+}
+
+class FakeTimers {
+  timers: Array<{ delay: number; callback: () => void; cleared: boolean }> = [];
+  set = (callback: () => void, delay: number) => {
+    const timer = { delay, callback, cleared: false };
+    this.timers.push(timer);
+    return timer;
+  };
+  clear = (timer?: { cleared: boolean }) => { if (timer) timer.cleared = true; };
+  fire(delay: number) {
+    const timer = this.timers.find((candidate) => candidate.delay === delay && !candidate.cleared);
+    assert.ok(timer, `missing timer ${delay}`);
+    timer.cleared = true;
+    timer.callback();
+  }
+}
+
+function brokerDataHarness(options: { acceptedHostname?: string; limits?: Record<string, number> } = {}) {
+  const client = new FakeClientSocket();
+  const provider = new FakeProviderSocket();
+  const timers = new FakeTimers();
+  const events: Array<Record<string, unknown>> = [];
+  const authorizeCalls: Array<{ localAddress: string; hostname: string }> = [];
+  const providerCalls: Array<Record<string, unknown>> = [];
+  let releases = 0;
+  const limits = {
+    maximumProviderUpstreamBytes: 32 * 1024,
+    maximumProviderDownstreamBytes: 32 * 1024,
+    connectTimeoutMs: 101,
+    idleTimeoutMs: 202,
+    lifetimeTimeoutMs: 303,
+    simultaneousConnections: 2,
+    ...options.limits,
+  };
+  const policyStore = {
+    authorize(localAddress: string, hostname: string) {
+      authorizeCalls.push({ localAddress, hostname });
+      if (hostname !== (options.acceptedHostname ?? "api.hubapi.com")) throw new Error("denied");
+      return {
+        invocationId: "0123456789abcdef", requestId: "broker-test-request", capabilityId: "hubspot.get_contact",
+        destination: { hostname: "api.hubapi.com", pinnedAddress: "203.0.113.10", port: 443, family: 4 },
+        limits,
+        release() { releases += 1; },
+      };
+    },
+  };
+  handleBrokerClient(client, {
+    policyStore,
+    connectProvider(configuration: Record<string, unknown>) { providerCalls.push(configuration); return provider; },
+    logger(event: Record<string, unknown>) { events.push(event); },
+    setTimer: timers.set,
+    clearTimer: timers.clear,
+  });
+  return { client, provider, timers, events, authorizeCalls, providerCalls, releases: () => releases };
+}
+
+function socketExchange(socketPath: string, payload: Buffer) {
+  return new Promise<Buffer>((resolvePromise, reject) => {
+    const socket = connectSocket(socketPath);
+    const chunks: Buffer[] = [];
+    socket.once("connect", () => socket.write(payload));
+    socket.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    socket.once("end", () => resolvePromise(Buffer.concat(chunks)));
+    socket.once("error", reject);
   });
 }
 
@@ -183,6 +287,121 @@ describe("Essential 50 Step 5B.1 long-lived egress broker", () => {
     assert.match(source, /connectTimeoutMs/); assert.match(source, /idleTimeoutMs/); assert.match(source, /lifetimeTimeoutMs/);
   });
 
+  test("dynamic exact SNI authorization uses one pinned numeric provider connection and reuses it", () => {
+    const harness = brokerDataHarness();
+    const hello = tlsHello();
+    harness.client.emit("data", hello);
+    assert.deepEqual(harness.authorizeCalls, [{ localAddress: ADDRESS, hostname: "api.hubapi.com" }]);
+    assert.deepEqual(harness.providerCalls, [{ host: "203.0.113.10", port: 443, family: 4 }]);
+    harness.provider.emit("connect");
+    assert.deepEqual(harness.provider.writes, [hello]);
+    harness.client.emit("data", Buffer.from("encrypted-application-bytes"));
+    assert.equal(harness.providerCalls.length, 1);
+    assert.equal(harness.provider.writes.length, 2);
+    harness.provider.emit("end");
+    assert.equal(harness.releases(), 1);
+    assert.equal(harness.events.at(-1)?.outcome, "PIECE_BROKER_SUCCEEDED");
+  });
+
+  test("dynamic wrong SNI and malformed ClientHello deny without provider connection", () => {
+    const wrong = brokerDataHarness();
+    wrong.client.emit("data", tlsHello("wrong.example"));
+    assert.equal(wrong.authorizeCalls.length, 1);
+    assert.equal(wrong.providerCalls.length, 0);
+    assert.equal(wrong.events.at(-1)?.outcome, "PIECE_EGRESS_DENIED");
+    assert.equal(wrong.releases(), 0);
+
+    const malformed = brokerDataHarness();
+    malformed.client.emit("data", Buffer.from("not-a-tls-client-hello"));
+    assert.equal(malformed.authorizeCalls.length, 0);
+    assert.equal(malformed.providerCalls.length, 0);
+    assert.equal(malformed.events.at(-1)?.outcome, "PIECE_EGRESS_DENIED");
+    assert.equal(malformed.releases(), 0);
+  });
+
+  test("dynamic provider failure, upstream limit, and downstream limit are bounded with one release", () => {
+    const providerFailure = brokerDataHarness();
+    providerFailure.client.emit("data", tlsHello());
+    providerFailure.provider.emit("error", new Error("provider unavailable"));
+    providerFailure.provider.emit("end");
+    providerFailure.client.emit("end");
+    assert.equal(providerFailure.providerCalls.length, 1);
+    assert.equal(providerFailure.releases(), 1);
+    assert.equal(providerFailure.events.at(-1)?.outcome, "PIECE_PROVIDER_UNAVAILABLE");
+
+    const hello = tlsHello();
+    const upstream = brokerDataHarness({ limits: { maximumProviderUpstreamBytes: hello.length + 2 } });
+    upstream.client.emit("data", hello);
+    upstream.provider.emit("connect");
+    upstream.client.emit("data", Buffer.from("too-large"));
+    assert.equal(upstream.providerCalls.length, 1);
+    assert.equal(upstream.releases(), 1);
+    assert.equal(upstream.events.at(-1)?.outcome, "PIECE_EGRESS_DENIED");
+
+    const downstream = brokerDataHarness({ limits: { maximumProviderDownstreamBytes: 2 } });
+    downstream.client.emit("data", hello);
+    downstream.provider.emit("connect");
+    downstream.provider.emit("data", Buffer.from("too-large"));
+    assert.equal(downstream.providerCalls.length, 1);
+    assert.equal(downstream.releases(), 1);
+    assert.equal(downstream.events.at(-1)?.outcome, "PIECE_RESPONSE_INVALID");
+  });
+
+  test("dynamic connect, idle, and lifetime timeouts release once and never reconnect", () => {
+    const connectTimeout = brokerDataHarness();
+    connectTimeout.client.emit("data", tlsHello());
+    connectTimeout.timers.fire(101);
+    assert.equal(connectTimeout.providerCalls.length, 1);
+    assert.equal(connectTimeout.releases(), 1);
+    assert.equal(connectTimeout.events.at(-1)?.outcome, "PIECE_TIMEOUT");
+
+    const idleTimeout = brokerDataHarness();
+    idleTimeout.client.emit("data", tlsHello());
+    idleTimeout.provider.emit("connect");
+    assert.equal(idleTimeout.provider.idleTimeoutMs, 202);
+    idleTimeout.provider.idleHandler?.();
+    assert.equal(idleTimeout.providerCalls.length, 1);
+    assert.equal(idleTimeout.releases(), 1);
+    assert.equal(idleTimeout.events.at(-1)?.outcome, "PIECE_TIMEOUT");
+
+    const lifetimeTimeout = brokerDataHarness();
+    lifetimeTimeout.client.emit("data", tlsHello());
+    lifetimeTimeout.provider.emit("connect");
+    lifetimeTimeout.timers.fire(303);
+    assert.equal(lifetimeTimeout.providerCalls.length, 1);
+    assert.equal(lifetimeTimeout.releases(), 1);
+    assert.equal(lifetimeTimeout.events.at(-1)?.outcome, "PIECE_TIMEOUT");
+  });
+
+  test("real bounded control server accepts health and rejects oversized input", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "crazyloops-egress-control-"));
+    const socketPath = process.platform === "win32"
+      ? `\\\\?\\pipe\\crazyloops-egress-control-${process.pid}-${Date.now()}`
+      : join(directory, "broker.sock");
+    const policyStore = store();
+    const socketLifecycle = process.platform === "win32"
+      ? { async claim() {}, secure() {}, remove() {} }
+      : undefined;
+    const control = await startEgressBrokerControlServer({
+      policyStore,
+      socketPath,
+      socketPathValidator(value: string) { if (value !== socketPath) throw new Error("unexpected socket"); return value; },
+      socketLifecycle,
+    });
+    try {
+      const health = JSON.parse((await socketExchange(socketPath, Buffer.from('{"protocolVersion":1,"operation":"health"}\n'))).toString("utf8"));
+      assert.equal(health.ok, true);
+      assert.equal(health.operation, "health");
+      assert.equal(health.status, "ready");
+
+      const oversized = JSON.parse((await socketExchange(socketPath, Buffer.alloc(EGRESS_BROKER_MAX_CONTROL_BYTES + 1, 97))).toString("utf8"));
+      assert.deepEqual(oversized, { ok: false, protocolVersion: 1, errorCode: "PIECE_EGRESS_DENIED" });
+    } finally {
+      await control.stop();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("control, environment, logs, and image surfaces contain no credential channel", () => {
     const control = readFileSync(resolve(ROOT, "services/piece-runtime/src/egress-broker-control.mjs"), "utf8");
     const broker = readFileSync(resolve(ROOT, "services/piece-runtime/src/egress-broker.mjs"), "utf8");
@@ -224,14 +443,68 @@ describe("Essential 50 Step 5B.1 long-lived egress broker", () => {
   test("new owner-host harness is commit-gated, broker-first, topology-specific, and cleanup-scoped", () => {
     const harness = readFileSync(resolve(ROOT, "scripts/e50-step5b1-egress-broker-host-acceptance.sh"), "utf8");
     assert.match(harness, /E50_EXPECTED_COMMIT/); assert.match(harness, /git status --porcelain/);
+    assert.match(harness, /EXPECTED_ORIGIN_MAIN='20c23d7e85123eaa77a916ce43f4a9ef5ca8a5e7'/);
+    assert.match(harness, /git fetch origin main codex\/e50-egress-broker/);
+    assert.match(harness, /git rev-parse origin\/main.*EXPECTED_ORIGIN_MAIN/);
+    assert.match(harness, /git rev-parse origin\/codex\/e50-egress-broker.*E50_EXPECTED_COMMIT/);
+    assert.match(harness, /PROTECTED=\(crazyloops-connector-runner activepieces-app activepieces-worker-1 redis\)/);
+    assert.doesNotMatch(harness, /activepieces-worker(?:\s|\))/);
     const brokerStart = harness.indexOf('docker run -d --name "$BROKER_NAME"');
     const supervisorStart = harness.indexOf('docker run -d --name "$SUPERVISOR_NAME"');
+    const fullCleanupTrap = harness.indexOf("trap 'cleanup $?' EXIT");
+    assert.ok(harness.indexOf("git fetch origin main codex/e50-egress-broker") < fullCleanupTrap && fullCleanupTrap < brokerStart);
     assert.ok(brokerStart >= 0 && brokerStart < supervisorStart);
     assert.match(harness, /network none/); assert.match(harness, /crazyloops-piece-egress-control/);
     assert.match(harness, /docker pause "\$SANDBOX_NAME"/); assert.doesNotMatch(harness, /docker pause "\$BROKER_NAME"/);
     assert.match(harness, /cl-piece-gateway-/); assert.match(harness, /cl-piece-egress-/);
-    assert.match(harness, /PIECE_AUTH_FAILED/); assert.match(harness, /upstreamConnections\":1/);
+    assert.match(harness, /PIECE_AUTH_FAILED/); assert.match(harness, /upstreamConnections === 1/);
     assert.match(harness, /PROTECTED_SERVICES_UNCHANGED=PASS/);
     assert.doesNotMatch(harness, /docker compose|systemctl restart|vercel|supabase/);
+
+    const sandboxPause = harness.indexOf('docker pause "$SANDBOX_NAME"');
+    const registrationLog = harness.indexOf("broker-before-sandbox-unpause.log", sandboxPause);
+    const exactRegistration = harness.indexOf("event.event === 'piece_egress_broker_policy_registered'", registrationLog);
+    const registrationMarker = harness.indexOf("REGISTER_BEFORE_SANDBOX=PASS", exactRegistration);
+    const sandboxUnpause = harness.indexOf('docker unpause "$SANDBOX_NAME"', registrationMarker);
+    assert.ok(sandboxPause < registrationLog && registrationLog < exactRegistration && exactRegistration < registrationMarker && registrationMarker < sandboxUnpause);
+    const registrationProof = harness.slice(registrationLog, sandboxUnpause);
+    assert.match(registrationProof, /invocationId === invocationId/);
+    assert.match(registrationProof, /requestId === requestId/);
+    assert.match(registrationProof, /capabilityId === 'hubspot\.get_contact'/);
+    assert.match(registrationProof, /hostname !== 'api\.hubapi\.com'/);
+    assert.match(registrationProof, /destination\?\.port !== 443/);
+    assert.match(registrationProof, /classification === 'SAFE'/);
+
+    const connectionProof = harness.slice(harness.indexOf('node - "$ARTIFACT_DIR/broker.log"'));
+    assert.match(connectionProof, /event === 'piece_egress_broker_connection'/);
+    assert.match(connectionProof, /invocationId === invocationId/);
+    assert.match(connectionProof, /requestId === requestId/);
+    assert.match(connectionProof, /capabilityId === 'hubspot\.get_contact'/);
+    assert.match(connectionProof, /hostname === 'api\.hubapi\.com'/);
+    assert.match(connectionProof, /port === 443/);
+    assert.match(connectionProof, /upstreamConnections === 1/);
+    assert.match(connectionProof, /outcome === 'PIECE_BROKER_SUCCEEDED'/);
+    assert.match(connectionProof, /connections\.length !== 1/);
+  });
+
+  test("host harness preserves only sanitized bounded failure evidence", () => {
+    const harness = readFileSync(resolve(ROOT, "scripts/e50-step5b1-egress-broker-host-acceptance.sh"), "utf8");
+    const cleanup = harness.match(/cleanup\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    const sanitizer = harness.match(/sanitize_failure_evidence\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    const diagnostics = harness.match(/capture_failure_diagnostics\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    assert.match(cleanup, /status != 0.*capture_failure_diagnostics/);
+    assert.match(cleanup, /sanitize_failure_evidence/);
+    assert.match(cleanup, /status == 0[\s\S]*rm -rf -- "\$ARTIFACT_DIR"/);
+    assert.match(cleanup, /EVIDENCE_DIR=%s/);
+    assert.match(sanitizer, /shred -u -z -- "\$ARTIFACT_DIR\/request\.json"/);
+    assert.match(sanitizer, /rm -f -- "\$ARTIFACT_DIR\/request\.json"/);
+    assert.match(sanitizer, /grep -Fq -- "\$CANARY"/);
+    assert.match(sanitizer, /grep -Fq -- "\$CANARY_B64"/);
+    assert.match(sanitizer, /CANARY=''[\s\S]*CANARY_B64=''/);
+    for (const field of [
+      "BROKER_RUNNING_RESTART", "BROKER_NETWORKS", "SANDBOX_PRESENT", "INTERNAL_NETWORK_PRESENT",
+      "REGISTRATION_EVENT_COUNT", "SAFE_REGISTRATION_COUNT", "CONNECTION_EVENT_COUNT", "PROVIDER_RESPONSE_ERROR_CODE",
+    ]) assert.match(diagnostics, new RegExp(field));
+    assert.doesNotMatch(diagnostics, /Authorization|credentialBase64|pinnedAddress|raw request|raw provider response/i);
   });
 });
