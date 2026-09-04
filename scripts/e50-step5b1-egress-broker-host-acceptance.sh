@@ -221,7 +221,7 @@ done
 printf 'SUPERVISOR_UDS_INTERNAL=PASS\n'
 
 SUPERVISOR_HEALTH="$(
-  timeout 10 docker run --rm --name "$SUPERVISOR_HEALTH_NAME" --label "$OWNER_LABEL" \
+  timeout 10 docker run --rm -i --name "$SUPERVISOR_HEALTH_NAME" --label "$OWNER_LABEL" \
     --network none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
     --pids-limit=16 --memory=67108864 --memory-swap=67108864 --cpus=0.25 --user=65532:65532 \
     --mount type=bind,src="$SUPERVISOR_CONTROL",dst=/control,readonly \
@@ -264,7 +264,7 @@ cat >"$ARTIFACT_DIR/request.json" <<JSON
 {"protocolVersion":1,"request":{"protocolVersion":1,"requestId":"step5b1-broker-host","executionId":"step5b1-broker-host-execution","capabilityId":"hubspot.get_contact","capabilityVersion":1,"mode":"TEST","idempotencyKey":"step5b1-broker-host-idempotency","input":{"contactId":"synthetic-contact","properties":["firstname"]}},"credentialBase64":"$CANARY_B64"}
 JSON
 
-docker run --rm --name cl-piece-step5b1-broker-client --label "$OWNER_LABEL" --network none --user 65532:65532 \
+docker run --rm -i --name cl-piece-step5b1-broker-client --label "$OWNER_LABEL" --network none --user 65532:65532 \
   --mount type=bind,src="$SUPERVISOR_CONTROL",dst=/control --mount type=bind,src="$ARTIFACT_DIR",dst=/evidence,ro \
   --entrypoint node "$SUPERVISOR_IMAGE" - >"$ARTIFACT_DIR/response.json" 2>"$ARTIFACT_DIR/client.err" <<'NODE' &
 const http = require('node:http'); const fs = require('node:fs');

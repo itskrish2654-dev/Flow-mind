@@ -465,7 +465,7 @@ describe("Essential 50 Step 5B.1 long-lived egress broker", () => {
     assert.doesNotMatch(harness, /\[\[ -S "\$SUPERVISOR_CONTROL\/piece-supervisor\.sock" \]\]/);
     const internalUdsProof = harness.indexOf("fs.lstatSync(\"/run/crazyloops-piece/piece-supervisor.sock\").isSocket()");
     const internalUdsMarker = harness.indexOf("SUPERVISOR_UDS_INTERNAL=PASS", internalUdsProof);
-    const healthClient = harness.indexOf('docker run --rm --name "$SUPERVISOR_HEALTH_NAME"', internalUdsMarker);
+    const healthClient = harness.indexOf('docker run --rm -i --name "$SUPERVISOR_HEALTH_NAME"', internalUdsMarker);
     const healthPath = harness.indexOf("path: '/v1/health'", healthClient);
     const healthMarker = harness.indexOf("SUPERVISOR_UDS_HEALTH=PASS", healthPath);
     const canaryGeneration = harness.indexOf('CANARY="E50_STEP5B1_BROKER_', healthMarker);
@@ -477,6 +477,16 @@ describe("Essential 50 Step 5B.1 long-lived egress broker", () => {
     assert.match(healthProof, /ok!==true/);
     assert.match(healthProof, /protocolVersion!==1/);
     assert.match(healthProof, /status!=="ready"/);
+    const healthInvocation = harness.slice(healthClient, harness.indexOf("<<'NODE'", healthClient));
+    assert.match(healthInvocation, /docker run --rm -i --name "\$SUPERVISOR_HEALTH_NAME"[\s\S]*--entrypoint node "\$SUPERVISOR_IMAGE" -/);
+    assert.doesNotMatch(healthInvocation, /(?:^|\s)(?:-t|--tty)(?=\s|$)/m);
+
+    const executeClient = harness.indexOf('docker run --rm -i --name cl-piece-step5b1-broker-client', canaryGeneration);
+    const executeHeredoc = harness.indexOf("<<'NODE'", executeClient);
+    const executeInvocation = harness.slice(executeClient, executeHeredoc);
+    assert.ok(executeClient > canaryGeneration && executeHeredoc > executeClient);
+    assert.match(executeInvocation, /docker run --rm -i --name cl-piece-step5b1-broker-client[\s\S]*--entrypoint node "\$SUPERVISOR_IMAGE" -/);
+    assert.doesNotMatch(executeInvocation, /(?:^|\s)(?:-t|--tty)(?=\s|$)/m);
 
     const cleanup = harness.match(/cleanup\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
     const restore = harness.match(/restore_supervisor_control_ownership\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
