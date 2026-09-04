@@ -263,22 +263,42 @@ CANARY_B64="$(printf '%s' "$CANARY" | base64 -w0)"
 cat >"$ARTIFACT_DIR/request.json" <<JSON
 {"protocolVersion":1,"request":{"protocolVersion":1,"requestId":"step5b1-broker-host","executionId":"step5b1-broker-host-execution","capabilityId":"hubspot.get_contact","capabilityVersion":1,"mode":"TEST","idempotencyKey":"step5b1-broker-host-idempotency","input":{"contactId":"synthetic-contact","properties":["firstname"]}},"credentialBase64":"$CANARY_B64"}
 JSON
+chmod 0600 "$ARTIFACT_DIR/request.json"
+[[ "$(stat -c '%a' "$ARTIFACT_DIR/request.json")" == '600' ]] || fail 'Request file mode invalid.'
+[[ "$(stat -c '%u:%g' "$ARTIFACT_DIR/request.json")" == "$HOST_UID:$HOST_GID" ]] || fail 'Request file owner invalid.'
+printf '%s\n' 'REQUEST_FILE_MODE=0600' 'REQUEST_FILE_OWNER=HOST'
 
 docker run --rm -i --name cl-piece-step5b1-broker-client --label "$OWNER_LABEL" --network none --user 65532:65532 \
-  --mount type=bind,src="$SUPERVISOR_CONTROL",dst=/control --mount type=bind,src="$ARTIFACT_DIR",dst=/evidence,ro \
-  --entrypoint node "$SUPERVISOR_IMAGE" - >"$ARTIFACT_DIR/response.json" 2>"$ARTIFACT_DIR/client.err" <<'NODE' &
-const http = require('node:http'); const fs = require('node:fs');
-const body = fs.readFileSync('/evidence/request.json', 'utf8');
-const req = http.request({ socketPath: '/control/piece-supervisor.sock', path: '/v1/execute', method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } }, (res) => res.pipe(process.stdout));
-req.end(body);
-NODE
+  --mount type=bind,src="$SUPERVISOR_CONTROL",dst=/control \
+  --entrypoint node "$SUPERVISOR_IMAGE" \
+  -e 'const http=require("node:http");const req=http.request({socketPath:"/control/piece-supervisor.sock",path:"/v1/execute",method:"POST",headers:{"content-type":"application/json"}},(res)=>res.pipe(process.stdout));req.once("error",()=>process.exit(1));process.stdin.pipe(req);' \
+  <"$ARTIFACT_DIR/request.json" >"$ARTIFACT_DIR/response.json" 2>"$ARTIFACT_DIR/client.err" &
 EXECUTE_PID=$!
 
 INVOCATION_ID="$(printf '%s' 'step5b1-broker-host' | sha256sum | cut -c1-16)"
 SANDBOX_NAME="cl-piece-sandbox-$INVOCATION_ID"
 INTERNAL_NAME="cl-piece-internal-$INVOCATION_ID"
-for _ in $(seq 1 200); do docker inspect "$SANDBOX_NAME" >/dev/null 2>&1 && break; sleep 0.025; done
-docker inspect "$SANDBOX_NAME" >/dev/null 2>&1 || fail 'Sandbox did not start after registration.'
+SANDBOX_STARTED=0
+for _ in $(seq 1 200); do
+  if docker inspect "$SANDBOX_NAME" >/dev/null 2>&1; then
+    SANDBOX_STARTED=1
+    break
+  fi
+  if ! kill -0 "$EXECUTE_PID" >/dev/null 2>&1; then
+    wait "$EXECUTE_PID" >/dev/null 2>&1 || true
+    EXECUTE_PID=''
+    fail 'Supervisor execute client exited before sandbox creation.'
+  fi
+  sleep 0.025
+done
+if [[ "$SANDBOX_STARTED" != '1' ]]; then
+  if ! kill -0 "$EXECUTE_PID" >/dev/null 2>&1; then
+    wait "$EXECUTE_PID" >/dev/null 2>&1 || true
+    EXECUTE_PID=''
+    fail 'Supervisor execute client exited before sandbox creation.'
+  fi
+  fail 'Sandbox did not start within bounded wait.'
+fi
 docker pause "$SANDBOX_NAME" >/dev/null
 docker inspect "$SANDBOX_NAME" >"$ARTIFACT_DIR/sandbox-live.json"
 docker inspect "$BROKER_NAME" >"$ARTIFACT_DIR/broker-live.json"

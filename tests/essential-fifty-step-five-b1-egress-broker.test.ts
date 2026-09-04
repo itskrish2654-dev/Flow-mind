@@ -482,11 +482,28 @@ describe("Essential 50 Step 5B.1 long-lived egress broker", () => {
     assert.doesNotMatch(healthInvocation, /(?:^|\s)(?:-t|--tty)(?=\s|$)/m);
 
     const executeClient = harness.indexOf('docker run --rm -i --name cl-piece-step5b1-broker-client', canaryGeneration);
-    const executeHeredoc = harness.indexOf("<<'NODE'", executeClient);
-    const executeInvocation = harness.slice(executeClient, executeHeredoc);
-    assert.ok(executeClient > canaryGeneration && executeHeredoc > executeClient);
-    assert.match(executeInvocation, /docker run --rm -i --name cl-piece-step5b1-broker-client[\s\S]*--entrypoint node "\$SUPERVISOR_IMAGE" -/);
+    const executeEnd = harness.indexOf("EXECUTE_PID=$!", executeClient);
+    const executeInvocation = harness.slice(executeClient, executeEnd);
+    assert.ok(executeClient > canaryGeneration && executeEnd > executeClient);
+    assert.match(executeInvocation, /docker run --rm -i --name cl-piece-step5b1-broker-client/);
+    assert.match(executeInvocation, /--network none/);
+    assert.match(executeInvocation, /--user 65532:65532/);
+    assert.match(executeInvocation, /--entrypoint node "\$SUPERVISOR_IMAGE"[\s\S]*-e '/);
+    assert.match(executeInvocation, /<"\$ARTIFACT_DIR\/request\.json"/);
+    assert.match(executeInvocation, />"\$ARTIFACT_DIR\/response\.json" 2>"\$ARTIFACT_DIR\/client\.err"/);
+    assert.doesNotMatch(executeInvocation, /src="\$ARTIFACT_DIR"|dst=\/evidence|\/evidence\/request\.json/);
+    assert.doesNotMatch(executeInvocation, /--entrypoint node "\$SUPERVISOR_IMAGE"\s+-\s/);
+    assert.doesNotMatch(executeInvocation, /CANARY|credentialBase64|--env/);
     assert.doesNotMatch(executeInvocation, /(?:^|\s)(?:-t|--tty)(?=\s|$)/m);
+    assert.doesNotMatch(harness, /readFileSync\(['"]\/evidence\/request\.json/);
+    assert.match(harness, /chmod 0600 "\$ARTIFACT_DIR\/request\.json"/);
+    assert.match(harness, /stat -c '%a' "\$ARTIFACT_DIR\/request\.json"/);
+    assert.match(harness, /stat -c '%u:%g' "\$ARTIFACT_DIR\/request\.json".*"\$HOST_UID:\$HOST_GID"/);
+    const sandboxWait = harness.slice(executeEnd, harness.indexOf('docker pause "$SANDBOX_NAME"', executeEnd));
+    assert.match(sandboxWait, /kill -0 "\$EXECUTE_PID"/);
+    assert.match(sandboxWait, /wait "\$EXECUTE_PID"[\s\S]*EXECUTE_PID=''/);
+    assert.match(sandboxWait, /Supervisor execute client exited before sandbox creation\./);
+    assert.match(sandboxWait, /Sandbox did not start within bounded wait\./);
 
     const cleanup = harness.match(/cleanup\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
     const restore = harness.match(/restore_supervisor_control_ownership\(\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
