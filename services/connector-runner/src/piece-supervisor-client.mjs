@@ -5,12 +5,15 @@ export const PIECE_SUPERVISOR_SOCKET_PATH = "/run/crazyloops-piece/piece-supervi
 export const PIECE_SUPERVISOR_EXECUTE_PATH = "/v1/execute";
 export const PIECE_SUPERVISOR_MAX_REQUEST_BYTES = 96 * 1024;
 export const PIECE_SUPERVISOR_MAX_RESPONSE_BYTES = 192 * 1024;
+export const PIECE_SUPERVISOR_MAX_CREDENTIAL_BYTES = 16 * 1024;
 
 const PROTOCOL_VERSION = 1;
 const DEFAULT_TIMEOUT_MS = 10_000;
-const PIECE_ERROR_CODES = new Set([
+export const ACCEPTED_PIECE_ERROR_CODES = Object.freeze([
   "PIECE_UNSUPPORTED_CAPABILITY",
+  "PIECE_INVALID_INPUT",
   "PIECE_INVALID_CREDENTIAL",
+  "PIECE_ACTION_NOT_ALLOWED",
   "PIECE_AUTH_FAILED",
   "PIECE_RATE_LIMITED",
   "PIECE_PROVIDER_UNAVAILABLE",
@@ -18,10 +21,33 @@ const PIECE_ERROR_CODES = new Set([
   "PIECE_EGRESS_DENIED",
   "PIECE_RESPONSE_INVALID",
   "PIECE_RUNTIME_FAILED",
-  "PIECE_INVALID_INPUT",
-  "PIECE_ACTION_NOT_ALLOWED",
-  "PIECE_OUTPUT_LIMIT",
 ]);
+const PIECE_ERROR_CODES = new Set(ACCEPTED_PIECE_ERROR_CODES);
+const SUPERVISOR_STATUS_BY_CODE = Object.freeze({
+  SUPERVISOR_INVALID_REQUEST: Object.freeze([400, 408, 413]),
+  SUPERVISOR_DUPLICATE: Object.freeze([409]),
+  SUPERVISOR_BUSY: Object.freeze([429]),
+  SUPERVISOR_UNAVAILABLE: Object.freeze([503]),
+});
+const SUPERVISOR_STATUSES = new Set(Object.values(SUPERVISOR_STATUS_BY_CODE).flat());
+const SUCCESS_META_KEYS = Object.freeze([
+  "actionId",
+  "attempts",
+  "capabilityId",
+  "capabilityVersion",
+  "classification",
+  "pieceVersion",
+  "providerId",
+]);
+const REVIEWED_SUCCESS_META = Object.freeze({
+  actionId: "get-contact",
+  attempts: 1,
+  capabilityId: "hubspot.get_contact",
+  capabilityVersion: 1,
+  classification: "READ",
+  pieceVersion: "0.8.10",
+  providerId: "hubspot",
+});
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -45,11 +71,11 @@ export function validatePieceSupervisorSocketPath(value) {
 }
 
 export class PieceSupervisorClientError extends Error {
-  constructor(kind, pieceErrorCode = null) {
+  constructor(kind, errorCode = null) {
     super("Piece supervisor request failed.");
     this.name = "PieceSupervisorClientError";
     this.kind = kind;
-    this.pieceErrorCode = pieceErrorCode;
+    this.errorCode = errorCode;
   }
 }
 
@@ -69,46 +95,87 @@ function validateSuccess(value, request) {
     value.acknowledged !== true ||
     !isRecord(value.output) ||
     !isRecord(value.meta) ||
+    !exactKeys(value.meta, SUCCESS_META_KEYS) ||
+    Object.entries(REVIEWED_SUCCESS_META).some(([key, expected]) => value.meta[key] !== expected) ||
     value.meta.capabilityId !== request.capabilityId ||
-    value.meta.capabilityVersion !== request.capabilityVersion ||
-    value.meta.classification !== "READ" ||
-    value.meta.attempts !== 1
+    value.meta.capabilityVersion !== request.capabilityVersion
   ) {
     throw new PieceSupervisorClientError("invalid_response");
   }
   return value;
 }
 
-function validateFailure(value, request) {
-  const withRetryable = exactKeys(value, ["protocolVersion", "requestId", "ok", "errorCode", "retryable"]);
-  const supervisorFailure = exactKeys(value, ["protocolVersion", "ok", "errorCode"]);
+function validateWorkerFailure(value, request) {
   if (
-    (!withRetryable && !supervisorFailure) ||
+    !exactKeys(value, ["protocolVersion", "requestId", "ok", "errorCode", "retryable"]) ||
     value.protocolVersion !== PROTOCOL_VERSION ||
+    value.requestId !== request.requestId ||
     value.ok !== false ||
     typeof value.errorCode !== "string" ||
-    (withRetryable && (value.requestId !== request.requestId || typeof value.retryable !== "boolean"))
+    typeof value.retryable !== "boolean"
   ) {
     throw new PieceSupervisorClientError("invalid_response");
   }
   if (!PIECE_ERROR_CODES.has(value.errorCode)) {
-    throw new PieceSupervisorClientError("supervisor_failure");
+    throw new PieceSupervisorClientError("unknown_failure");
   }
   throw new PieceSupervisorClientError("piece_failure", value.errorCode);
 }
 
-function validateResponse(value, request) {
-  if (!isRecord(value)) throw new PieceSupervisorClientError("invalid_response");
-  return value.ok === true ? validateSuccess(value, request) : validateFailure(value, request);
+function validateThrownPieceFailure(value) {
+  if (
+    !exactKeys(value, ["protocolVersion", "ok", "errorCode", "retryable"]) ||
+    value.protocolVersion !== PROTOCOL_VERSION ||
+    value.ok !== false ||
+    typeof value.errorCode !== "string" ||
+    typeof value.retryable !== "boolean"
+  ) {
+    throw new PieceSupervisorClientError("invalid_response");
+  }
+  if (!PIECE_ERROR_CODES.has(value.errorCode)) {
+    throw new PieceSupervisorClientError("unknown_failure");
+  }
+  throw new PieceSupervisorClientError("piece_failure", value.errorCode);
 }
 
-function parseResponse(buffer, request) {
+function validateSupervisorFailure(value, statusCode) {
+  if (
+    !exactKeys(value, ["protocolVersion", "ok", "errorCode"]) ||
+    value.protocolVersion !== PROTOCOL_VERSION ||
+    value.ok !== false ||
+    typeof value.errorCode !== "string"
+  ) {
+    throw new PieceSupervisorClientError("invalid_response");
+  }
+  const statuses = SUPERVISOR_STATUS_BY_CODE[value.errorCode];
+  if (!statuses) throw new PieceSupervisorClientError("unknown_failure");
+  if (!statuses.includes(statusCode)) throw new PieceSupervisorClientError("invalid_response");
+  throw new PieceSupervisorClientError("supervisor_failure", value.errorCode);
+}
+
+function validateResponse(value, request, statusCode) {
+  if (!isRecord(value)) throw new PieceSupervisorClientError("invalid_response");
+  if (statusCode === 200) {
+    return value.ok === true ? validateSuccess(value, request) : validateWorkerFailure(value, request);
+  }
+  if (statusCode === 422) return validateThrownPieceFailure(value);
+  if (SUPERVISOR_STATUSES.has(statusCode)) return validateSupervisorFailure(value, statusCode);
+  throw new PieceSupervisorClientError("invalid_response");
+}
+
+function parseResponse(buffer, request, statusCode) {
   try {
-    return validateResponse(JSON.parse(buffer.toString("utf8")), request);
+    return validateResponse(JSON.parse(buffer.toString("utf8")), request, statusCode);
   } catch (error) {
     if (error instanceof PieceSupervisorClientError) throw error;
     throw new PieceSupervisorClientError("invalid_response");
   }
+}
+
+function responseMediaType(headers) {
+  const value = headers?.["content-type"];
+  const normalized = Array.isArray(value) ? value[0] : value;
+  return typeof normalized === "string" ? normalized.split(";", 1)[0].trim().toLowerCase() : "";
 }
 
 /**
@@ -127,7 +194,11 @@ export function createPieceSupervisorClient({
 
   return Object.freeze({
     async execute({ request, credential, signal }) {
-      if (!Buffer.isBuffer(credential) || credential.length < 1) {
+      if (
+        !Buffer.isBuffer(credential) ||
+        credential.length < 1 ||
+        credential.length > PIECE_SUPERVISOR_MAX_CREDENTIAL_BYTES
+      ) {
         throw new PieceSupervisorClientError("invalid_configuration");
       }
       if (signal?.aborted) throw new PieceSupervisorClientError("aborted");
@@ -207,10 +278,13 @@ export function createPieceSupervisorClient({
                 if (settled) return;
                 const raw = Buffer.concat(chunks, responseBytes);
                 try {
-                  if (!Number.isSafeInteger(incoming.statusCode) || incoming.statusCode < 200 || incoming.statusCode > 599) {
+                  if (
+                    !Number.isSafeInteger(incoming.statusCode) ||
+                    responseMediaType(incoming.headers) !== "application/json"
+                  ) {
                     throw new PieceSupervisorClientError("invalid_response");
                   }
-                  finish(null, parseResponse(raw, request));
+                  finish(null, parseResponse(raw, request, incoming.statusCode));
                 } catch (error) {
                   finish(error instanceof PieceSupervisorClientError ? error : new PieceSupervisorClientError("invalid_response"));
                 } finally {

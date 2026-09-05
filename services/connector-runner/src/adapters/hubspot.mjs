@@ -14,11 +14,17 @@ const PIECE_TO_RUNNER_ERROR = Object.freeze({
   PIECE_PROVIDER_UNAVAILABLE: ["DELEGATED_UNAVAILABLE", true],
   PIECE_TIMEOUT: ["DELEGATED_TIMEOUT", true],
   PIECE_EGRESS_DENIED: ["DELEGATED_EXECUTION_FAILED", false],
-  PIECE_RESPONSE_INVALID: ["DELEGATED_BAD_RESPONSE", false],
+  PIECE_RESPONSE_INVALID: ["DELEGATED_EXECUTION_FAILED", false],
   PIECE_RUNTIME_FAILED: ["DELEGATED_EXECUTION_FAILED", false],
   PIECE_INVALID_INPUT: ["DELEGATED_EXECUTION_FAILED", false],
   PIECE_ACTION_NOT_ALLOWED: ["DELEGATED_UNSUPPORTED_CAPABILITY", false],
-  PIECE_OUTPUT_LIMIT: ["DELEGATED_BAD_RESPONSE", false],
+});
+
+const SUPERVISOR_TO_RUNNER_ERROR = Object.freeze({
+  SUPERVISOR_INVALID_REQUEST: ["DELEGATED_EXECUTION_FAILED", false],
+  SUPERVISOR_BUSY: ["DELEGATED_UNAVAILABLE", true],
+  SUPERVISOR_DUPLICATE: ["DELEGATED_EXECUTION_FAILED", false],
+  SUPERVISOR_UNAVAILABLE: ["DELEGATED_UNAVAILABLE", true],
 });
 
 function mapClientFailure(error, fail) {
@@ -26,13 +32,17 @@ function mapClientFailure(error, fail) {
     fail("DELEGATED_EXECUTION_FAILED", false);
   }
   if (error.kind === "piece_failure") {
-    const mapping = PIECE_TO_RUNNER_ERROR[error.pieceErrorCode];
+    const mapping = PIECE_TO_RUNNER_ERROR[error.errorCode];
+    if (mapping) fail(mapping[0], mapping[1]);
+    fail("DELEGATED_EXECUTION_FAILED", false);
+  }
+  if (error.kind === "supervisor_failure") {
+    const mapping = SUPERVISOR_TO_RUNNER_ERROR[error.errorCode];
     if (mapping) fail(mapping[0], mapping[1]);
     fail("DELEGATED_EXECUTION_FAILED", false);
   }
   if (["timeout", "aborted"].includes(error.kind)) fail("DELEGATED_TIMEOUT", true);
   if (["unavailable", "disconnected"].includes(error.kind)) fail("DELEGATED_UNAVAILABLE", true);
-  if (["invalid_response", "response_too_large"].includes(error.kind)) fail("DELEGATED_BAD_RESPONSE", false);
   fail("DELEGATED_EXECUTION_FAILED", false);
 }
 
@@ -86,4 +96,5 @@ export function createHubSpotGetContactAdapter({
   });
 }
 
-export const SUPERVISOR_ERROR_MAPPING = PIECE_TO_RUNNER_ERROR;
+export const PIECE_ERROR_MAPPING = PIECE_TO_RUNNER_ERROR;
+export const SUPERVISOR_ERROR_MAPPING = SUPERVISOR_TO_RUNNER_ERROR;

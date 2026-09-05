@@ -9,11 +9,14 @@ import {
   createHubSpotGetContactAdapter,
   HUBSPOT_GET_CONTACT_CAPABILITY,
   HUBSPOT_GET_CONTACT_VERSION,
+  PIECE_ERROR_MAPPING,
   SUPERVISOR_ERROR_MAPPING,
 } from "../services/connector-runner/src/adapters/hubspot.mjs";
 import {
+  ACCEPTED_PIECE_ERROR_CODES,
   createPieceSupervisorClient,
   PIECE_SUPERVISOR_EXECUTE_PATH,
+  PIECE_SUPERVISOR_MAX_CREDENTIAL_BYTES,
   PIECE_SUPERVISOR_MAX_REQUEST_BYTES,
   PIECE_SUPERVISOR_SOCKET_PATH,
   PieceSupervisorClientError,
@@ -55,11 +58,16 @@ function successResponse(overrides: Record<string, unknown> = {}) {
 
 type FakeMode = "success" | "timeout" | "disconnect" | "error";
 
-function fakeHttp(responseValue: unknown, mode: FakeMode = "success") {
+function fakeHttp(
+  responseValue: unknown,
+  mode: FakeMode = "success",
+  statusCode = 200,
+  contentType: string | null = "application/json",
+) {
   const calls: Array<{ options: Record<string, unknown>; body: Buffer }> = [];
   let timeoutCallback: (() => void) | null = null;
   let destroyed = false;
-  const requestImplementation = (options: Record<string, unknown>, callback: (response: EventEmitter & { statusCode: number; destroy(): void }) => void) => {
+  const requestImplementation = (options: Record<string, unknown>, callback: (response: EventEmitter & { headers: Record<string, string>; statusCode: number; destroy(): void }) => void) => {
     const request = new EventEmitter() as EventEmitter & {
       setTimeout(milliseconds: number, callback: () => void): void;
       end(body: Buffer): void;
@@ -77,8 +85,9 @@ function fakeHttp(responseValue: unknown, mode: FakeMode = "success") {
         queueMicrotask(() => request.emit("error", new Error("private socket detail")));
         return;
       }
-      const response = new EventEmitter() as EventEmitter & { statusCode: number; destroy(): void };
-      response.statusCode = 200;
+      const response = new EventEmitter() as EventEmitter & { headers: Record<string, string>; statusCode: number; destroy(): void };
+      response.statusCode = statusCode;
+      response.headers = contentType === null ? {} : { "content-type": contentType };
       response.destroy = () => undefined;
       queueMicrotask(() => {
         callback(response);
@@ -99,8 +108,13 @@ function fakeHttp(responseValue: unknown, mode: FakeMode = "success") {
   };
 }
 
-function clientFor(responseValue: unknown, mode: FakeMode = "success") {
-  const fake = fakeHttp(responseValue, mode);
+function clientFor(
+  responseValue: unknown,
+  mode: FakeMode = "success",
+  statusCode = 200,
+  contentType: string | null = "application/json",
+) {
+  const fake = fakeHttp(responseValue, mode, statusCode, contentType);
   return { fake, client: createPieceSupervisorClient({ requestImplementation: fake.requestImplementation }) };
 }
 
@@ -113,8 +127,15 @@ async function executeAdapter(input: {
   mode?: FakeMode;
   requestOverrides?: Record<string, unknown>;
   signal?: AbortSignal;
+  statusCode?: number;
+  contentType?: string | null;
 } = {}) {
-  const { fake, client } = clientFor(input.response ?? successResponse(), input.mode);
+  const { fake, client } = clientFor(
+    input.response ?? successResponse(),
+    input.mode,
+    input.statusCode,
+    input.contentType,
+  );
   const adapter = createHubSpotGetContactAdapter({ fail, supervisorClient: client });
   const credential = Buffer.from(CREDENTIAL);
   try {
@@ -198,21 +219,59 @@ test("5B.2A bounds requests before opening the UDS", async () => {
   assert.equal(fake.calls.length, 0);
 });
 
-test("5B.2A bounds and strictly validates Supervisor responses", async () => {
+test("5B.2A bounds credentials before opening the UDS", async () => {
+  const fake = fakeHttp(successResponse());
+  const client = createPieceSupervisorClient({ requestImplementation: fake.requestImplementation });
+  await assert.rejects(
+    client.execute({
+      request: REQUEST,
+      credential: Buffer.alloc(PIECE_SUPERVISOR_MAX_CREDENTIAL_BYTES + 1, 1),
+      signal: new AbortController().signal,
+    }),
+    (error: unknown) => error instanceof PieceSupervisorClientError && error.kind === "invalid_configuration",
+  );
+  assert.equal(fake.calls.length, 0);
+});
+
+test("5B.2A accepts exact success only on HTTP 200 with JSON content type", async () => {
+  const exact = await executeAdapter({ contentType: "application/json; charset=utf-8" });
+  assert.deepEqual(exact.output, successResponse().output);
+  assert.equal(exact.fake.calls.length, 1);
+
+  const forbiddenCategory = ["DELEGATED", "BAD", "RESPONSE"].join("_");
   for (const response of [
     "not-json",
     { ...successResponse(), extra: true },
     { ...successResponse(), requestId: "wrong" },
     { ...successResponse(), acknowledged: false },
+    { ...successResponse(), meta: { ...successResponse().meta, extra: true } },
+    { ...successResponse(), meta: { ...successResponse().meta, providerId: "other" } },
+    { ...successResponse(), meta: { ...successResponse().meta, pieceVersion: "0.8.11" } },
+    { ...successResponse(), meta: { ...successResponse().meta, actionId: "other-action" } },
     { ...successResponse(), meta: { ...successResponse().meta, attempts: 2 } },
   ]) {
     const result = await executeAdapter({ response });
     assert.ok(result.error instanceof RunnerError);
-    assert.equal(result.error.category, "DELEGATED_BAD_RESPONSE");
+    assert.equal(result.error.category, "DELEGATED_EXECUTION_FAILED");
+    assert.equal(result.error.retryable, false);
+    assert.notEqual(result.error.category, forbiddenCategory);
   }
   const oversized = await executeAdapter({ response: "x".repeat(192 * 1024 + 1) });
   assert.ok(oversized.error instanceof RunnerError);
-  assert.equal(oversized.error.category, "DELEGATED_BAD_RESPONSE");
+  assert.equal(oversized.error.category, "DELEGATED_EXECUTION_FAILED");
+  assert.equal(oversized.error.retryable, false);
+
+  for (const contentType of [null, "text/plain", "application/problem+json"]) {
+    const result = await executeAdapter({ contentType });
+    assert.ok(result.error instanceof RunnerError);
+    assert.equal(result.error.category, "DELEGATED_EXECUTION_FAILED");
+    assert.equal(result.error.retryable, false);
+  }
+
+  const wrongStatus = await executeAdapter({ statusCode: 500 });
+  assert.ok(wrongStatus.error instanceof RunnerError);
+  assert.equal(wrongStatus.error.category, "DELEGATED_EXECUTION_FAILED");
+  assert.equal(wrongStatus.error.retryable, false);
 });
 
 test("5B.2A timeout, caller abort, and disconnect fail closed without retrying", async () => {
@@ -235,22 +294,39 @@ test("5B.2A timeout, caller abort, and disconnect fail closed without retrying",
   assert.equal(disconnected.fake.calls.length, 1);
 });
 
-test("5B.2A exhaustively maps reviewed Piece errors into existing Runner vocabulary", async () => {
-  const expected = {
+test("5B.2A accepts exactly the frozen Piece error vocabulary and maps every code", async () => {
+  const expectedCodes = [
+    "PIECE_UNSUPPORTED_CAPABILITY",
+    "PIECE_INVALID_INPUT",
+    "PIECE_INVALID_CREDENTIAL",
+    "PIECE_ACTION_NOT_ALLOWED",
+    "PIECE_AUTH_FAILED",
+    "PIECE_RATE_LIMITED",
+    "PIECE_PROVIDER_UNAVAILABLE",
+    "PIECE_TIMEOUT",
+    "PIECE_EGRESS_DENIED",
+    "PIECE_RESPONSE_INVALID",
+    "PIECE_RUNTIME_FAILED",
+  ];
+  const retiredCode = ["PIECE", "OUTPUT", "LIMIT"].join("_");
+  assert.deepEqual([...ACCEPTED_PIECE_ERROR_CODES].sort(), [...expectedCodes].sort());
+  assert.equal(ACCEPTED_PIECE_ERROR_CODES.length, 11);
+  assert.equal(ACCEPTED_PIECE_ERROR_CODES.includes(retiredCode), false);
+
+  const expected = Object.freeze({
     PIECE_UNSUPPORTED_CAPABILITY: ["DELEGATED_UNSUPPORTED_CAPABILITY", false],
+    PIECE_INVALID_INPUT: ["DELEGATED_EXECUTION_FAILED", false],
     PIECE_INVALID_CREDENTIAL: ["DELEGATED_AUTH_FAILED", false],
+    PIECE_ACTION_NOT_ALLOWED: ["DELEGATED_UNSUPPORTED_CAPABILITY", false],
     PIECE_AUTH_FAILED: ["DELEGATED_AUTH_FAILED", false],
     PIECE_RATE_LIMITED: ["DELEGATED_RATE_LIMITED", true],
     PIECE_PROVIDER_UNAVAILABLE: ["DELEGATED_UNAVAILABLE", true],
     PIECE_TIMEOUT: ["DELEGATED_TIMEOUT", true],
     PIECE_EGRESS_DENIED: ["DELEGATED_EXECUTION_FAILED", false],
-    PIECE_RESPONSE_INVALID: ["DELEGATED_BAD_RESPONSE", false],
+    PIECE_RESPONSE_INVALID: ["DELEGATED_EXECUTION_FAILED", false],
     PIECE_RUNTIME_FAILED: ["DELEGATED_EXECUTION_FAILED", false],
-    PIECE_INVALID_INPUT: ["DELEGATED_EXECUTION_FAILED", false],
-    PIECE_ACTION_NOT_ALLOWED: ["DELEGATED_UNSUPPORTED_CAPABILITY", false],
-    PIECE_OUTPUT_LIMIT: ["DELEGATED_BAD_RESPONSE", false],
-  } as const;
-  assert.deepEqual(SUPERVISOR_ERROR_MAPPING, expected);
+  } as const);
+  assert.deepEqual(PIECE_ERROR_MAPPING, expected);
   for (const [errorCode, [category, retryable]] of Object.entries(expected)) {
     const result = await executeAdapter({ response: {
       protocolVersion: 1,
@@ -266,17 +342,100 @@ test("5B.2A exhaustively maps reviewed Piece errors into existing Runner vocabul
   }
 });
 
-test("5B.2A maps unknown Supervisor failures to the generic delegated failure", async () => {
-  const result = await executeAdapter({ response: {
+test("5B.2A accepts both real Piece failure response classes only on their bound statuses", async () => {
+  const worker = await executeAdapter({ response: {
     protocolVersion: 1,
     requestId: REQUEST.requestId,
     ok: false,
-    errorCode: "PIECE_FUTURE_UNKNOWN",
+    errorCode: "PIECE_AUTH_FAILED",
     retryable: false,
   } });
-  assert.ok(result.error instanceof RunnerError);
-  assert.equal(result.error.category, "DELEGATED_EXECUTION_FAILED");
-  assert.equal(result.error.retryable, false);
+  assert.ok(worker.error instanceof RunnerError);
+  assert.equal(worker.error.category, "DELEGATED_AUTH_FAILED");
+  assert.equal(worker.fake.calls.length, 1);
+
+  for (const errorCode of ["PIECE_ACTION_NOT_ALLOWED", "PIECE_RUNTIME_FAILED"]) {
+    const thrown = await executeAdapter({
+      response: { protocolVersion: 1, ok: false, errorCode, retryable: false },
+      statusCode: 422,
+    });
+    assert.ok(thrown.error instanceof RunnerError);
+    assert.equal(
+      thrown.error.category,
+      errorCode === "PIECE_ACTION_NOT_ALLOWED" ? "DELEGATED_UNSUPPORTED_CAPABILITY" : "DELEGATED_EXECUTION_FAILED",
+    );
+    assert.equal(thrown.error.retryable, false);
+    assert.equal(thrown.fake.calls.length, 1);
+  }
+
+  const workerOnThrownStatus = await executeAdapter({
+    response: {
+      protocolVersion: 1,
+      requestId: REQUEST.requestId,
+      ok: false,
+      errorCode: "PIECE_AUTH_FAILED",
+      retryable: false,
+    },
+    statusCode: 422,
+  });
+  assert.ok(workerOnThrownStatus.error instanceof RunnerError);
+  assert.equal(workerOnThrownStatus.error.category, "DELEGATED_EXECUTION_FAILED");
+
+  const thrownOnWorkerStatus = await executeAdapter({
+    response: { protocolVersion: 1, ok: false, errorCode: "PIECE_RUNTIME_FAILED", retryable: false },
+    statusCode: 200,
+  });
+  assert.ok(thrownOnWorkerStatus.error instanceof RunnerError);
+  assert.equal(thrownOnWorkerStatus.error.category, "DELEGATED_EXECUTION_FAILED");
+});
+
+test("5B.2A binds exact Supervisor failures to reviewed statuses and Runner mappings", async () => {
+  const expected = Object.freeze({
+    SUPERVISOR_INVALID_REQUEST: ["DELEGATED_EXECUTION_FAILED", false, 400],
+    SUPERVISOR_BUSY: ["DELEGATED_UNAVAILABLE", true, 429],
+    SUPERVISOR_DUPLICATE: ["DELEGATED_EXECUTION_FAILED", false, 409],
+    SUPERVISOR_UNAVAILABLE: ["DELEGATED_UNAVAILABLE", true, 503],
+  } as const);
+  assert.deepEqual(SUPERVISOR_ERROR_MAPPING, Object.fromEntries(
+    Object.entries(expected).map(([code, [category, retryable]]) => [code, [category, retryable]]),
+  ));
+
+  for (const [errorCode, [category, retryable, statusCode]] of Object.entries(expected)) {
+    const result = await executeAdapter({
+      response: { protocolVersion: 1, ok: false, errorCode },
+      statusCode,
+    });
+    assert.ok(result.error instanceof RunnerError, errorCode);
+    assert.equal(result.error.category, category, errorCode);
+    assert.equal(result.error.retryable, retryable, errorCode);
+    assert.equal(result.fake.calls.length, 1, errorCode);
+  }
+
+  for (const statusCode of [408, 413]) {
+    const result = await executeAdapter({
+      response: { protocolVersion: 1, ok: false, errorCode: "SUPERVISOR_INVALID_REQUEST" },
+      statusCode,
+    });
+    assert.ok(result.error instanceof RunnerError);
+    assert.equal(result.error.category, "DELEGATED_EXECUTION_FAILED");
+    assert.equal(result.error.retryable, false);
+  }
+});
+
+test("5B.2A rejects unknown and mismatched failure codes as generic nonretryable failures", async () => {
+  const retiredPieceCode = ["PIECE", "OUTPUT", "LIMIT"].join("_");
+  for (const [response, statusCode] of [
+    [{ protocolVersion: 1, requestId: REQUEST.requestId, ok: false, errorCode: "PIECE_FUTURE_UNKNOWN", retryable: false }, 200],
+    [{ protocolVersion: 1, requestId: REQUEST.requestId, ok: false, errorCode: retiredPieceCode, retryable: false }, 200],
+    [{ protocolVersion: 1, ok: false, errorCode: "SUPERVISOR_FUTURE_UNKNOWN" }, 503],
+    [{ protocolVersion: 1, ok: false, errorCode: "SUPERVISOR_BUSY" }, 503],
+  ] as const) {
+    const result = await executeAdapter({ response, statusCode });
+    assert.ok(result.error instanceof RunnerError);
+    assert.equal(result.error.category, "DELEGATED_EXECUTION_FAILED");
+    assert.equal(result.error.retryable, false);
+    assert.equal(result.fake.calls.length, 1);
+  }
 });
 
 test("5B.2A registers only hubspot.get_contact version 1 beside existing adapters", () => {
@@ -344,6 +503,11 @@ test("5B.2A rejects LIVE and nonreviewed HubSpot variants before Supervisor I/O"
 test("5B.2A does not use fetch, TCP, redirects, keepalive, or retries", () => {
   const clientSource = readFileSync(resolve("services/connector-runner/src/piece-supervisor-client.mjs"), "utf8");
   const adapterSource = readFileSync(resolve("services/connector-runner/src/adapters/hubspot.mjs"), "utf8");
+  const testSource = readFileSync(resolve("tests/essential-fifty-step-five-b2-runner-supervisor-bridge.test.ts"), "utf8");
+  const nonexistentRunnerCategory = ["DELEGATED", "BAD", "RESPONSE"].join("_");
+  assert.equal(clientSource.includes(nonexistentRunnerCategory), false);
+  assert.equal(adapterSource.includes(nonexistentRunnerCategory), false);
+  assert.equal(testSource.includes(nonexistentRunnerCategory), false);
   assert.doesNotMatch(`${clientSource}\n${adapterSource}`, /\bfetch\s*\(/);
   assert.doesNotMatch(clientSource, /createConnection|hostname:|port:|redirect|docker\.sock|egress-broker/i);
   assert.doesNotMatch(clientSource, /for\s*\([^)]*attempt|while\s*\([^)]*attempt|setInterval|retryCount/i);
