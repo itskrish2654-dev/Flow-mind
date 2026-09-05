@@ -10,6 +10,11 @@ import {
   AIRTABLE_CREATE_RECORD_VERSION,
   createAirtableCreateRecordAdapter,
 } from "./adapters/airtable.mjs";
+import {
+  createHubSpotGetContactAdapter,
+  HUBSPOT_GET_CONTACT_CAPABILITY,
+  HUBSPOT_GET_CONTACT_VERSION,
+} from "./adapters/hubspot.mjs";
 
 export const PROTOCOL_VERSION = 1;
 export const MAX_REQUEST_BYTES = 128 * 1024;
@@ -284,13 +289,21 @@ function fail(category, retryable = false, status = 200) {
   throw new RunnerError(category, retryable, status);
 }
 
-const ADAPTERS = new Map([
-  [adapterKey(CANARY_CAPABILITY, 1), canaryAdapter()],
-  [
-    adapterKey(AIRTABLE_CREATE_RECORD_CAPABILITY, AIRTABLE_CREATE_RECORD_VERSION),
-    createAirtableCreateRecordAdapter({ fail }),
-  ],
-]);
+export function createRunnerAdapters({ supervisorClient } = {}) {
+  return new Map([
+    [adapterKey(CANARY_CAPABILITY, 1), canaryAdapter()],
+    [
+      adapterKey(AIRTABLE_CREATE_RECORD_CAPABILITY, AIRTABLE_CREATE_RECORD_VERSION),
+      createAirtableCreateRecordAdapter({ fail }),
+    ],
+    [
+      adapterKey(HUBSPOT_GET_CONTACT_CAPABILITY, HUBSPOT_GET_CONTACT_VERSION),
+      createHubSpotGetContactAdapter({ fail, ...(supervisorClient ? { supervisorClient } : {}) }),
+    ],
+  ]);
+}
+
+const ADAPTERS = createRunnerAdapters();
 
 function safeLog(logger, event, envelope, startedAt, status, category) {
   logger({
@@ -374,7 +387,11 @@ export async function processRunnerRequest({
       );
       try {
         const output = await adapter.execute({
+          requestId: envelope.requestId,
+          executionId: envelope.executionId,
           capabilityId: envelope.capabilityId,
+          capabilityVersion: envelope.capabilityVersion,
+          mode: envelope.mode,
           input: envelope.input,
           credential,
           idempotencyKey: envelope.idempotencyKey,
