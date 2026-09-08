@@ -52,6 +52,12 @@ const providerCopy: Record<ConnectionProvider, {
     connectLabel: "Connect Airtable",
     operation: "",
   },
+  hubspot: {
+    name: "HubSpot",
+    description: "Use an existing authorized HubSpot account for the accepted contact lookup test.",
+    connectLabel: "HubSpot onboarding unavailable",
+    operation: "get_contact",
+  },
 };
 
 function ProviderIcon({ provider }: { provider: ConnectionProvider }) {
@@ -73,6 +79,11 @@ function ProviderIcon({ provider }: { provider: ConnectionProvider }) {
   if (provider === "airtable") {
     return (
       <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-[#e4ddd2] bg-white text-lg font-bold text-[#176b87] shadow-sm">A</span>
+    );
+  }
+  if (provider === "hubspot") {
+    return (
+      <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-[#e4ddd2] bg-white text-lg font-bold text-[#ff5c35] shadow-sm">H</span>
     );
   }
   return (
@@ -142,6 +153,7 @@ function withConnectionResult(returnPath: string, connector: string) {
 
 function providerFromConnector(connector: string | null): ConnectionProvider | null {
   if (connector === "airtable") return "airtable";
+  if (connector === "hubspot") return "hubspot";
   if (connector === "slack" || connector === "notion") return connector;
   if (connector === "google" || connector?.startsWith("google_")) return "google";
   return null;
@@ -182,7 +194,7 @@ export function ConnectionsList({
   const successProvider = providerFromConnector(successConnector);
   const successItems = successProvider ? byProvider.get(successProvider) ?? [] : [];
   const successConnection = successItems.length === 1 ? successItems[0] : null;
-  const providers = (["airtable", "slack", "notion", "google"] as const).filter((provider) => byProvider.has(provider));
+  const providers = (["airtable", "hubspot", "slack", "notion", "google"] as const).filter((provider) => byProvider.has(provider));
   const availableProviders = (["airtable", "slack", "notion"] as const).filter((provider) => !byProvider.has(provider));
 
   async function submitAirtable(event: FormEvent<HTMLFormElement>) {

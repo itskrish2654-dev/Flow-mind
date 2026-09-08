@@ -302,6 +302,20 @@ function httpExecutionResults(value: Json) {
   });
 }
 
+function delegatedConnectorResults(value: Json) {
+  const results = asJsonObject(asJsonObject(value).connector_results);
+  return Object.entries(results).flatMap(([stepId, raw]) => {
+    const result = asJsonObject(raw);
+    if (typeof result.contactId !== "string") return [];
+    return [{
+      stepId,
+      contactId: result.contactId,
+      archived: result.archived === true,
+      properties: asJsonObject(result.properties),
+    }];
+  });
+}
+
 function httpStatusLabel(status: number): string {
   const labels: Record<number, string> = { 200: "OK", 201: "Created", 202: "Accepted", 204: "No Content", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 409: "Conflict", 429: "Too Many Requests", 500: "Server Error", 502: "Bad Gateway", 503: "Unavailable", 504: "Gateway Timeout" };
   return `${status}${labels[status] ? ` ${labels[status]}` : ""}`;
@@ -325,6 +339,7 @@ function ExecutionDetailsDrawer({
   const aiResult = typeof output.ai_result === "string" ? output.ai_result : null;
   const documents = executionDocuments(execution.outputData);
   const httpResults = httpExecutionResults(execution.outputData);
+  const connectorResults = delegatedConnectorResults(execution.outputData);
   const steps = executionSteps(execution.outputData);
   const status = executionStatus(execution);
   const submitted = asJsonObject(execution.inputData);
@@ -444,6 +459,23 @@ function ExecutionDetailsDrawer({
                   <p className="whitespace-pre-wrap break-words text-[11px] leading-5 text-slate-600">{customerMessage(summary)}</p>
                 </div>
               )}
+            </section>
+          )}
+
+          {connectorResults.length > 0 && (
+            <section className="mt-6" aria-labelledby="connected-app-result-heading">
+              <h4 id="connected-app-result-heading" className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                Connected app result
+              </h4>
+              <div className="mt-3 space-y-3">
+                {connectorResults.map((result) => (
+                  <div key={result.stepId} className="rounded-xl border border-[#ded6ca] bg-[#f8f4ec] p-4">
+                    <p className="text-[10px] font-semibold text-slate-800">HubSpot contact {result.contactId}</p>
+                    <p className="mt-1 text-[9px] text-slate-500">{result.archived ? "Archived contact" : "Active contact"}</p>
+                    <div className="mt-3">{formatJsonToChips(result.properties)}</div>
+                  </div>
+                ))}
+              </div>
             </section>
           )}
 

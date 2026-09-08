@@ -3,7 +3,7 @@ import "server-only";
 import type { Json } from "@/lib/supabase/types";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-export type ConnectionProvider = "airtable" | "google" | "slack" | "notion";
+export type ConnectionProvider = "airtable" | "google" | "slack" | "notion" | "hubspot";
 
 export type ConnectionView = {
   id: string;
@@ -42,10 +42,15 @@ const providerDetails: Record<ConnectionProvider, {
     fallbackLabel: "Airtable connection",
     permissionSummary: "Create records using the personal access token you saved. CrazyLoops does not verify the token until an Airtable action runs.",
   },
+  hubspot: {
+    name: "HubSpot",
+    fallbackLabel: "Connected HubSpot account",
+    permissionSummary: "Read only the contact and properties explicitly selected for a TEST run.",
+  },
 };
 
 function providerFrom(value: string): ConnectionProvider | null {
-  return value === "airtable" || value === "slack" || value === "notion" || value === "google"
+  return value === "airtable" || value === "slack" || value === "notion" || value === "google" || value === "hubspot"
     ? value
     : null;
 }

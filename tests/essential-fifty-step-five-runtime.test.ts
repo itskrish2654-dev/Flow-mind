@@ -979,7 +979,7 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
     assert.doesNotMatch(harness, /docker\.sock|--privileged|flow-mind-beta|crazy-loops\.com|vercel deploy|git push/i);
   });
 
-  test("error vocabulary is bounded and production/customer surfaces remain disconnected", () => {
+  test("error vocabulary is bounded and Step 5C product registration does not import runtime internals", () => {
     assert.equal(new Set(PIECE_ERROR_CODES).size, PIECE_ERROR_CODES.length);
     for (const file of [
       "lib/capability-registry.ts",
@@ -989,8 +989,14 @@ describe("Essential 50 Step 5A generic isolated piece runtime core", () => {
       "services/connector-runner/src/runner.mjs",
     ]) {
       const source = readFileSync(join(ROOT, file), "utf8");
-      assert.doesNotMatch(source, /services\/piece-runtime|hubspot\.get_contact/);
+      assert.doesNotMatch(source, /services\/piece-runtime/);
     }
+    for (const file of ["lib/capability-registry.ts", "lib/workflow-planner.ts", "lib/workflow-compiler.ts"]) {
+      assert.match(readFileSync(join(ROOT, file), "utf8"), /hubspot\.get_contact/);
+    }
+    const connectorRegistry = readFileSync(join(ROOT, "lib/connectors/registry.ts"), "utf8");
+    assert.match(connectorRegistry, /id: "hubspot"/);
+    assert.match(connectorRegistry, /key: "get_contact"/);
     const loader = readFileSync(join(ROOT, "services/piece-runtime/src/piece-loader.mjs"), "utf8");
     const builds = readFileSync(join(ROOT, "services/piece-runtime/src/build-registry.mjs"), "utf8");
     assert.match(loader, /builds\.getForManifest\(manifest\)/);

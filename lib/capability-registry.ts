@@ -572,6 +572,30 @@ export const CAPABILITY_REGISTRY = {
     internalOnly: false,
     plannerVisible: true,
   }),
+  "hubspot.get_contact": defineCapability({
+    id: "hubspot.get_contact",
+    displayName: "Get HubSpot contact",
+    category: "transformation",
+    supported: true,
+    executionImplementation: "connector:hubspot/get_contact@1",
+    requiredSetupFields: [
+      { key: "contactId", label: "HubSpot Contact ID", type: "text" },
+      { key: "properties", label: "Contact properties", type: "text" },
+    ],
+    credentialsRequired: true,
+    availableInTest: true,
+    availableInProduction: false,
+    limitations: [
+      "TEST mode only; live delegated execution is not enabled.",
+      "Retrieves one contact and only explicitly requested properties.",
+      "HubSpot connection onboarding is not included in this milestone.",
+    ],
+    aliases: ["get hubspot contact", "retrieve hubspot contact", "find hubspot contact", "look up hubspot contact"],
+    executorVersions: { 1: "connector_runner" },
+    defaultCapabilityVersion: 1,
+    internalOnly: false,
+    plannerVisible: true,
+  }),
   external_integration: defineCapability({
     id: "external_integration",
     displayName: "External app integration",
@@ -674,6 +698,7 @@ export function resolveStepCapabilityId(
       "internal.bridge_echo": ["connector_action"],
       "internal.connector_runner_canary": ["connector_action"],
       "airtable.create_record": ["connector_action"],
+      "hubspot.get_contact": ["connector_action"],
     };
     const compatible = compatibleTypes[step.capabilityId as CapabilityId];
     return compatible?.includes(step.type) ? step.capabilityId : null;

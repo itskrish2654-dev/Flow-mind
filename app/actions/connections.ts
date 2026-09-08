@@ -43,12 +43,12 @@ export async function getGoogleConnectionOptions() {
 }
 
 export async function getConnectorConnectionOptions(providerFamily: string) {
-  const provider = z.enum(["airtable", "google", "slack", "notion"]).safeParse(providerFamily);
+  const provider = z.enum(["airtable", "google", "slack", "notion", "hubspot"]).safeParse(providerFamily);
   if (!provider.success) return { ok: false as const, error: "Connector provider is invalid.", connections: [] };
   const supabase = await createClient(); const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { ok: false as const, error: "Unauthorized", connections: [] };
   let query = createAdminClient().from("connector_connections").select("id,external_account_label,external_account_id,status,granted_scopes").eq("user_id", user.id).eq("provider_family", provider.data).neq("status", "revoked");
-  if (provider.data === "airtable") query = query.eq("connector_id", "airtable");
+  if (provider.data === "airtable" || provider.data === "hubspot") query = query.eq("connector_id", provider.data);
   const { data, error } = await query.order("created_at", { ascending: true });
   if (error) return { ok: false as const, error: "Connections could not be loaded.", connections: [] };
   return { ok: true as const, connections: (data ?? []).map((item) => ({ id: item.id, label: item.external_account_label ?? item.external_account_id, status: item.status, scopes: item.granted_scopes })) };

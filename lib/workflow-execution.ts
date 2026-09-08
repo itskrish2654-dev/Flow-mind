@@ -13,6 +13,11 @@ import { ConnectorError } from "@/lib/connectors/errors";
 import type { ConnectorActionHandler } from "@/lib/connectors/types";
 import { applyFieldMappings, resolveMappingSource, type FieldMapping, type MappingSource } from "@/lib/connectors/mapping";
 import { buildAirtableCreateRecordInput, isValidAirtableRecordId } from "@/lib/connectors/airtable/workflow-configuration";
+import {
+  buildHubSpotGetContactInput,
+  hubSpotDelegatedErrorMessage,
+  parseHubSpotGetContactOutput,
+} from "@/lib/connectors/hubspot/get-contact";
 import { executeFormatter, FormatterError, type FormatterSource } from "@/lib/formatter";
 import {
   generatePdfBuffer,
@@ -103,6 +108,7 @@ export type WorkflowExecutionResult = {
     ai_metadata: Array<AiExecutionMetadata & { stepId: string }>;
     formatter_results: Record<string, { operation: string; outputKey: string; value: unknown }>;
     http_results: Record<string, Record<string, unknown>>;
+    connector_results: Record<string, Record<string, unknown>>;
     steps: StepExecutionRecord[];
     logs: ExecutionLog[];
     delivered: boolean;
@@ -349,6 +355,11 @@ export async function executeWorkflowSteps({
         ai_metadata: aiMetadata,
         formatter_results: formatterResults,
         http_results: httpResults,
+        connector_results: Object.fromEntries(
+          Object.entries(connectorStepOutputs).filter(([stepId]) =>
+            steps.some((step) => step.id === stepId && step.capabilityId === "hubspot.get_contact"),
+          ),
+        ),
         steps: records,
         logs,
         delivered,
@@ -513,18 +524,25 @@ export async function executeWorkflowSteps({
                   fieldMappings: inputValues[`${step.id}-fields`] ?? "",
                   workflowValues: { ...triggerContext, ...variables, steps: connectorStepOutputs },
                 })
+              : capabilityId === "hubspot.get_contact"
+                ? buildHubSpotGetContactInput({
+                    contactId: inputValues[`${step.id}-contactId`] ?? "",
+                    properties: inputValues[`${step.id}-properties`] ?? "",
+                  })
               : {};
       } catch (error) {
         await fail(error instanceof Error ? error.message : "This connector setup is invalid.", "failed", error, false);
         break;
       }
       const connectionId = step.config?.connector?.connectionId;
-      if (capabilityId === "airtable.create_record" && !connectionId) {
+      if ((capabilityId === "airtable.create_record" || capabilityId === "hubspot.get_contact") && !connectionId) {
         const error = new DelegatedExecutionError("DELEGATED_AUTH_FAILED", false);
         await fail(
-          mode === "test"
-            ? "Choose an Airtable connection before running this TEST."
-            : "Choose a verified Airtable connection before running this loop.",
+          capabilityId === "hubspot.get_contact"
+            ? "Choose a HubSpot connection before running this TEST."
+            : mode === "test"
+              ? "Choose an Airtable connection before running this TEST."
+              : "Choose a verified Airtable connection before running this loop.",
           "failed",
           error,
           false,
@@ -557,12 +575,52 @@ export async function executeWorkflowSteps({
       if (!result.ok) {
         const retryable = capabilityId === "airtable.create_record" ? false : result.retryable;
         const error = new DelegatedExecutionError(result.errorCategory, retryable);
-        await fail(error.message, "failed", error, retryable);
+        await fail(
+          capabilityId === "hubspot.get_contact"
+            ? hubSpotDelegatedErrorMessage(result.errorCategory)
+            : error.message,
+          "failed",
+          error,
+          retryable,
+          capabilityId === "hubspot.get_contact"
+            ? {
+                provider: "hubspot",
+                operation: "get_contact",
+                connectionId: connectionId ?? null,
+                capabilityVersion: executorSelection.capabilityVersion,
+                mode: delegatedMode,
+                errorCategory: result.errorCategory,
+              }
+            : undefined,
+        );
         break;
       }
-      connectorStepOutputs[step.id] = result.output;
-      variables[step.id] = result.output;
-      for (const [key, value] of Object.entries(result.output)) variables[key] = value;
+      let delegatedOutput = result.output;
+      if (capabilityId === "hubspot.get_contact") {
+        try {
+          delegatedOutput = parseHubSpotGetContactOutput(result.output);
+        } catch {
+          const normalized = new DelegatedExecutionError("DELEGATED_BAD_RESPONSE", false);
+          await fail(
+            hubSpotDelegatedErrorMessage(normalized.category),
+            "failed",
+            normalized,
+            false,
+            {
+              provider: "hubspot",
+              operation: "get_contact",
+              connectionId: connectionId ?? null,
+              capabilityVersion: executorSelection.capabilityVersion,
+              mode: delegatedMode,
+              errorCategory: normalized.category,
+            },
+          );
+          break;
+        }
+      }
+      connectorStepOutputs[step.id] = delegatedOutput;
+      variables[step.id] = delegatedOutput;
+      for (const [key, value] of Object.entries(delegatedOutput)) variables[key] = value;
       if (capabilityId === "airtable.create_record") {
         const recordId = result.output.recordId;
         if (!isValidAirtableRecordId(recordId)) {
@@ -582,6 +640,15 @@ export async function executeWorkflowSteps({
           connectionId: connectionId!,
           acknowledged: true,
           providerReferenceId: recordId,
+        });
+      } else if (capabilityId === "hubspot.get_contact") {
+        await succeed("Contact retrieved.", {
+          provider: "hubspot",
+          operation: "get_contact",
+          connectionId: connectionId!,
+          capabilityVersion: executorSelection.capabilityVersion,
+          mode: delegatedMode,
+          acknowledged: true,
         });
       } else {
         await succeed("This step completed.");

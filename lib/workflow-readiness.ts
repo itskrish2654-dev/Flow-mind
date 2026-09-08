@@ -5,7 +5,7 @@ type WorkflowStep = CompiledWorkflow["steps"][number];
 type InputValues = Record<string, string>;
 export type WorkflowConnectionReadiness = {
   id: string;
-  provider: "airtable" | "google" | "slack" | "notion";
+  provider: "airtable" | "google" | "slack" | "notion" | "hubspot";
   status: "connected" | "expired" | "error";
 };
 
@@ -55,6 +55,8 @@ function inputActionLabel(key: string, fallback: string): string {
     baseId: "Choose Airtable base",
     tableId: "Choose Airtable table",
     fields: "Match Airtable fields",
+    contactId: "Add HubSpot Contact ID",
+    properties: "Choose HubSpot properties",
     document_template: "Review document content",
   };
   return labels[key] ?? `Add ${toPlainEnglish(fallback).toLowerCase()}`;

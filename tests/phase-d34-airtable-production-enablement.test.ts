@@ -159,6 +159,7 @@ test("D3.4 only Airtable becomes a production connector_runner capability", () =
   assert.deepEqual(delegated, [
     { id: "internal.connector_runner_canary", production: false, internalOnly: true },
     { id: "airtable.create_record", production: true, internalOnly: false },
+    { id: "hubspot.get_contact", production: false, internalOnly: false },
   ]);
 });
 

@@ -369,12 +369,13 @@ function parseCondition(prompt: string): PlannedCondition | null {
   };
 }
 
-function detectDestination(prompt: string, options: { asksForGmail: boolean; asksForSheets: boolean; asksForSlack: boolean; asksForNotion: boolean; asksForAirtable: boolean; asksForWebhook: boolean; triggerPresent: boolean }): PlannedCapability | null {
+function detectDestination(prompt: string, options: { asksForGmail: boolean; asksForSheets: boolean; asksForSlack: boolean; asksForNotion: boolean; asksForAirtable: boolean; asksForHubSpotGet: boolean; asksForWebhook: boolean; triggerPresent: boolean }): PlannedCapability | null {
   const asksForGmail = options.asksForGmail || /\bgmail\b/i.test(prompt);
   const asksForSheets = options.asksForSheets || /\bgoogle sheets?\b|\bsheets?\b/i.test(prompt);
   const asksForSlack = options.asksForSlack || /\bslack\b|#[a-z0-9_-]+/i.test(prompt);
   const asksForNotion = options.asksForNotion || /\bnotion\b/i.test(prompt);
   const asksForAirtable = options.asksForAirtable || /\bair\s*table\b/i.test(prompt);
+  const asksForHubSpotGet = options.asksForHubSpotGet || (/\bhub\s*spot\b/i.test(prompt) && /\b(get|retrieve|find|look\s*up|lookup)\b/i.test(prompt) && /\bcontact\b/i.test(prompt));
   if (asksForSheets && /\b(add|save|store|update|find|lookup)\b/i.test(prompt)) return plannedCapability(/\bupdate row\b/i.test(prompt) ? "google_sheets_update_row" : /\bfind|lookup\b/i.test(prompt) ? "google_sheets_find_row" : "google_sheets_add_row");
   if (asksForGmail && /\breply\b/i.test(prompt)) return plannedCapability("gmail_reply_to_email");
   if (asksForGmail && /\b(send|email it|mail it)\b/i.test(prompt)) return plannedCapability("gmail_send_email");
@@ -384,6 +385,7 @@ function detectDestination(prompt: string, options: { asksForGmail: boolean; ask
   if (asksForNotion && /\bcreate\b[^.]{0,30}\bpage\b|\bpage\b[^.]{0,30}\bcreate\b/i.test(prompt)) return plannedCapability("notion_create_page");
   if (asksForNotion && /\b(save|add|create|store|notion)\b/i.test(prompt)) return plannedCapability("notion_create_data_source_item");
   if (asksForAirtable && /\b(create|add|save|send|store)\b/i.test(prompt) && /\b(record|lead|form submissions?|form data|submission|contact)\b/i.test(prompt)) return plannedCapability("airtable.create_record");
+  if (asksForHubSpotGet) return plannedCapability("hubspot.get_contact");
   if (detectsHttpDestination(prompt) || (options.asksForWebhook && !detectsWebhookTrigger(prompt))) return plannedCapability("generic_http_action");
   if (detectsPdfDestination(prompt)) return plannedCapability("generate_pdf");
   if (detectsInternalDestination(prompt) || options.triggerPresent) return plannedCapability("flowmind_data_store");
@@ -438,9 +440,11 @@ export function planWorkflow(prompt: string): WorkflowPlan {
   const asksForSlack = /\bslack\b|#[a-z0-9_-]+/i.test(normalizedPrompt);
   const asksForNotion = /\bnotion\b/i.test(normalizedPrompt);
   const asksForAirtableCreate = /\bair\s*table\b/i.test(normalizedPrompt) && /\b(create|add|save|send|store)\b/i.test(normalizedPrompt) && /\b(record|lead|form submissions?|form data|submission|contact)\b/i.test(normalizedPrompt) && !/\b(update|delete|search|find|lookup|create\s+(?:an?\s+)?(?:base|table))\b/i.test(normalizedPrompt);
+  const asksForHubSpotGet = /\bhub\s*spot\b/i.test(normalizedPrompt) && /\b(get|retrieve|find|look\s*up|lookup)\b/i.test(normalizedPrompt) && /\bcontact\b/i.test(normalizedPrompt) && !/\b(create|update|delete|sync|connect)\b/i.test(normalizedPrompt);
   const unsupported = findRequestedUnsupportedCapabilities(normalizedPrompt).filter((capability) =>
     !(asksForGmail && ["email_ingestion", "email_delivery"].includes(capability.id)) &&
-    !(asksForAirtableCreate && capability.id === "airtable"),
+    !(asksForAirtableCreate && capability.id === "airtable") &&
+    !(asksForHubSpotGet && capability.id === "hubspot"),
   );
   const asksForUnknownExternalConnection =
     /\b(connect(?:\s+to)?|sync\s+(?:to|with)|post\s+(?:it\s+)?to)\b/i.test(
@@ -564,10 +568,10 @@ export function planWorkflow(prompt: string): WorkflowPlan {
   // full prompt's webhook flag into a branch can turn an internal `otherwise
   // store ...` branch into an outbound HTTP action merely because the workflow
   // starts from a webhook.
-  const destinationOptions = { asksForGmail: false, asksForSheets: false, asksForSlack: false, asksForNotion: false, asksForAirtable: false, asksForWebhook: false, triggerPresent: Boolean(trigger) };
+  const destinationOptions = { asksForGmail: false, asksForSheets: false, asksForSlack: false, asksForNotion: false, asksForAirtable: false, asksForHubSpotGet: false, asksForWebhook: false, triggerPresent: Boolean(trigger) };
   const detectedDestination = condition
     ? detectDestination(trueBranchText, destinationOptions)
-    : detectDestination(normalizedPrompt, { ...destinationOptions, asksForGmail, asksForSheets, asksForSlack, asksForNotion, asksForAirtable: asksForAirtableCreate });
+    : detectDestination(normalizedPrompt, { ...destinationOptions, asksForGmail, asksForSheets, asksForSlack, asksForNotion, asksForAirtable: asksForAirtableCreate, asksForHubSpotGet });
   const destination = httpCapability && httpCapability.http?.method !== "GET"
     ? httpCapability
     : httpCapability?.http?.method === "GET" && detectedDestination?.capabilityId === "generic_http_action" && detectsInternalDestination(normalizedPrompt)

@@ -168,6 +168,48 @@ const internalAirtableManifest: ConnectorManifest = {
   documentationUrl: "https://airtable.com/developers/web/api/create-records",
 };
 
+const internalHubSpotManifest: ConnectorManifest = {
+  id: "hubspot",
+  providerFamily: "hubspot",
+  displayName: "HubSpot",
+  description: "Retrieves one contact through the accepted isolated connector runtime.",
+  status: "INTERNAL",
+  version: 1,
+  auth: {
+    type: "oauth2",
+    defaultScopes: ["crm.objects.contacts.read"],
+    pkceRequired: false,
+  },
+  triggers: [],
+  actions: [{
+    key: "get_contact",
+    version: 1,
+    kind: "action",
+    displayName: "Get HubSpot contact",
+    description: "Retrieves one contact and only the explicitly requested properties.",
+    input: [
+      { key: "contactId", label: "Contact ID", type: "string", required: true },
+      { key: "properties", label: "Properties", type: "array", required: true },
+    ],
+    output: [
+      { key: "contactId", label: "Contact ID", type: "string", required: true },
+      { key: "properties", label: "Contact properties", type: "object", required: true },
+      { key: "archived", label: "Archived", type: "boolean", required: true },
+    ],
+    requiredScopes: ["crm.objects.contacts.read"],
+    connectionRequired: true,
+    testMode: true,
+    production: false,
+    deliverySemantics: "internal",
+    executor: "connector_runner",
+  }],
+  limitations: [
+    "TEST mode only; this operation cannot be activated or run from a live trigger.",
+    "Customer HubSpot onboarding is not included in this milestone.",
+  ],
+  documentationUrl: "https://developers.hubspot.com/docs/api-reference/crm-contacts-v3/basic/get-crm-v3-objects-contacts-contactId",
+};
+
 const googleGmailManifest: ConnectorManifest = {
   id: "google_gmail",
   providerFamily: "google",
@@ -379,6 +421,10 @@ const connectors: RegisteredConnector[] = [
   },
   {
     manifest: internalAirtableManifest,
+    runtime: { actionHandlers: {}, triggerHandlers: {} },
+  },
+  {
+    manifest: internalHubSpotManifest,
     runtime: { actionHandlers: {}, triggerHandlers: {} },
   },
 ];

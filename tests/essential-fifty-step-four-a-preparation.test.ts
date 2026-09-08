@@ -187,11 +187,17 @@ describe("Essential 50 Step 4A.2 Docker real-host preparation", () => {
     assert.match(source, /SAFE TO SHARE WITH SOL: YES/);
   });
 
-  test("no customer-facing production registry or application module imports the experiment", () => {
+  test("Step 5C product registration imports no Step 4A experiment code", () => {
     const files = ["lib/capability-registry.ts", "lib/connectors/registry.ts", "lib/workflow-planner.ts", "lib/workflow-compiler.ts"];
     for (const file of files) {
       const source = readFileSync(file, "utf8");
-      assert.doesNotMatch(source, /activepieces-piece-realhost|e50-step4a|hubspot\.get_contact/);
+      assert.doesNotMatch(source, /activepieces-piece-realhost|e50-step4a/);
     }
+    for (const file of ["lib/capability-registry.ts", "lib/workflow-planner.ts", "lib/workflow-compiler.ts"]) {
+      assert.match(readFileSync(file, "utf8"), /hubspot\.get_contact/);
+    }
+    const connectorRegistry = readFileSync("lib/connectors/registry.ts", "utf8");
+    assert.match(connectorRegistry, /id: "hubspot"/);
+    assert.match(connectorRegistry, /key: "get_contact"/);
   });
 });

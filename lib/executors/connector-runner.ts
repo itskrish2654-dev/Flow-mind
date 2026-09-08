@@ -1,6 +1,10 @@
 import "@/lib/server-only-runtime";
 
 import { getCapability } from "@/lib/capability-registry";
+import {
+  parseHubSpotGetContactInput,
+  parseHubSpotGetContactOutput,
+} from "@/lib/connectors/hubspot/get-contact";
 
 import {
   CONNECTOR_RUNNER_MAX_REQUEST_BYTES,
@@ -36,6 +40,7 @@ const CANARY_CAPABILITY = "internal.connector_runner_canary";
 const SUPPORTED_CAPABILITY_VERSIONS = new Set([
   `${CANARY_CAPABILITY}@1`,
   "airtable.create_record@1",
+  "hubspot.get_contact@1",
 ]);
 
 type FetchImplementation = typeof fetch;
@@ -121,6 +126,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function exactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const expected = new Set(keys);
+  return Object.keys(value).length === expected.size && Object.keys(value).every((key) => expected.has(key));
+}
+
 function delegatedCategory(value: unknown): DelegatedErrorCategory | null {
   return typeof value === "string" &&
     (DELEGATED_ERROR_CATEGORIES as readonly string[]).includes(value)
@@ -131,6 +141,7 @@ function delegatedCategory(value: unknown): DelegatedErrorCategory | null {
 function validateRunnerResponse(
   value: unknown,
   requestId: string,
+  capabilityId: string,
 ): CapabilityExecutionResult {
   if (
     !isRecord(value) ||
@@ -140,14 +151,30 @@ function validateRunnerResponse(
     throw new DelegatedExecutionError("DELEGATED_BAD_RESPONSE", false);
   }
   if (value.ok === true) {
-    if (value.acknowledged !== true || !isRecord(value.output)) {
+    if (
+      !exactKeys(value, ["protocolVersion", "requestId", "ok", "acknowledged", "output"]) ||
+      value.acknowledged !== true ||
+      !isRecord(value.output)
+    ) {
       throw new DelegatedExecutionError("DELEGATED_BAD_RESPONSE", false);
     }
-    return { ok: true, acknowledged: true, output: value.output };
+    let output = value.output;
+    if (capabilityId === "hubspot.get_contact") {
+      try {
+        output = parseHubSpotGetContactOutput(value.output);
+      } catch {
+        throw new DelegatedExecutionError("DELEGATED_BAD_RESPONSE", false);
+      }
+    }
+    return { ok: true, acknowledged: true, output };
   }
   if (value.ok === false) {
     const errorCategory = delegatedCategory(value.errorCategory);
-    if (!errorCategory || typeof value.retryable !== "boolean") {
+    if (
+      !exactKeys(value, ["protocolVersion", "requestId", "ok", "errorCategory", "retryable"]) ||
+      !errorCategory ||
+      typeof value.retryable !== "boolean"
+    ) {
       throw new DelegatedExecutionError("DELEGATED_BAD_RESPONSE", false);
     }
     return { ok: false, errorCategory, retryable: value.retryable };
@@ -275,6 +302,19 @@ export class ConnectorRunnerExecutor implements CapabilityExecutor {
       };
     }
 
+    let authoritativeInput = request.envelope.input;
+    if (request.envelope.capabilityId === "hubspot.get_contact") {
+      try {
+        authoritativeInput = parseHubSpotGetContactInput(request.envelope.input);
+      } catch {
+        return {
+          ok: false,
+          errorCategory: "DELEGATED_EXECUTION_FAILED",
+          retryable: false,
+        };
+      }
+    }
+
     let configuration: ReturnType<typeof runnerConfiguration>;
     try {
       configuration = runnerConfiguration();
@@ -308,12 +348,13 @@ export class ConnectorRunnerExecutor implements CapabilityExecutor {
         keyVersion: configuration.keyVersion,
         wrapKey: configuration.wrapKey,
         now: startedAt,
+        ttlMs: 60_000,
       });
       const runnerEnvelope: ConnectorRunnerRequestEnvelope = {
         ...binding,
         mode: request.envelope.mode,
         idempotencyKey: request.envelope.idempotencyKey,
-        input: request.envelope.input,
+        input: authoritativeInput,
         credentialCapsule,
       };
       const body = JSON.stringify(runnerEnvelope);
@@ -355,6 +396,10 @@ export class ConnectorRunnerExecutor implements CapabilityExecutor {
         if (response.status >= 300 && response.status < 400) {
           throw new DelegatedExecutionError("DELEGATED_BAD_RESPONSE", false);
         }
+        if (!response.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
+          if (!response.ok) throw statusFailure(response.status);
+          throw new DelegatedExecutionError("DELEGATED_BAD_RESPONSE", false);
+        }
         const bytes = await readBoundedResponse(response);
         let parsed: unknown;
         try {
@@ -365,7 +410,11 @@ export class ConnectorRunnerExecutor implements CapabilityExecutor {
         }
         let result: CapabilityExecutionResult;
         try {
-          result = validateRunnerResponse(parsed, request.envelope.requestId);
+          result = validateRunnerResponse(
+            parsed,
+            request.envelope.requestId,
+            request.envelope.capabilityId,
+          );
         } catch (error) {
           if (!response.ok && error instanceof DelegatedExecutionError) {
             throw statusFailure(response.status);

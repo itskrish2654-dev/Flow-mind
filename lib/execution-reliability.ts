@@ -2,6 +2,7 @@ import { AiExecutionError } from "@/lib/ai-execution-core";
 import { FormatterError } from "@/lib/formatter";
 import { ConnectorError } from "@/lib/connectors/errors";
 import type { HttpErrorCode } from "@/lib/http-request";
+import { DelegatedExecutionError, type DelegatedErrorCategory } from "@/lib/executors/types";
 
 export type ExecutionErrorCategory =
   | "timeout"
@@ -32,6 +33,7 @@ export type ExecutionErrorCategory =
   | "FORMATTER_TIMEZONE_REQUIRED"
   | "FORMATTER_OUTPUT_TOO_LARGE"
   | HttpErrorCode
+  | DelegatedErrorCategory
   | "unknown";
 
 export type ClassifiedExecutionError = {
@@ -65,6 +67,13 @@ export function classifyExecutionError(error: unknown): ClassifiedExecutionError
       retryable: error.details.retryable,
       safeMessage: error.details.message,
       ...(error.details.retryAfterMs !== undefined ? { retryAfterMs: error.details.retryAfterMs } : {}),
+    };
+  }
+  if (error instanceof DelegatedExecutionError) {
+    return {
+      category: error.category,
+      retryable: error.retryable,
+      safeMessage: error.message,
     };
   }
   const message = error instanceof Error ? error.message : String(error);

@@ -217,11 +217,11 @@ test("D3.1 disconnect remains authenticated, owner-scoped, and destroys vault ac
 
 test("D3.1 connection view includes safe Airtable state and preserves existing providers", async () => {
   const view = await readFile("lib/connectors/connection-view.ts", "utf8");
-  assert.match(view, /"airtable" \| "google" \| "slack" \| "notion"/);
+  assert.match(view, /"airtable" \| "google" \| "slack" \| "notion" \| "hubspot"/);
   assert.match(view, /fallbackLabel: "Airtable connection"/);
   assert.match(view, /verification: provider === "airtable" \? "locally_configured" : "provider_verified"/);
   assert.match(view, /if \(provider === "airtable"\) return details\.fallbackLabel/);
-  for (const provider of ["google", "slack", "notion"]) {
+  for (const provider of ["google", "slack", "notion", "hubspot"]) {
     assert.match(view, new RegExp(`${provider}: \\{`));
   }
   assert.doesNotMatch(view, /ciphertext|nonce|auth_tag|credential_key|credential_type/);

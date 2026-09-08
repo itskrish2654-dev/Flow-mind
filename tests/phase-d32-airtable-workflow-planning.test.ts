@@ -517,7 +517,7 @@ test("D3.2 connection actions remain authenticated, owner-scoped, exact-provider
     readFile("app/actions/connections.ts", "utf8"),
     readFile("components/automation-workspace.tsx", "utf8"),
   ]);
-  assert.match(action, /z\.enum\(\["airtable", "google", "slack", "notion"\]\)/);
+  assert.match(action, /z\.enum\(\["airtable", "google", "slack", "notion", "hubspot"\]\)/);
   assert.match(action, /\.eq\("user_id", user\.id\)/);
   assert.match(action, /\.in\("connector_id", connectorConnectionIds\(registered\.connector\.manifest\)\)/);
   assert.match(action, /matchesOwnedConnectorConnection/);

@@ -142,6 +142,26 @@ function destinationStep(
       }, branch),
     };
   }
+  if (capabilityId === "hubspot.get_contact") {
+    return {
+      id,
+      type: "connector_action",
+      capabilityId,
+      title: "HubSpot — Get Contact",
+      description: "Retrieves one HubSpot contact during a TEST run. This step cannot run in an active workflow.",
+      inputsRequired: [
+        { key: "contactId", label: "Contact ID", type: "text", helpText: "The exact HubSpot record ID for the contact." },
+        { key: "properties", label: "Properties", type: "text", value: "firstname\nlastname\nemail", helpText: "One HubSpot property name per line, up to 25." },
+      ],
+      config: connectorConfig({
+        connectorId: "hubspot",
+        operationKind: "action",
+        operationKey: "get_contact",
+        operationVersion: 1,
+        mappings: [],
+      }, branch),
+    };
+  }
   if (capabilityId === "generic_http_action") {
     const endpoint = prompt.match(/https:\/\/[^\s)\]]+/i)?.[0];
     return { id, type: "http_request", capabilityId, title: "Send HTTP request", description: "Posts the workflow result as JSON and waits for acknowledgement.", config: { ...(endpoint ? { endpoint } : {}), method: "POST", ...(branch ? { branch } : {}), connector: { connectorId: "flowmind_http", operationKind: "action", operationKey: "post_json", operationVersion: 1, mappings: [{ target: "url", source: { kind: "literal", value: endpoint ?? "" } }, { target: "body", source: { kind: "trigger", path: "" } }] } } };

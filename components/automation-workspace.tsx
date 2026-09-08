@@ -100,7 +100,7 @@ type AutomationWorkspaceProps = {
   initialSetupConfig?: InputValues;
   initialConnections?: Array<{
     id: string;
-    provider: "airtable" | "google" | "slack" | "notion";
+    provider: "airtable" | "google" | "slack" | "notion" | "hubspot";
     providerName: string;
     accountLabel: string;
     status: "connected" | "expired" | "error";
@@ -414,7 +414,7 @@ function Inspector({
   const [notionSourceBusy, setNotionSourceBusy] = useState(false);
   const setupConnectorId = step?.config?.connector?.connectorId ?? null;
   const setupProviderFamily = setupConnectorId?.startsWith("google_") ? "google" : setupConnectorId;
-  const connectorConnectionsRequestKey = setupProviderFamily && ["airtable", "google", "slack", "notion"].includes(setupProviderFamily)
+  const connectorConnectionsRequestKey = setupProviderFamily && ["airtable", "google", "slack", "notion", "hubspot"].includes(setupProviderFamily)
     ? `${setupProviderFamily}:${connectionRefreshKey}`
     : null;
   const connectorConnections = connectorConnectionResult?.key === connectorConnectionsRequestKey
@@ -599,7 +599,7 @@ function Inspector({
         )}
         <div className="my-4 h-px bg-[#eee8de]" />
         {step.config?.connector &&
-          ["airtable", "google_gmail", "google_sheets", "slack", "notion"].includes(
+          ["airtable", "google_gmail", "google_sheets", "slack", "notion", "hubspot"].includes(
             step.config.connector.connectorId,
           ) &&
           workflowId && (
@@ -611,6 +611,8 @@ function Inspector({
                     ? "Slack workspace"
                     : step.config.connector.connectorId === "airtable"
                       ? "Airtable connection"
+                      : step.config.connector.connectorId === "hubspot"
+                        ? "HubSpot account"
                       : "Notion workspace"}
               </p>
               <p className="mt-1 text-[9px] leading-4 text-slate-500">
@@ -674,20 +676,28 @@ function Inspector({
                         ? "Slack"
                         : step.config.connector.connectorId === "airtable"
                           ? "Airtable"
+                          : step.config.connector.connectorId === "hubspot"
+                            ? "HubSpot"
                           : "Notion"} needs to be connected.
                   </p>
-                  <a
-                    href={step.config.connector.connectorId === "airtable" ? `/connections?return=${encodeURIComponent(workflowReturnPath)}` : `/api/connectors/oauth/${step.config.connector.connectorId}/start?operation=${step.config.connector.operationKey}&return=${encodeURIComponent(workflowReturnPath)}`}
-                    className="mt-2 flex min-h-11 items-center justify-center rounded-lg border border-[#d7aa2f] bg-white text-[10px] font-semibold text-[#6f5100] hover:bg-[#fffaf0]"
-                  >
-                    Connect {step.config.connector.connectorId.startsWith("google_")
+                  {step.config.connector.connectorId === "hubspot" ? (
+                    <p className="mt-2 rounded-lg border border-[#e2dbd0] bg-white px-3 py-2.5 text-[9px] leading-4 text-slate-600">
+                      HubSpot connection onboarding is not available in this milestone. An existing authorized HubSpot connection can still be selected above.
+                    </p>
+                  ) : (
+                    <a
+                      href={step.config.connector.connectorId === "airtable" ? `/connections?return=${encodeURIComponent(workflowReturnPath)}` : `/api/connectors/oauth/${step.config.connector.connectorId}/start?operation=${step.config.connector.operationKey}&return=${encodeURIComponent(workflowReturnPath)}`}
+                      className="mt-2 flex min-h-11 items-center justify-center rounded-lg border border-[#d7aa2f] bg-white text-[10px] font-semibold text-[#6f5100] hover:bg-[#fffaf0]"
+                    >
+                      Connect {step.config.connector.connectorId.startsWith("google_")
                       ? "Google"
                       : step.config.connector.connectorId === "slack"
                         ? "Slack"
                         : step.config.connector.connectorId === "airtable"
                           ? "Airtable"
                           : "Notion"} <ArrowRight className="ml-1.5 size-3" aria-hidden="true" />
-                  </a>
+                    </a>
+                  )}
                 </div>
               )}
               {connectorConnectionMessage && (
@@ -1169,6 +1179,16 @@ function Inspector({
                               </option>
                             ))}
                           </select>
+                        ) : step.config?.connector?.connectorId === "hubspot" && input.key === "properties" ? (
+                          <textarea
+                            id={id}
+                            value={value}
+                            onChange={(event) => onChange(id, event.target.value)}
+                            placeholder={"firstname\nlastname\nemail"}
+                            rows={4}
+                            spellCheck={false}
+                            className="w-full resize-y rounded-lg border border-[#ded6ca] bg-[#f8f4ec] px-3 py-2 font-mono text-[10px] text-slate-800 outline-none placeholder:text-slate-400 focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200"
+                          />
                         ) : step.config?.connector?.connectorId === "airtable" && input.key === "fields" ? (
                           <textarea
                             id={id}
@@ -1620,7 +1640,7 @@ export function AutomationWorkspace({
       return;
     }
     const sideEffects = steps.flatMap((step) => {
-      if (step.type === "connector_action") return [`This live test will run “${toPlainEnglish(step.title)}” in the connected app.`];
+      if (step.type === "connector_action" && step.capabilityId !== "hubspot.get_contact") return [`This live test will run “${toPlainEnglish(step.title)}” in the connected app.`];
       if (step.capabilityId === "http.request") return [step.config?.http?.method === "GET" ? "This test will make a real request to this API." : "This test will make a real external request and may change data."];
       if (["webhook_post", "http_request"].includes(step.type)) return ["This live test will send data to the configured external destination."];
       return [];

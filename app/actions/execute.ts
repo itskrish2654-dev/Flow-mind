@@ -571,6 +571,12 @@ export async function retryWorkflowExecution(executionId: string): Promise<TestW
       if (output && typeof output === "object" && !Array.isArray(output)) priorHttpOutputs[stepId] = output as Record<string, unknown>;
     }
   }
+  const priorConnectorOutputs: Record<string, Record<string, unknown>> = {};
+  if (priorOutput.connector_results && typeof priorOutput.connector_results === "object" && !Array.isArray(priorOutput.connector_results)) {
+    for (const [stepId, output] of Object.entries(priorOutput.connector_results)) {
+      if (output && typeof output === "object" && !Array.isArray(output)) priorConnectorOutputs[stepId] = output as Record<string, unknown>;
+    }
+  }
   const priorDocuments = Array.isArray(priorOutput.documents)
     ? priorOutput.documents.flatMap((document) => {
         if (!document || typeof document !== "object" || Array.isArray(document)) return [];
@@ -602,7 +608,7 @@ export async function retryWorkflowExecution(executionId: string): Promise<TestW
               ? "scheduled"
               : "public-form",
           completedStepIds,
-          resumeState: { aiResult: priorAiResult, documents: priorDocuments, conditionDecisions, stepOutputs: { ...formatterStepOutputs, ...priorHttpOutputs } },
+          resumeState: { aiResult: priorAiResult, documents: priorDocuments, conditionDecisions, stepOutputs: { ...formatterStepOutputs, ...priorHttpOutputs, ...priorConnectorOutputs } },
           idempotencyKey: existing.idempotency_key,
           telemetryExecutionId: existing.id,
           workflowVersionId: existing.workflow_version_id ?? undefined,
