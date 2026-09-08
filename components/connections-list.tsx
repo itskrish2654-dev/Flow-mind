@@ -18,6 +18,7 @@ import {
 import { connectAirtable } from "@/app/actions/airtable-connections";
 import { disconnectConnector } from "@/app/actions/connections";
 import { AccessibleDialog } from "@/components/accessible-dialog";
+import { getConnectorOnboarding } from "@/lib/capability-registry";
 import type { ConnectionProvider, ConnectionView } from "@/lib/connectors/connection-view";
 
 type ProviderAvailability = { slack: boolean; notion: boolean };
@@ -195,7 +196,9 @@ export function ConnectionsList({
   const successItems = successProvider ? byProvider.get(successProvider) ?? [] : [];
   const successConnection = successItems.length === 1 ? successItems[0] : null;
   const providers = (["airtable", "hubspot", "slack", "notion", "google"] as const).filter((provider) => byProvider.has(provider));
-  const availableProviders = (["airtable", "slack", "notion"] as const).filter((provider) => !byProvider.has(provider));
+  const availableProviders = (["airtable", "slack", "notion"] as const).filter(
+    (provider) => !byProvider.has(provider) && getConnectorOnboarding(provider)?.available,
+  );
 
   async function submitAirtable(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -284,7 +287,9 @@ export function ConnectionsList({
           <div className="mt-4 space-y-5">
             {providers.map((provider) => {
               const items = byProvider.get(provider) ?? [];
-              const canAddAnother = (provider === "slack" || provider === "notion") && providerAvailability[provider];
+              const canAddAnother = (provider === "slack" || provider === "notion")
+                && Boolean(getConnectorOnboarding(provider)?.available)
+                && providerAvailability[provider];
               return (
                 <div key={provider} className="overflow-hidden rounded-2xl border border-[#ded6ca] bg-[#fffdfa] shadow-[0_10px_32px_rgba(39,37,54,.035)]">
                   <div className="flex items-center gap-3 border-b border-[#eee8de] px-4 py-3.5 sm:px-5">
@@ -350,7 +355,8 @@ export function ConnectionsList({
           <h2 id="available-apps-title" className="mt-1 text-lg font-semibold tracking-[-0.02em] text-slate-950">Connect an app</h2>
           <div className="mt-4 divide-y divide-[#e8e1d7] overflow-hidden rounded-2xl border border-[#ded6ca] bg-[#fffdfa]">
             {availableProviders.map((provider) => {
-              const available = provider === "airtable" || providerAvailability[provider];
+              const available = Boolean(getConnectorOnboarding(provider)?.available)
+                && (provider === "airtable" || providerAvailability[provider]);
               return (
                 <article key={provider} className="flex flex-col gap-4 px-4 py-4 transition hover:bg-[#fffaf0] sm:flex-row sm:items-center sm:px-5">
                   <div className="flex min-w-0 flex-1 items-center gap-3">

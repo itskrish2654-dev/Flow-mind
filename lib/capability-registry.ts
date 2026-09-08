@@ -1,8 +1,39 @@
 import type { CompiledWorkflow } from "@/lib/schemas/workflow";
+import { GOOGLE_SCOPES } from "@/lib/connectors/google/scopes";
+import { NOTION_CAPABILITIES } from "@/lib/connectors/notion/constants";
+import { SLACK_SCOPES } from "@/lib/connectors/slack/scopes";
+import type { ConnectorAuthType, ConnectorOperationKind } from "@/lib/connectors/types";
 import type { ExecutorKind } from "@/lib/executors/types";
 
 export type CapabilityCategory = "trigger" | "transformation" | "control" | "destination";
 export type ExecutionMode = "test" | "production";
+export const CAPABILITY_MATURITY = [
+  "DISCOVERED",
+  "REVIEWED",
+  "TEST_ONLY",
+  "AVAILABLE",
+  "DISABLED",
+] as const;
+export type CapabilityMaturity = (typeof CAPABILITY_MATURITY)[number];
+
+export type CapabilityConnectorOperation = {
+  connectorId: string;
+  providerFamily: string;
+  operationKind: ConnectorOperationKind;
+  operationKey: string;
+  operationVersion: number;
+};
+
+export type CapabilityVersionDefinition = {
+  version: number;
+  executor: ExecutorKind;
+  connectorOperation: CapabilityConnectorOperation | null;
+};
+
+export type CapabilityOnboarding = {
+  available: boolean;
+  method: ConnectorAuthType;
+};
 
 export type CapabilityDefinition = {
   id: string;
@@ -20,24 +51,142 @@ export type CapabilityDefinition = {
   availableInProduction: boolean;
   limitations: string[];
   aliases: string[];
+  maturity: CapabilityMaturity;
+  versions: readonly CapabilityVersionDefinition[];
   executorVersions: Readonly<Record<number, ExecutorKind>>;
   defaultCapabilityVersion: number;
+  connectorOperation: CapabilityConnectorOperation | null;
+  providerFamily: string | null;
+  requiredScopes: readonly string[];
+  connectionRequired: boolean;
+  onboarding: CapabilityOnboarding;
   internalOnly: boolean;
   plannerVisible: boolean;
+  builderVisible: boolean;
+  connectionVisible: boolean;
+  customerVisible: boolean;
+  intentRecognizable: boolean;
 };
 
 type CapabilityDefinitionInput = Omit<
   CapabilityDefinition,
-  "executorVersions" | "defaultCapabilityVersion" | "internalOnly" | "plannerVisible"
-> & Partial<Pick<CapabilityDefinition, "executorVersions" | "defaultCapabilityVersion" | "internalOnly" | "plannerVisible">>;
+  | "maturity"
+  | "versions"
+  | "executorVersions"
+  | "defaultCapabilityVersion"
+  | "connectorOperation"
+  | "providerFamily"
+  | "requiredScopes"
+  | "connectionRequired"
+  | "onboarding"
+  | "internalOnly"
+  | "plannerVisible"
+  | "builderVisible"
+  | "connectionVisible"
+  | "customerVisible"
+  | "intentRecognizable"
+> & Partial<Pick<
+  CapabilityDefinition,
+  | "maturity"
+  | "versions"
+  | "executorVersions"
+  | "defaultCapabilityVersion"
+  | "connectorOperation"
+  | "providerFamily"
+  | "requiredScopes"
+  | "connectionRequired"
+  | "onboarding"
+  | "internalOnly"
+  | "plannerVisible"
+  | "builderVisible"
+  | "connectionVisible"
+  | "customerVisible"
+  | "intentRecognizable"
+>>;
 
-const defineCapability = <T extends CapabilityDefinitionInput>(capability: T): CapabilityDefinition & T => ({
-  executorVersions: { 1: "native" },
-  defaultCapabilityVersion: 1,
-  internalOnly: false,
-  plannerVisible: true,
-  ...capability,
-});
+function inferredMaturity(capability: Pick<CapabilityDefinition, "supported" | "availableInTest" | "availableInProduction">): CapabilityMaturity {
+  if (!capability.supported) return "DISABLED";
+  if (capability.availableInTest && capability.availableInProduction) return "AVAILABLE";
+  if (capability.availableInTest) return "TEST_ONLY";
+  return "REVIEWED";
+}
+
+const defineCapability = (capability: CapabilityDefinitionInput): CapabilityDefinition => {
+  const internalOnly = capability.internalOnly ?? false;
+  const connectorOperation = capability.connectorOperation ?? null;
+  const executorVersions = capability.executorVersions ?? { 1: "native" as const };
+  const defaultCapabilityVersion = capability.defaultCapabilityVersion ?? 1;
+  const versions = capability.versions ?? Object.entries(executorVersions).map(([version, executor]) => ({
+    version: Number(version),
+    executor,
+    connectorOperation: Number(version) === defaultCapabilityVersion ? connectorOperation : null,
+  }));
+  const customerUsable = capability.supported && capability.availableInTest && !internalOnly;
+  const connectionRequired = capability.connectionRequired ?? false;
+  const onboarding = capability.onboarding ?? { available: false, method: "none" as const };
+  return {
+    ...capability,
+    maturity: capability.maturity ?? inferredMaturity(capability),
+    versions,
+    executorVersions,
+    defaultCapabilityVersion,
+    connectorOperation,
+    providerFamily: capability.providerFamily ?? connectorOperation?.providerFamily ?? null,
+    requiredScopes: capability.requiredScopes ?? [],
+    connectionRequired,
+    onboarding,
+    internalOnly,
+    plannerVisible: capability.plannerVisible ?? customerUsable,
+    builderVisible: capability.builderVisible ?? customerUsable,
+    connectionVisible: capability.connectionVisible ?? (customerUsable && connectionRequired),
+    customerVisible: capability.customerVisible ?? customerUsable,
+    intentRecognizable: capability.intentRecognizable ?? capability.aliases.length > 0,
+  };
+};
+
+type ConnectorCapabilityInput = Omit<
+  CapabilityDefinitionInput,
+  | "executionImplementation"
+  | "connectorOperation"
+  | "providerFamily"
+  | "requiredScopes"
+  | "connectionRequired"
+  | "onboarding"
+  | "executorVersions"
+  | "defaultCapabilityVersion"
+  | "versions"
+> & {
+  connectorOperation: CapabilityConnectorOperation;
+  requiredScopes: readonly string[];
+  connectionRequired: boolean;
+  onboarding: CapabilityOnboarding;
+  executor?: ExecutorKind;
+  capabilityVersion?: number;
+};
+
+const defineConnectorCapability = (input: ConnectorCapabilityInput): CapabilityDefinition => {
+  const {
+    connectorOperation,
+    requiredScopes,
+    connectionRequired,
+    onboarding,
+    executor = "native",
+    capabilityVersion = 1,
+    ...capability
+  } = input;
+  return defineCapability({
+    ...capability,
+    executionImplementation: `connector:${connectorOperation.connectorId}/${connectorOperation.operationKey}@${connectorOperation.operationVersion}`,
+    connectorOperation,
+    providerFamily: connectorOperation.providerFamily,
+    requiredScopes,
+    connectionRequired,
+    onboarding,
+    executorVersions: { [capabilityVersion]: executor },
+    defaultCapabilityVersion: capabilityVersion,
+    versions: [{ version: capabilityVersion, executor, connectorOperation }],
+  });
+};
 
 /**
  * CrazyLoops' authoritative capability registry.
@@ -66,12 +215,15 @@ export const CAPABILITY_REGISTRY = {
     ],
     aliases: ["form", "form submission", "survey", "intake", "feedback"],
   }),
-  generic_webhook_trigger: defineCapability({
+  generic_webhook_trigger: defineConnectorCapability({
     id: "generic_webhook_trigger",
     displayName: "Incoming webhook",
     category: "trigger",
     supported: true,
-    executionImplementation: "connector:flowmind_webhook/event_received@1",
+    connectorOperation: { connectorId: "flowmind_webhook", providerFamily: "flowmind", operationKind: "trigger", operationKey: "event_received", operationVersion: 1 },
+    requiredScopes: [],
+    connectionRequired: false,
+    onboarding: { available: false, method: "none" },
     requiredSetupFields: [],
     credentialsRequired: false,
     availableInTest: true,
@@ -79,12 +231,15 @@ export const CAPABILITY_REGISTRY = {
     limitations: ["Accepts authenticated, bounded JSON events on a published workflow endpoint."],
     aliases: ["incoming webhook", "webhook trigger", "when a webhook arrives"],
   }),
-  generic_http_action: defineCapability({
+  generic_http_action: defineConnectorCapability({
     id: "generic_http_action",
     displayName: "HTTP request",
     category: "destination",
     supported: true,
-    executionImplementation: "connector:flowmind_http/post_json@1",
+    connectorOperation: { connectorId: "flowmind_http", providerFamily: "flowmind", operationKind: "action", operationKey: "post_json", operationVersion: 1 },
+    requiredScopes: [],
+    connectionRequired: false,
+    onboarding: { available: false, method: "none" },
     requiredSetupFields: [{ key: "destination_url", label: "Destination URL", type: "url" }],
     credentialsRequired: false,
     availableInTest: true,
@@ -92,12 +247,15 @@ export const CAPABILITY_REGISTRY = {
     limitations: ["HTTPS JSON POST only; private networks and redirects are blocked."],
     aliases: ["http request", "post json", "send to webhook"],
   }),
-  "http.request": defineCapability({
+  "http.request": defineConnectorCapability({
     id: "http.request",
     displayName: "HTTP request",
     category: "transformation",
     supported: true,
-    executionImplementation: "connector:flowmind_http/request@2",
+    connectorOperation: { connectorId: "flowmind_http", providerFamily: "flowmind", operationKind: "action", operationKey: "request", operationVersion: 2 },
+    requiredScopes: [],
+    connectionRequired: false,
+    onboarding: { available: false, method: "none" },
     requiredSetupFields: [{ key: "destination_url", label: "API endpoint", type: "url" }],
     credentialsRequired: false,
     availableInTest: true,
@@ -306,36 +464,37 @@ export const CAPABILITY_REGISTRY = {
     limitations: ["TikTok events are not currently supported."],
     aliases: ["tiktok", "tik tok"],
   }),
-  gmail_new_email: defineCapability({
+  gmail_new_email: defineConnectorCapability({
     id: "gmail_new_email", displayName: "New Gmail email", category: "trigger", supported: true,
-    executionImplementation: "connector:google_gmail/new_email@1", requiredSetupFields: [], credentialsRequired: true,
+    connectorOperation: { connectorId: "google_gmail", providerFamily: "google", operationKind: "trigger", operationKey: "new_email", operationVersion: 1 }, requiredScopes: [GOOGLE_SCOPES.gmailReadonly], connectionRequired: true, onboarding: { available: true, method: "oauth2" }, requiredSetupFields: [], credentialsRequired: true,
     availableInTest: true, availableInProduction: true,
     limitations: ["Beta until Google OAuth verification and live production acceptance are complete."], aliases: ["gmail message arrives", "new gmail", "gmail email arrives"],
   }),
-  gmail_new_email_matching_search: defineCapability({
+  gmail_new_email_matching_search: defineConnectorCapability({
     id: "gmail_new_email_matching_search", displayName: "New Gmail email matching search", category: "trigger", supported: true,
-    executionImplementation: "connector:google_gmail/new_email_matching_search@1", requiredSetupFields: [{ key: "search", label: "Email filter", type: "text" }], credentialsRequired: true,
+    connectorOperation: { connectorId: "google_gmail", providerFamily: "google", operationKind: "trigger", operationKey: "new_email_matching_search", operationVersion: 1 }, requiredScopes: [GOOGLE_SCOPES.gmailReadonly], connectionRequired: true, onboarding: { available: true, method: "oauth2" }, requiredSetupFields: [{ key: "search", label: "Email filter", type: "text" }], credentialsRequired: true,
     availableInTest: true, availableInProduction: true,
     limitations: ["Uses Gmail-compatible search and requires a resolved filter."], aliases: ["gmail contains", "gmail from", "email contains"],
   }),
-  gmail_send_email: defineCapability({
+  gmail_send_email: defineConnectorCapability({
     id: "gmail_send_email", displayName: "Send email through Gmail", category: "destination", supported: true,
-    executionImplementation: "connector:google_gmail/send_email@1", requiredSetupFields: [{ key: "to", label: "To", type: "text" }, { key: "subject", label: "Subject", type: "text" }, { key: "body", label: "Body", type: "text" }], credentialsRequired: true,
+    connectorOperation: { connectorId: "google_gmail", providerFamily: "google", operationKind: "action", operationKey: "send_email", operationVersion: 1 }, requiredScopes: [GOOGLE_SCOPES.gmailSend], connectionRequired: true, onboarding: { available: true, method: "oauth2" }, requiredSetupFields: [{ key: "to", label: "To", type: "text" }, { key: "subject", label: "Subject", type: "text" }, { key: "body", label: "Body", type: "text" }], credentialsRequired: true,
     availableInTest: true, availableInProduction: true,
     limitations: ["Requires Gmail acknowledgement; ambiguous sends are never retried automatically."], aliases: ["send through gmail", "gmail send", "email it through gmail"],
   }),
-  gmail_reply_to_email: defineCapability({
+  gmail_reply_to_email: defineConnectorCapability({
     id: "gmail_reply_to_email", displayName: "Reply in Gmail", category: "destination", supported: true,
-    executionImplementation: "connector:google_gmail/reply_to_email@1", requiredSetupFields: [{ key: "messageId", label: "Gmail message", type: "text" }, { key: "threadId", label: "Gmail thread", type: "text" }, { key: "body", label: "Reply", type: "text" }], credentialsRequired: true,
+    connectorOperation: { connectorId: "google_gmail", providerFamily: "google", operationKind: "action", operationKey: "reply_to_email", operationVersion: 1 }, requiredScopes: [GOOGLE_SCOPES.gmailReadonly, GOOGLE_SCOPES.gmailSend], connectionRequired: true, onboarding: { available: true, method: "oauth2" }, requiredSetupFields: [{ key: "messageId", label: "Gmail message", type: "text" }, { key: "threadId", label: "Gmail thread", type: "text" }, { key: "body", label: "Reply", type: "text" }], credentialsRequired: true,
     availableInTest: true, availableInProduction: true,
     limitations: ["Requires a valid Gmail message and thread reference."], aliases: ["reply in gmail", "gmail reply", "reply to email"],
   }),
-  google_sheets_add_row: defineCapability({
+  google_sheets_add_row: defineConnectorCapability({
     id: "google_sheets_add_row",
     displayName: "Add row to Google Sheets",
     category: "destination",
     supported: true,
-    executionImplementation: "connector:google_sheets/add_row@1",
+    connectorOperation: { connectorId: "google_sheets", providerFamily: "google", operationKind: "action", operationKey: "add_row", operationVersion: 1 },
+    requiredScopes: [GOOGLE_SCOPES.driveFile], connectionRequired: true, onboarding: { available: true, method: "oauth2" },
     requiredSetupFields: [{ key: "spreadsheetId", label: "Picker-selected spreadsheet", type: "text" }, { key: "worksheet", label: "Worksheet", type: "text" }],
     credentialsRequired: true,
     availableInTest: true,
@@ -343,14 +502,14 @@ export const CAPABILITY_REGISTRY = {
     limitations: ["Beta until Google OAuth verification and live production acceptance are complete.", "Writes use RAW value semantics."],
     aliases: ["add to google sheets", "add row to google sheet", "save to google sheets", "google sheets", "google sheet"],
   }),
-  google_sheets_find_row: defineCapability({
+  google_sheets_find_row: defineConnectorCapability({
     id: "google_sheets_find_row", displayName: "Find row in Google Sheets", category: "transformation", supported: true,
-    executionImplementation: "connector:google_sheets/find_row@1", requiredSetupFields: [{ key: "spreadsheetId", label: "Picker-selected spreadsheet", type: "text" }, { key: "worksheet", label: "Worksheet", type: "text" }, { key: "matchColumn", label: "Lookup column", type: "text" }], credentialsRequired: true,
+    connectorOperation: { connectorId: "google_sheets", providerFamily: "google", operationKind: "action", operationKey: "find_row", operationVersion: 1 }, requiredScopes: [GOOGLE_SCOPES.driveFile], connectionRequired: true, onboarding: { available: true, method: "oauth2" }, requiredSetupFields: [{ key: "spreadsheetId", label: "Picker-selected spreadsheet", type: "text" }, { key: "worksheet", label: "Worksheet", type: "text" }, { key: "matchColumn", label: "Lookup column", type: "text" }], credentialsRequired: true,
     availableInTest: true, availableInProduction: true, limitations: ["Exact matches only; multiple matches fail clearly."], aliases: ["find row in google sheets", "lookup in google sheets"],
   }),
-  google_sheets_update_row: defineCapability({
+  google_sheets_update_row: defineConnectorCapability({
     id: "google_sheets_update_row", displayName: "Update row in Google Sheets", category: "destination", supported: true,
-    executionImplementation: "connector:google_sheets/update_row@1", requiredSetupFields: [{ key: "spreadsheetId", label: "Picker-selected spreadsheet", type: "text" }, { key: "worksheet", label: "Worksheet", type: "text" }], credentialsRequired: true,
+    connectorOperation: { connectorId: "google_sheets", providerFamily: "google", operationKind: "action", operationKey: "update_row", operationVersion: 1 }, requiredScopes: [GOOGLE_SCOPES.driveFile], connectionRequired: true, onboarding: { available: true, method: "oauth2" }, requiredSetupFields: [{ key: "spreadsheetId", label: "Picker-selected spreadsheet", type: "text" }, { key: "worksheet", label: "Worksheet", type: "text" }], credentialsRequired: true,
     availableInTest: true, availableInProduction: true, limitations: ["Requires an explicit unique row reference."], aliases: ["update row in google sheets"],
   }),
   google_calendar: defineCapability({
@@ -365,49 +524,49 @@ export const CAPABILITY_REGISTRY = {
     availableInTest: false, availableInProduction: false,
     limitations: ["Google Drive is not currently supported."], aliases: ["google drive", "upload to drive", "save to drive"],
   }),
-  slack_new_channel_message: defineCapability({
+  slack_new_channel_message: defineConnectorCapability({
     id: "slack_new_channel_message", displayName: "New message in Slack channel", category: "trigger", supported: true,
-    executionImplementation: "connector:slack/new_channel_message@1", requiredSetupFields: [{ key: "channel", label: "Slack channel", type: "text" }], credentialsRequired: true,
+    connectorOperation: { connectorId: "slack", providerFamily: "slack", operationKind: "trigger", operationKey: "new_channel_message", operationVersion: 1 }, requiredScopes: [SLACK_SCOPES.channelsRead, SLACK_SCOPES.channelsHistory], connectionRequired: true, onboarding: { available: true, method: "oauth2" }, requiredSetupFields: [{ key: "channel", label: "Slack channel", type: "text" }], credentialsRequired: true,
     availableInTest: true, availableInProduction: true, limitations: ["Beta until live Slack acceptance is complete.", "Public channels accessible to the installed bot only."], aliases: ["slack message", "message in slack", "posts in slack"],
   }),
-  slack_send_channel_message: defineCapability({
+  slack_send_channel_message: defineConnectorCapability({
     id: "slack_send_channel_message", displayName: "Send Slack channel message", category: "destination", supported: true,
-    executionImplementation: "connector:slack/send_channel_message@1", requiredSetupFields: [{ key: "channel", label: "Slack channel", type: "text" }, { key: "text", label: "Message", type: "text" }], credentialsRequired: true,
+    connectorOperation: { connectorId: "slack", providerFamily: "slack", operationKind: "action", operationKey: "send_channel_message", operationVersion: 1 }, requiredScopes: [SLACK_SCOPES.channelsRead, SLACK_SCOPES.chatWrite], connectionRequired: true, onboarding: { available: true, method: "oauth2" }, requiredSetupFields: [{ key: "channel", label: "Slack channel", type: "text" }, { key: "text", label: "Message", type: "text" }], credentialsRequired: true,
     availableInTest: true, availableInProduction: true, limitations: ["Requires Slack acknowledgement before delivery is reported."], aliases: ["send to slack", "post to slack", "slack alert"],
   }),
-  slack_reply_in_thread: defineCapability({
+  slack_reply_in_thread: defineConnectorCapability({
     id: "slack_reply_in_thread", displayName: "Reply in Slack thread", category: "destination", supported: true,
-    executionImplementation: "connector:slack/reply_in_thread@1", requiredSetupFields: [{ key: "channel", label: "Slack channel", type: "text" }, { key: "threadTs", label: "Slack thread", type: "text" }, { key: "text", label: "Reply", type: "text" }], credentialsRequired: true,
+    connectorOperation: { connectorId: "slack", providerFamily: "slack", operationKind: "action", operationKey: "reply_in_thread", operationVersion: 1 }, requiredScopes: [SLACK_SCOPES.channelsRead, SLACK_SCOPES.chatWrite], connectionRequired: true, onboarding: { available: true, method: "oauth2" }, requiredSetupFields: [{ key: "channel", label: "Slack channel", type: "text" }, { key: "threadTs", label: "Slack thread", type: "text" }, { key: "text", label: "Reply", type: "text" }], credentialsRequired: true,
     availableInTest: true, availableInProduction: true, limitations: ["Requires an exact Slack thread reference."], aliases: ["reply in slack thread", "slack thread reply"],
   }),
-  notion_page_created_or_added: defineCapability({
+  notion_page_created_or_added: defineConnectorCapability({
     id: "notion_page_created_or_added", displayName: "Notion page created or added", category: "trigger", supported: true,
-    executionImplementation: "connector:notion/page_created_or_added@1", requiredSetupFields: [{ key: "resourceId", label: "Notion page or data source", type: "text" }], credentialsRequired: true,
+    connectorOperation: { connectorId: "notion", providerFamily: "notion", operationKind: "trigger", operationKey: "page_created_or_added", operationVersion: 1 }, requiredScopes: [NOTION_CAPABILITIES.readContent], connectionRequired: true, onboarding: { available: true, method: "oauth2" }, requiredSetupFields: [{ key: "resourceId", label: "Notion page or data source", type: "text" }], credentialsRequired: true,
     availableInTest: true, availableInProduction: true, limitations: ["Beta until live Notion acceptance is complete.", "Only explicitly shared resources are visible."], aliases: ["notion page created", "new notion page"],
   }),
-  notion_page_updated: defineCapability({
+  notion_page_updated: defineConnectorCapability({
     id: "notion_page_updated", displayName: "Notion page updated", category: "trigger", supported: true,
-    executionImplementation: "connector:notion/page_updated@1", requiredSetupFields: [{ key: "resourceId", label: "Notion page or data source", type: "text" }], credentialsRequired: true,
+    connectorOperation: { connectorId: "notion", providerFamily: "notion", operationKind: "trigger", operationKey: "page_updated", operationVersion: 1 }, requiredScopes: [NOTION_CAPABILITIES.readContent], connectionRequired: true, onboarding: { available: true, method: "oauth2" }, requiredSetupFields: [{ key: "resourceId", label: "Notion page or data source", type: "text" }], credentialsRequired: true,
     availableInTest: true, availableInProduction: true, limitations: ["Fetches current page metadata after a verified webhook event."], aliases: ["notion page updated", "notion update"],
   }),
-  notion_create_page: defineCapability({
+  notion_create_page: defineConnectorCapability({
     id: "notion_create_page", displayName: "Create Notion page", category: "destination", supported: true,
-    executionImplementation: "connector:notion/create_page@1", requiredSetupFields: [{ key: "parentPageId", label: "Parent page", type: "text" }, { key: "title", label: "Title", type: "text" }, { key: "content", label: "Content", type: "text" }], credentialsRequired: true,
+    connectorOperation: { connectorId: "notion", providerFamily: "notion", operationKind: "action", operationKey: "create_page", operationVersion: 1 }, requiredScopes: [NOTION_CAPABILITIES.readContent, NOTION_CAPABILITIES.insertContent], connectionRequired: true, onboarding: { available: true, method: "oauth2" }, requiredSetupFields: [{ key: "parentPageId", label: "Parent page", type: "text" }, { key: "title", label: "Title", type: "text" }, { key: "content", label: "Content", type: "text" }], credentialsRequired: true,
     availableInTest: true, availableInProduction: true, limitations: ["Parent page must be shared with the Notion connection."], aliases: ["create notion page"],
   }),
-  notion_create_data_source_item: defineCapability({
+  notion_create_data_source_item: defineConnectorCapability({
     id: "notion_create_data_source_item", displayName: "Add item to Notion data source", category: "destination", supported: true,
-    executionImplementation: "connector:notion/create_data_source_item@1", requiredSetupFields: [{ key: "dataSourceId", label: "Data source", type: "text" }], credentialsRequired: true,
+    connectorOperation: { connectorId: "notion", providerFamily: "notion", operationKind: "action", operationKey: "create_data_source_item", operationVersion: 1 }, requiredScopes: [NOTION_CAPABILITIES.readContent, NOTION_CAPABILITIES.insertContent], connectionRequired: true, onboarding: { available: true, method: "oauth2" }, requiredSetupFields: [{ key: "dataSourceId", label: "Data source", type: "text" }], credentialsRequired: true,
     availableInTest: true, availableInProduction: true, limitations: ["Only existing supported properties are mapped."], aliases: ["add to notion", "save to notion", "notion data source", "notion database"],
   }),
-  notion_find_item: defineCapability({
+  notion_find_item: defineConnectorCapability({
     id: "notion_find_item", displayName: "Find Notion item", category: "transformation", supported: true,
-    executionImplementation: "connector:notion/find_item@1", requiredSetupFields: [{ key: "dataSourceId", label: "Data source", type: "text" }, { key: "matchProperty", label: "Property", type: "text" }, { key: "matchValue", label: "Exact value", type: "text" }], credentialsRequired: true,
+    connectorOperation: { connectorId: "notion", providerFamily: "notion", operationKind: "action", operationKey: "find_item", operationVersion: 1 }, requiredScopes: [NOTION_CAPABILITIES.readContent], connectionRequired: true, onboarding: { available: true, method: "oauth2" }, requiredSetupFields: [{ key: "dataSourceId", label: "Data source", type: "text" }, { key: "matchProperty", label: "Property", type: "text" }, { key: "matchValue", label: "Exact value", type: "text" }], credentialsRequired: true,
     availableInTest: true, availableInProduction: true, limitations: ["Exact match only; multiple matches fail as ambiguous."], aliases: ["find notion item", "lookup notion item"],
   }),
-  notion_update_item: defineCapability({
+  notion_update_item: defineConnectorCapability({
     id: "notion_update_item", displayName: "Update Notion item", category: "destination", supported: true,
-    executionImplementation: "connector:notion/update_item@1", requiredSetupFields: [{ key: "dataSourceId", label: "Data source", type: "text" }, { key: "pageId", label: "Page or item", type: "text" }], credentialsRequired: true,
+    connectorOperation: { connectorId: "notion", providerFamily: "notion", operationKind: "action", operationKey: "update_item", operationVersion: 1 }, requiredScopes: [NOTION_CAPABILITIES.readContent, NOTION_CAPABILITIES.updateContent], connectionRequired: true, onboarding: { available: true, method: "oauth2" }, requiredSetupFields: [{ key: "dataSourceId", label: "Data source", type: "text" }, { key: "pageId", label: "Page or item", type: "text" }], credentialsRequired: true,
     availableInTest: true, availableInProduction: true, limitations: ["Requires an exact page/item ID or a preceding unambiguous find."], aliases: ["update notion item", "update in notion"],
   }),
   stripe: defineCapability({
@@ -530,6 +689,9 @@ export const CAPABILITY_REGISTRY = {
     defaultCapabilityVersion: 1,
     internalOnly: true,
     plannerVisible: false,
+    builderVisible: false,
+    connectionVisible: false,
+    customerVisible: false,
   }),
   "internal.connector_runner_canary": defineCapability({
     id: "internal.connector_runner_canary",
@@ -547,13 +709,20 @@ export const CAPABILITY_REGISTRY = {
     defaultCapabilityVersion: 1,
     internalOnly: true,
     plannerVisible: false,
+    builderVisible: false,
+    connectionVisible: false,
+    customerVisible: false,
   }),
-  "airtable.create_record": defineCapability({
+  "airtable.create_record": defineConnectorCapability({
     id: "airtable.create_record",
     displayName: "Create Airtable record",
     category: "destination",
     supported: true,
-    executionImplementation: "connector:airtable/create_record@1",
+    maturity: "AVAILABLE",
+    connectorOperation: { connectorId: "airtable", providerFamily: "airtable", operationKind: "action", operationKey: "create_record", operationVersion: 1 },
+    requiredScopes: ["data.records:write"],
+    connectionRequired: true,
+    onboarding: { available: true, method: "api_key" },
     requiredSetupFields: [
       { key: "baseId", label: "Airtable Base ID", type: "text" },
       { key: "tableId", label: "Airtable Table ID", type: "text" },
@@ -567,17 +736,20 @@ export const CAPABILITY_REGISTRY = {
       "Airtable create-record has no native idempotency key; ambiguous outcomes require manual verification.",
     ],
     aliases: ["create airtable record", "add to airtable", "save to airtable", "send to airtable"],
-    executorVersions: { 1: "connector_runner" },
-    defaultCapabilityVersion: 1,
+    executor: "connector_runner",
     internalOnly: false,
     plannerVisible: true,
   }),
-  "hubspot.get_contact": defineCapability({
+  "hubspot.get_contact": defineConnectorCapability({
     id: "hubspot.get_contact",
     displayName: "Get HubSpot contact",
     category: "transformation",
     supported: true,
-    executionImplementation: "connector:hubspot/get_contact@1",
+    maturity: "TEST_ONLY",
+    connectorOperation: { connectorId: "hubspot", providerFamily: "hubspot", operationKind: "action", operationKey: "get_contact", operationVersion: 1 },
+    requiredScopes: ["crm.objects.contacts.read"],
+    connectionRequired: true,
+    onboarding: { available: false, method: "oauth2" },
     requiredSetupFields: [
       { key: "contactId", label: "HubSpot Contact ID", type: "text" },
       { key: "properties", label: "Contact properties", type: "text" },
@@ -591,10 +763,10 @@ export const CAPABILITY_REGISTRY = {
       "HubSpot connection onboarding is not included in this milestone.",
     ],
     aliases: ["get hubspot contact", "retrieve hubspot contact", "find hubspot contact", "look up hubspot contact"],
-    executorVersions: { 1: "connector_runner" },
-    defaultCapabilityVersion: 1,
+    executor: "connector_runner",
     internalOnly: false,
     plannerVisible: true,
+    connectionVisible: true,
   }),
   external_integration: defineCapability({
     id: "external_integration",
@@ -625,8 +797,253 @@ export type CapabilityAssessment = {
   message: string | null;
 };
 
+export type CapabilityConnectorOperationEvidence = {
+  connectorId: string;
+  providerFamily: string;
+  authType: ConnectorAuthType;
+  operationKind: ConnectorOperationKind;
+  operationKey: string;
+  operationVersion: number;
+  executor: ExecutorKind;
+  requiredScopes: readonly string[];
+  connectionRequired: boolean;
+  availableInTest: boolean;
+  availableInProduction: boolean;
+};
+
+export type CapabilityConnectorOperationLookup = (
+  operation: CapabilityConnectorOperation,
+) => CapabilityConnectorOperationEvidence | null;
+
 export function getCapability(capabilityId: string): CapabilityDefinition | null {
   return CAPABILITY_REGISTRY[capabilityId as CapabilityId] ?? null;
+}
+
+export function getCapabilityVersion(
+  capabilityId: string,
+  capabilityVersion: number,
+): CapabilityVersionDefinition | null {
+  return getCapability(capabilityId)?.versions.find(
+    (version) => version.version === capabilityVersion,
+  ) ?? null;
+}
+
+export function resolveCapabilityImplementation(
+  capabilityId: string,
+  capabilityVersion: number,
+): {
+  capability: CapabilityDefinition;
+  version: CapabilityVersionDefinition;
+} | null {
+  const capability = getCapability(capabilityId);
+  const version = getCapabilityVersion(capabilityId, capabilityVersion);
+  return capability && version ? { capability, version } : null;
+}
+
+export function getPlannerVisibleCapabilities(): CapabilityDefinition[] {
+  return Object.values(CAPABILITY_REGISTRY).filter(
+    (capability) => capability.plannerVisible && capability.customerVisible && !capability.internalOnly,
+  );
+}
+
+export function getCustomerVisibleCapabilities(): CapabilityDefinition[] {
+  return Object.values(CAPABILITY_REGISTRY).filter(
+    (capability) => capability.customerVisible && !capability.internalOnly,
+  );
+}
+
+export function getConnectorCapability(
+  connectorId: string,
+  operationKind: ConnectorOperationKind,
+  operationKey: string,
+  operationVersion: number,
+): CapabilityDefinition | null {
+  return Object.values(CAPABILITY_REGISTRY).find((capability) => {
+    const operation = capability.connectorOperation;
+    return operation?.connectorId === connectorId
+      && operation.operationKind === operationKind
+      && operation.operationKey === operationKey
+      && operation.operationVersion === operationVersion;
+  }) ?? null;
+}
+
+export function getConnectorOnboarding(connectorId: string): CapabilityOnboarding | null {
+  const capabilities = Object.values(CAPABILITY_REGISTRY).filter(
+    (capability) => capability.connectorOperation?.connectorId === connectorId
+      && capability.connectionVisible
+      && !capability.internalOnly,
+  );
+  if (!capabilities.length) return null;
+  const available = capabilities.some((capability) => capability.onboarding.available);
+  const method = capabilities.find((capability) => capability.onboarding.method !== "none")?.onboarding.method ?? "none";
+  return { available, method };
+}
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length
+    && new Set(left).size === left.length
+    && left.every((value) => right.includes(value));
+}
+
+function sameConnectorOperation(
+  left: CapabilityConnectorOperation | null,
+  right: CapabilityConnectorOperation | null,
+): boolean {
+  if (!left || !right) return left === right;
+  return left.connectorId === right.connectorId
+    && left.providerFamily === right.providerFamily
+    && left.operationKind === right.operationKind
+    && left.operationKey === right.operationKey
+    && left.operationVersion === right.operationVersion;
+}
+
+/** Pure validation for CrazyLoops-owned availability and connector consistency. */
+export function validateCapabilityDefinitions(
+  definitions: readonly CapabilityDefinition[],
+  lookupConnectorOperation: CapabilityConnectorOperationLookup,
+): string[] {
+  const errors: string[] = [];
+  const ids = new Set<string>();
+  const executors = new Set<ExecutorKind>(["native", "activepieces", "connector_runner"]);
+
+  for (const capability of definitions) {
+    if (ids.has(capability.id)) errors.push(`Duplicate capability ID: ${capability.id}`);
+    ids.add(capability.id);
+
+    if (capability.maturity === "AVAILABLE" && (
+      !capability.supported
+      || !capability.availableInTest
+      || !capability.availableInProduction
+    )) {
+      errors.push(`AVAILABLE capability is not enabled in TEST and production: ${capability.id}`);
+    }
+    if (capability.maturity === "TEST_ONLY" && (
+      !capability.supported
+      || !capability.availableInTest
+      || capability.availableInProduction
+    )) {
+      errors.push(`TEST_ONLY capability has invalid mode availability: ${capability.id}`);
+    }
+    if (["DISCOVERED", "REVIEWED", "DISABLED"].includes(capability.maturity)
+      && (capability.supported || capability.availableInTest || capability.availableInProduction)) {
+      errors.push(`Non-executable maturity exposes an execution mode: ${capability.id}`);
+    }
+    if (capability.supported && !["TEST_ONLY", "AVAILABLE"].includes(capability.maturity)) {
+      errors.push(`Supported capability has a non-executable maturity: ${capability.id}`);
+    }
+    if (capability.internalOnly && (
+      capability.plannerVisible
+      || capability.builderVisible
+      || capability.connectionVisible
+      || capability.customerVisible
+    )) {
+      errors.push(`Internal capability is customer visible: ${capability.id}`);
+    }
+    if ((capability.plannerVisible || capability.builderVisible || capability.connectionVisible)
+      && !capability.customerVisible) {
+      errors.push(`Hidden capability exposes a customer surface: ${capability.id}`);
+    }
+    if (capability.customerVisible && !capability.availableInTest) {
+      errors.push(`Customer-visible capability cannot run in TEST: ${capability.id}`);
+    }
+    if (capability.connectionVisible && !capability.connectionRequired) {
+      errors.push(`Connection-visible capability does not require a connection: ${capability.id}`);
+    }
+    if (capability.connectionRequired && !capability.credentialsRequired) {
+      errors.push(`Connection-required capability does not require credentials: ${capability.id}`);
+    }
+
+    const versionIds = new Set<number>();
+    for (const version of capability.versions) {
+      if (!Number.isSafeInteger(version.version) || version.version < 1) {
+        errors.push(`Invalid capability version for ${capability.id}: ${version.version}`);
+      }
+      if (versionIds.has(version.version)) {
+        errors.push(`Duplicate capability version: ${capability.id}@${version.version}`);
+      }
+      versionIds.add(version.version);
+      if (!executors.has(version.executor)) {
+        errors.push(`Unsupported executor for ${capability.id}@${version.version}`);
+      }
+      if (capability.executorVersions[version.version] !== version.executor) {
+        errors.push(`Executor map mismatch for ${capability.id}@${version.version}`);
+      }
+      if (!sameConnectorOperation(version.connectorOperation, capability.connectorOperation)) {
+        errors.push(`Connector version mapping mismatch for ${capability.id}@${version.version}`);
+      }
+    }
+    if (!versionIds.has(capability.defaultCapabilityVersion)) {
+      errors.push(`Default capability version is not registered: ${capability.id}@${capability.defaultCapabilityVersion}`);
+    }
+    if (Object.keys(capability.executorVersions).length !== capability.versions.length) {
+      errors.push(`Executor version count mismatch for ${capability.id}`);
+    }
+
+    const connector = capability.connectorOperation;
+    if (!connector) {
+      if (capability.providerFamily || capability.requiredScopes.length) {
+        errors.push(`Connector metadata exists without an operation: ${capability.id}`);
+      }
+      if (capability.onboarding.available) {
+        errors.push(`Onboarding is available without a connector operation: ${capability.id}`);
+      }
+      continue;
+    }
+
+    const expectedImplementation = `connector:${connector.connectorId}/${connector.operationKey}@${connector.operationVersion}`;
+    if (capability.executionImplementation !== expectedImplementation) {
+      errors.push(`Execution implementation mismatch for ${capability.id}`);
+    }
+    if (capability.providerFamily !== connector.providerFamily) {
+      errors.push(`Provider family mismatch for ${capability.id}`);
+    }
+    const evidence = lookupConnectorOperation(connector);
+    if (!evidence) {
+      errors.push(`Missing connector operation for ${capability.id}`);
+      continue;
+    }
+    if (evidence.connectorId !== connector.connectorId
+      || evidence.operationKind !== connector.operationKind
+      || evidence.operationKey !== connector.operationKey
+      || evidence.operationVersion !== connector.operationVersion) {
+      errors.push(`Connector operation mismatch for ${capability.id}`);
+    }
+    const selectedVersion = getCapabilityVersionFromDefinition(capability, capability.defaultCapabilityVersion);
+    if (!selectedVersion || selectedVersion.executor !== evidence.executor) {
+      errors.push(`Executor mismatch for ${capability.id}`);
+    }
+    if (evidence.availableInTest !== capability.availableInTest) {
+      errors.push(`TEST availability mismatch for ${capability.id}`);
+    }
+    if (evidence.availableInProduction !== capability.availableInProduction) {
+      errors.push(`LIVE availability mismatch for ${capability.id}`);
+    }
+    if (evidence.connectionRequired !== capability.connectionRequired) {
+      errors.push(`Connection requirement mismatch for ${capability.id}`);
+    }
+    if (evidence.providerFamily !== capability.providerFamily) {
+      errors.push(`Connector provider mismatch for ${capability.id}`);
+    }
+    if (!sameStringSet(evidence.requiredScopes, capability.requiredScopes)) {
+      errors.push(`Required scope mismatch for ${capability.id}`);
+    }
+    if (capability.onboarding.available && (
+      !capability.connectionRequired
+      || capability.onboarding.method === "none"
+      || capability.onboarding.method !== evidence.authType
+    )) {
+      errors.push(`Invalid onboarding availability for ${capability.id}`);
+    }
+  }
+
+  return errors;
+}
+
+function getCapabilityVersionFromDefinition(
+  capability: CapabilityDefinition,
+  version: number,
+): CapabilityVersionDefinition | null {
+  return capability.versions.find((candidate) => candidate.version === version) ?? null;
 }
 
 function containsAlias(text: string, alias: string): boolean {
@@ -641,7 +1058,7 @@ export function findRequestedUnsupportedCapabilities(prompt: string): Capability
   const normalized = prompt.toLowerCase();
   return Object.values(CAPABILITY_REGISTRY).filter(
     (capability) =>
-      capability.plannerVisible &&
+      capability.intentRecognizable &&
       !capability.supported &&
       capability.aliases.some((alias) => containsAlias(normalized, alias)),
   );
@@ -650,7 +1067,7 @@ export function findRequestedUnsupportedCapabilities(prompt: string): Capability
 function legacyIntegrationCapability(step: CompiledWorkflow["steps"][number]): string | null {
   const context = `${step.title} ${step.description} ${step.config?.endpoint ?? ""}`.toLowerCase();
   for (const capability of Object.values(CAPABILITY_REGISTRY)) {
-    if (!capability.plannerVisible || capability.supported || capability.id === "rss_ingestion") {
+    if (!capability.intentRecognizable || capability.supported || capability.id === "rss_ingestion") {
       continue;
     }
     if (capability.aliases.some((alias) => containsAlias(context, alias))) {
@@ -776,6 +1193,23 @@ export function assessCapability(
   };
 }
 
+export function assessCapabilityVersion(
+  capabilityId: string,
+  capabilityVersion: number,
+  mode: ExecutionMode,
+): CapabilityAssessment {
+  const assessment = assessCapability(capabilityId, mode);
+  if (!getCapabilityVersion(capabilityId, capabilityVersion)) {
+    return {
+      ...assessment,
+      available: false,
+      status: "unsupported",
+      message: `Capability version ${capabilityVersion} is not supported.`,
+    };
+  }
+  return assessment;
+}
+
 export function assessWorkflowCapabilities(
   steps: CompiledWorkflow["steps"],
   mode: ExecutionMode,
@@ -824,17 +1258,23 @@ export function pinWorkflowExecutorSelections(workflow: CompiledWorkflow): Compi
   return {
     ...workflow,
     steps: workflow.steps.map((step) => {
-      if (step.executor) return step;
       const capabilityId = resolveStepCapabilityId(step);
       const capability = capabilityId ? getCapability(capabilityId) : null;
       if (!capability) return step;
-      const kind = capability.executorVersions[capability.defaultCapabilityVersion];
-      if (!kind) return step;
+      if (step.executor) {
+        const registered = getCapabilityVersion(capability.id, step.executor.capabilityVersion);
+        if (!registered || registered.executor !== step.executor.kind) {
+          throw new Error(`Unsupported executor selection for ${capability.id}@${step.executor.capabilityVersion}`);
+        }
+        return step;
+      }
+      const version = getCapabilityVersion(capability.id, capability.defaultCapabilityVersion);
+      if (!version) throw new Error(`Missing default capability version for ${capability.id}`);
       return {
         ...step,
         executor: {
-          kind,
-          capabilityVersion: capability.defaultCapabilityVersion,
+          kind: version.executor,
+          capabilityVersion: version.version,
         },
       };
     }),

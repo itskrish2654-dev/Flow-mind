@@ -1,4 +1,9 @@
 import type { CompiledWorkflow } from "@/lib/schemas/workflow";
+import {
+  assessCapability,
+  getCapability,
+  resolveStepCapabilityId,
+} from "@/lib/capability-registry";
 import { getStepInputs, orderWorkflowSteps, toPlainEnglish } from "@/lib/workflow-setup";
 
 type WorkflowStep = CompiledWorkflow["steps"][number];
@@ -109,6 +114,10 @@ export function getWorkflowReadiness({
 
   for (const step of steps) {
     let readyForTest = true;
+    const capabilityId = resolveStepCapabilityId(step);
+    const capability = capabilityId ? getCapability(capabilityId) : null;
+    const testAssessment = capability ? assessCapability(capability.id, "test") : null;
+    const liveAssessment = capability ? assessCapability(capability.id, "production") : null;
     const addAttention = (
       item: Omit<WorkflowAttentionItem, "key" | "stepId"> & { key: string },
     ) => {
@@ -116,23 +125,23 @@ export function getWorkflowReadiness({
       if (item.blocksTest) readyForTest = false;
     };
 
-    if (step.capabilityStatus === "unsupported") {
+    if (testAssessment ? !testAssessment.available : step.capabilityStatus === "unsupported") {
       addAttention({
         key: `${step.id}:unsupported`,
         title: `${toPlainEnglish(step.title)} is not available`,
         description:
-          step.capabilityMessage ??
+          testAssessment?.message ?? step.capabilityMessage ??
           "Remove or replace this step before testing the workflow.",
         actionLabel: "Review step",
         blocksTest: true,
         blocksActivation: true,
       });
-    } else if (step.capabilityStatus === "test_only") {
+    } else if (liveAssessment ? !liveAssessment.available : step.capabilityStatus === "test_only") {
       addAttention({
         key: `${step.id}:test-only`,
         title: `${toPlainEnglish(step.title)} is test-only`,
         description:
-          step.capabilityMessage ??
+          liveAssessment?.message ?? step.capabilityMessage ??
           "You can test this step, but it cannot run in an active workflow.",
         actionLabel: "Review step",
         blocksTest: false,
@@ -141,8 +150,13 @@ export function getWorkflowReadiness({
     }
 
     const connector = step.config?.connector;
-    if (connector && !connector.connectorId.startsWith("flowmind_")) {
+    if (
+      connector
+      && !connector.connectorId.startsWith("flowmind_")
+      && (capability?.connectionRequired ?? true)
+    ) {
       const name = connectorName(connector.connectorId);
+      const onboardingAvailable = capability?.onboarding.available ?? true;
       const provider = connector.connectorId.startsWith("google_")
         ? "google"
         : connector.connectorId as WorkflowConnectionReadiness["provider"];
@@ -152,22 +166,33 @@ export function getWorkflowReadiness({
         : null;
       if (!connector.connectionId) {
         const hasUsableAccount = providerConnections.some((connection) => connection.status === "connected");
+        const canConnect = hasUsableAccount || onboardingAvailable;
         addAttention({
           key: `${step.id}:connection`,
-          title: hasUsableAccount ? `Choose ${name} account` : `Connect ${name}`,
+          title: hasUsableAccount
+            ? `Choose ${name} account`
+            : onboardingAvailable
+              ? `Connect ${name}`
+              : `${name} connection onboarding is unavailable`,
           description: hasUsableAccount
             ? `${toPlainEnglish(step.title)} needs the exact ${name} account you want this step to use.`
-            : `${toPlainEnglish(step.title)} needs your ${name} account. Your workflow draft will stay here while you connect it.`,
-          actionLabel: hasUsableAccount ? `Choose ${name} account` : `Connect ${name}`,
+            : onboardingAvailable
+              ? `${toPlainEnglish(step.title)} needs your ${name} account. Your workflow draft will stay here while you connect it.`
+              : `${toPlainEnglish(step.title)} can use an existing authorized ${name} account, but CrazyLoops cannot connect a new one yet.`,
+          actionLabel: hasUsableAccount
+            ? `Choose ${name} account`
+            : canConnect
+              ? `Connect ${name}`
+              : "Review connection",
           blocksTest: true,
           blocksActivation: true,
         });
       } else if (connections && (!selectedConnection || selectedConnection.status !== "connected")) {
         addAttention({
           key: `${step.id}:connection`,
-          title: `Reconnect ${name}`,
+          title: onboardingAvailable ? `Reconnect ${name}` : `${name} connection needs attention`,
           description: `${toPlainEnglish(step.title)} is still bound to its saved ${name} account, but that connection needs attention.`,
-          actionLabel: `Reconnect ${name}`,
+          actionLabel: onboardingAvailable ? `Reconnect ${name}` : "Review connection",
           blocksTest: true,
           blocksActivation: true,
         });

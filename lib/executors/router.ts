@@ -1,6 +1,6 @@
 import "@/lib/server-only-runtime";
 
-import { getCapability } from "@/lib/capability-registry";
+import { resolveCapabilityImplementation } from "@/lib/capability-registry";
 import { ActivepiecesExecutor } from "@/lib/executors/activepieces";
 import { ConnectorRunnerExecutor } from "@/lib/executors/connector-runner";
 import {
@@ -17,12 +17,12 @@ export function resolveExecutorSelection(
   step: WorkflowStep,
   capabilityId: string,
 ): CapabilityExecutorSelection {
-  const capability = getCapability(capabilityId);
-  if (!capability) {
-    throw new DelegatedExecutionError("DELEGATED_EXECUTION_FAILED", false);
-  }
   const selection = step.executor ?? { kind: "native" as const, capabilityVersion: 1 };
-  if (capability.executorVersions[selection.capabilityVersion] !== selection.kind) {
+  const implementation = resolveCapabilityImplementation(
+    capabilityId,
+    selection.capabilityVersion,
+  );
+  if (!implementation || implementation.version.executor !== selection.kind) {
     throw new DelegatedExecutionError("DELEGATED_EXECUTION_FAILED", false);
   }
   return selection;

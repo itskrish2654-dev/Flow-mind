@@ -66,6 +66,7 @@ import { GoogleSpreadsheetPicker } from "@/components/google-spreadsheet-picker"
 import { AiCustomizationBar } from "@/components/ai-customization-bar";
 import { WorkflowJourneyPanel } from "@/components/workflow-journey-panel";
 import { getPublicFormPath, getPublicFormUrl } from "@/lib/public-form";
+import { getCapability, getConnectorOnboarding } from "@/lib/capability-registry";
 import { isSensitiveFieldName } from "@/lib/security/redaction";
 import type {
   CompiledWorkflow,
@@ -560,6 +561,10 @@ function Inspector({
   const selectedConnectorConnection = connectorConnections.find(
     (connection) => connection.id === step.config?.connector?.connectionId,
   );
+  const capability = step.capabilityId ? getCapability(step.capabilityId) : null;
+  const onboardingAvailable = capability?.onboarding.available
+    ?? getConnectorOnboarding(step.config?.connector?.connectorId ?? "")?.available
+    ?? false;
   return (
     <aside
       className={className}
@@ -653,7 +658,7 @@ function Inspector({
                       </option>
                     ))}
                   </select>
-                  {selectedConnectorConnection && selectedConnectorConnection.status !== "connected" && step.config.connector.connectorId !== "airtable" && (
+                  {selectedConnectorConnection && selectedConnectorConnection.status !== "connected" && step.config.connector.connectorId !== "airtable" && onboardingAvailable && (
                     <a
                       href={`/api/connectors/oauth/${step.config.connector.connectorId}/start?operation=${step.config.connector.operationKey}&connection=${selectedConnectorConnection.id}&return=${encodeURIComponent(workflowReturnPath)}`}
                       className="mt-2 flex min-h-10 items-center justify-center rounded-lg border border-amber-300 bg-white px-3 text-[10px] font-semibold text-amber-800 hover:bg-amber-50"
@@ -680,9 +685,9 @@ function Inspector({
                             ? "HubSpot"
                           : "Notion"} needs to be connected.
                   </p>
-                  {step.config.connector.connectorId === "hubspot" ? (
+                  {!onboardingAvailable ? (
                     <p className="mt-2 rounded-lg border border-[#e2dbd0] bg-white px-3 py-2.5 text-[9px] leading-4 text-slate-600">
-                      HubSpot connection onboarding is not available in this milestone. An existing authorized HubSpot connection can still be selected above.
+                      {capability?.providerFamily === "hubspot" ? "HubSpot" : capability?.displayName ?? "This capability"} connection onboarding is not available. {capability?.maturity === "TEST_ONLY" ? "This action is test-only. " : ""}An existing authorized account can still be selected above.
                     </p>
                   ) : (
                     <a
@@ -705,7 +710,7 @@ function Inspector({
                   <p role="alert" className="mt-2 text-[9px] text-rose-700">
                     {connectorConnectionMessage}
                   </p>
-                  {step.config.connector.connectorId !== "airtable" && (
+                  {step.config.connector.connectorId !== "airtable" && onboardingAvailable && (
                     <a
                       href={`/api/connectors/oauth/${step.config.connector.connectorId}/start?operation=${step.config.connector.operationKey}&connection=${pendingConnectionId ?? step.config.connector.connectionId ?? ""}&return=${encodeURIComponent(workflowReturnPath)}`}
                       className="mt-2 block text-[9px] font-semibold text-[#795700]"

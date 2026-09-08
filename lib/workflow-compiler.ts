@@ -1,4 +1,11 @@
-import { annotateWorkflowCapabilities, pinWorkflowExecutorSelections } from "@/lib/capability-registry";
+import {
+  annotateWorkflowCapabilities,
+  getCapability,
+  pinWorkflowExecutorSelections,
+  resolveCapabilityImplementation,
+  type CapabilityId,
+} from "@/lib/capability-registry";
+import { assertCapabilityRegistryValid } from "@/lib/capability-registry-validation";
 import { createPublicFormDefinition } from "@/lib/public-form";
 import { CompiledWorkflowSchema, type CompiledWorkflow } from "@/lib/schemas/workflow";
 import { createDefaultDataTableDefinition } from "@/lib/workflow-customization";
@@ -6,6 +13,9 @@ import type { PlannedCapability, WorkflowPlan } from "@/lib/workflow-planner";
 
 type Step = CompiledWorkflow["steps"][number];
 type Branch = NonNullable<NonNullable<Step["config"]>["branch"]>;
+type ConnectorConfig = NonNullable<NonNullable<Step["config"]>["connector"]>;
+
+assertCapabilityRegistryValid();
 
 function titleFromPrompt(prompt: string): string {
   const compact = prompt.replace(/\b(please|can you|i want to|i need to|build|create|make|automate)\b/gi, " ").replace(/\s+/g, " ").trim().replace(/[.!?]+$/, "");
@@ -50,6 +60,46 @@ function connectorConfig(connector: NonNullable<NonNullable<Step["config"]>["con
   return { connector, ...(branch ? { branch } : {}) };
 }
 
+function connectorForCapability(
+  capabilityId: CapabilityId,
+  configuration: Pick<ConnectorConfig, "mappings"> & Partial<Pick<ConnectorConfig, "settings">>,
+): ConnectorConfig {
+  const capability = getCapability(capabilityId);
+  const implementation = capability
+    ? resolveCapabilityImplementation(capabilityId, capability.defaultCapabilityVersion)
+    : null;
+  const operation = implementation?.version.connectorOperation;
+  if (!implementation || !operation || !capability?.availableInTest || !capability.plannerVisible) {
+    throw new Error(`Capability cannot be compiled: ${capabilityId}`);
+  }
+  return {
+    connectorId: operation.connectorId,
+    operationKind: operation.operationKind,
+    operationKey: operation.operationKey,
+    operationVersion: operation.operationVersion,
+    ...configuration,
+  };
+}
+
+function assertPlanCapabilities(plan: WorkflowPlan): void {
+  const capabilities = [
+    plan.trigger,
+    ...plan.transformations,
+    plan.destination,
+    plan.otherwiseDestination,
+    ...(plan.condition ? [{ capabilityId: plan.condition.capabilityId }] : []),
+  ].filter((capability): capability is NonNullable<typeof capability> => Boolean(capability));
+  for (const planned of capabilities) {
+    const capability = getCapability(planned.capabilityId);
+    if (!capability || !capability.plannerVisible || capability.internalOnly || !capability.availableInTest) {
+      throw new Error(`Capability cannot be compiled: ${planned.capabilityId}`);
+    }
+    if (!resolveCapabilityImplementation(capability.id, capability.defaultCapabilityVersion)) {
+      throw new Error(`Capability version cannot be compiled: ${capability.id}`);
+    }
+  }
+}
+
 function httpRequestStep(capability: PlannedCapability, id: string, branch?: Branch): Step {
   const http = capability.http;
   if (!http) throw new Error("HTTP request planning data is missing.");
@@ -78,7 +128,7 @@ function httpRequestStep(capability: PlannedCapability, id: string, branch?: Bra
       method: http.method,
       endpoint: http.url,
       ...(branch ? { branch } : {}),
-      connector: { connectorId: "flowmind_http", operationKind: "action", operationKey: "request", operationVersion: 2, mappings: [] },
+      connector: connectorForCapability("http.request", { mappings: [] }),
     },
   };
 }
@@ -98,18 +148,18 @@ function destinationStep(
     const operationInputs = operationKey === "find_row"
       ? [{ key: "matchColumn", label: "Exact-match column", type: "text" as const }, { key: "matchValue", label: "Value to find", type: "text" as const }]
       : operationKey === "update_row" ? [{ key: "rowNumber", label: "Exact row number", type: "text" as const }] : [];
-    return { id, type: "connector_action", capabilityId, title: destination.displayName, description: "Uses a Google spreadsheet explicitly selected through Google Picker.", inputsRequired: [{ key: "spreadsheetId", label: "Google spreadsheet", type: "text", helpText: "Choose a spreadsheet through Google Picker." }, { key: "worksheet", label: "Worksheet name", type: "text" }, ...operationInputs], config: connectorConfig({ connectorId: "google_sheets", operationKind: "action", operationKey, operationVersion: 1, mappings: [{ target: "spreadsheetId", source: { kind: "literal", value: "" } }, { target: "worksheet", source: { kind: "literal", value: "" } }, ...(["add_row", "update_row"].includes(operationKey) ? [{ target: "values", source: { kind: "trigger" as const, path: "" } }] : [])] }, branch) };
+    return { id, type: "connector_action", capabilityId, title: destination.displayName, description: "Uses a Google spreadsheet explicitly selected through Google Picker.", inputsRequired: [{ key: "spreadsheetId", label: "Google spreadsheet", type: "text", helpText: "Choose a spreadsheet through Google Picker." }, { key: "worksheet", label: "Worksheet name", type: "text" }, ...operationInputs], config: connectorConfig(connectorForCapability(capabilityId, { mappings: [{ target: "spreadsheetId", source: { kind: "literal", value: "" } }, { target: "worksheet", source: { kind: "literal", value: "" } }, ...(["add_row", "update_row"].includes(operationKey) ? [{ target: "values", source: { kind: "trigger" as const, path: "" } }] : [])] }), branch) };
   }
   if (capabilityId === "gmail_send_email" || capabilityId === "gmail_reply_to_email") {
     const reply = capabilityId === "gmail_reply_to_email";
     const aiStep = [...previousSteps].reverse().find((step) => step.type === "ai_transform");
-    return { id, type: "connector_action", capabilityId, title: destination.displayName, description: reply ? "Replies in the validated Gmail thread after acknowledgement." : "Sends through the selected Gmail account after acknowledgement.", inputsRequired: [...(!reply ? [{ key: "to", label: "Recipient", type: "text" as const }, { key: "subject", label: "Subject", type: "text" as const }] : []), { key: "body", label: reply ? "Reply" : "Email body", type: "text" as const }], config: connectorConfig({ connectorId: "google_gmail", operationKind: "action", operationKey: reply ? "reply_to_email" : "send_email", operationVersion: 1, mappings: [...(reply ? [{ target: "messageId", source: { kind: "trigger" as const, path: "message.id" } }, { target: "threadId", source: { kind: "trigger" as const, path: "message.threadId" } }] : []), ...(aiStep ? [{ target: "body", source: { kind: "ai" as const, stepId: aiStep.id } }] : [])] }, branch) };
+    return { id, type: "connector_action", capabilityId, title: destination.displayName, description: reply ? "Replies in the validated Gmail thread after acknowledgement." : "Sends through the selected Gmail account after acknowledgement.", inputsRequired: [...(!reply ? [{ key: "to", label: "Recipient", type: "text" as const }, { key: "subject", label: "Subject", type: "text" as const }] : []), { key: "body", label: reply ? "Reply" : "Email body", type: "text" as const }], config: connectorConfig(connectorForCapability(capabilityId, { mappings: [...(reply ? [{ target: "messageId", source: { kind: "trigger" as const, path: "message.id" } }, { target: "threadId", source: { kind: "trigger" as const, path: "message.threadId" } }] : []), ...(aiStep ? [{ target: "body", source: { kind: "ai" as const, stepId: aiStep.id } }] : [])] }), branch) };
   }
   if (capabilityId === "slack_send_channel_message" || capabilityId === "slack_reply_in_thread") {
     const reply = capabilityId === "slack_reply_in_thread";
     const aiStep = [...previousSteps].reverse().find((step) => step.type === "ai_transform");
     const triggerPath = previousSteps[0]?.type === "public_form_trigger" ? "details" : "message.text";
-    return { id, type: "connector_action", capabilityId, title: destination.displayName, description: reply ? "Replies in the selected Slack thread after Slack confirms receipt." : "Sends to the selected Slack channel after Slack confirms receipt.", inputsRequired: [{ key: "channel", label: "Slack channel", type: "text" }, ...(reply ? [{ key: "threadTs", label: "Slack thread", type: "text" as const }] : []), { key: "text", label: reply ? "Reply" : "Message", type: "text" }], config: connectorConfig({ connectorId: "slack", operationKind: "action", operationKey: reply ? "reply_in_thread" : "send_channel_message", operationVersion: 1, mappings: [...(reply ? [{ target: "threadTs", source: { kind: "trigger" as const, path: "message.threadTs" } }] : []), ...(aiStep ? [{ target: "text", source: { kind: "ai" as const, stepId: aiStep.id } }] : [{ target: "text", source: { kind: "trigger" as const, path: triggerPath } }])] }, branch) };
+    return { id, type: "connector_action", capabilityId, title: destination.displayName, description: reply ? "Replies in the selected Slack thread after Slack confirms receipt." : "Sends to the selected Slack channel after Slack confirms receipt.", inputsRequired: [{ key: "channel", label: "Slack channel", type: "text" }, ...(reply ? [{ key: "threadTs", label: "Slack thread", type: "text" as const }] : []), { key: "text", label: reply ? "Reply" : "Message", type: "text" }], config: connectorConfig(connectorForCapability(capabilityId, { mappings: [...(reply ? [{ target: "threadTs", source: { kind: "trigger" as const, path: "message.threadTs" } }] : []), ...(aiStep ? [{ target: "text", source: { kind: "ai" as const, stepId: aiStep.id } }] : [{ target: "text", source: { kind: "trigger" as const, path: triggerPath } }])] }), branch) };
   }
   if (capabilityId.startsWith("notion_")) {
     const operationKey = capabilityId.replace("notion_", "");
@@ -119,7 +169,7 @@ function destinationStep(
       ? [{ key: "parentPageId", label: "Notion parent page", type: "text" as const }, { key: "title", label: "Page title", type: "text" as const }, { key: "content", label: "Page content", type: "text" as const }]
       : operationKey === "create_data_source_item" ? [{ key: "dataSourceId", label: "Notion data source", type: "text" as const }]
       : [{ key: "dataSourceId", label: "Notion data source", type: "text" as const }, { key: "pageId", label: "Exact Notion item", type: "text" as const }];
-    return { id, type: "connector_action", capabilityId, title: destination.displayName, description: operationKey === "create_page" ? "Creates a page under the selected shared Notion page." : operationKey === "create_data_source_item" ? "Adds one item using the selected Notion data source." : "Updates one exact Notion item.", inputsRequired, config: connectorConfig({ connectorId: "notion", operationKind: "action", operationKey, operationVersion: 1, mappings: [...(operationKey === "create_data_source_item" ? [{ target: "values", source: { kind: "trigger" as const, path: "" } }] : []), ...(operationKey === "update_item" && findStep ? [{ target: "pageId", source: { kind: "step" as const, stepId: findStep.id, path: "page.id" } }] : []), ...(operationKey === "create_page" && aiStep ? [{ target: "content", source: { kind: "ai" as const, stepId: aiStep.id } }] : [])] }, branch) };
+    return { id, type: "connector_action", capabilityId, title: destination.displayName, description: operationKey === "create_page" ? "Creates a page under the selected shared Notion page." : operationKey === "create_data_source_item" ? "Adds one item using the selected Notion data source." : "Updates one exact Notion item.", inputsRequired, config: connectorConfig(connectorForCapability(capabilityId, { mappings: [...(operationKey === "create_data_source_item" ? [{ target: "values", source: { kind: "trigger" as const, path: "" } }] : []), ...(operationKey === "update_item" && findStep ? [{ target: "pageId", source: { kind: "step" as const, stepId: findStep.id, path: "page.id" } }] : []), ...(operationKey === "create_page" && aiStep ? [{ target: "content", source: { kind: "ai" as const, stepId: aiStep.id } }] : [])] }), branch) };
   }
   if (capabilityId === "airtable.create_record") {
     return {
@@ -133,13 +183,9 @@ function destinationStep(
         { key: "tableId", label: "Airtable Table ID", type: "text", helpText: "Starts with tbl and identifies the exact destination table." },
         { key: "fields", label: "Field mapping (JSON)", type: "text", helpText: 'Map Airtable field names to workflow value paths, for example {"Name":"name","Email":"email"}.' },
       ],
-      config: connectorConfig({
-        connectorId: "airtable",
-        operationKind: "action",
-        operationKey: "create_record",
-        operationVersion: 1,
+      config: connectorConfig(connectorForCapability("airtable.create_record", {
         mappings: [],
-      }, branch),
+      }), branch),
     };
   }
   if (capabilityId === "hubspot.get_contact") {
@@ -153,18 +199,14 @@ function destinationStep(
         { key: "contactId", label: "Contact ID", type: "text", helpText: "The exact HubSpot record ID for the contact." },
         { key: "properties", label: "Properties", type: "text", value: "firstname\nlastname\nemail", helpText: "One HubSpot property name per line, up to 25." },
       ],
-      config: connectorConfig({
-        connectorId: "hubspot",
-        operationKind: "action",
-        operationKey: "get_contact",
-        operationVersion: 1,
+      config: connectorConfig(connectorForCapability("hubspot.get_contact", {
         mappings: [],
-      }, branch),
+      }), branch),
     };
   }
   if (capabilityId === "generic_http_action") {
     const endpoint = prompt.match(/https:\/\/[^\s)\]]+/i)?.[0];
-    return { id, type: "http_request", capabilityId, title: "Send HTTP request", description: "Posts the workflow result as JSON and waits for acknowledgement.", config: { ...(endpoint ? { endpoint } : {}), method: "POST", ...(branch ? { branch } : {}), connector: { connectorId: "flowmind_http", operationKind: "action", operationKey: "post_json", operationVersion: 1, mappings: [{ target: "url", source: { kind: "literal", value: endpoint ?? "" } }, { target: "body", source: { kind: "trigger", path: "" } }] } } };
+    return { id, type: "http_request", capabilityId, title: "Send HTTP request", description: "Posts the workflow result as JSON and waits for acknowledgement.", config: { ...(endpoint ? { endpoint } : {}), method: "POST", ...(branch ? { branch } : {}), connector: connectorForCapability("generic_http_action", { mappings: [{ target: "url", source: { kind: "literal", value: endpoint ?? "" } }, { target: "body", source: { kind: "trigger", path: "" } }] }) } };
   }
   if (capabilityId === "generate_pdf") {
     return { id, type: "generate_pdf", capabilityId, title: "Generate PDF", description: "Creates and stores a downloadable PDF document.", config: { documentTemplate: defaultDocumentTemplate(workflowName, previousSteps.some((step) => step.type === "ai_transform")), ...(branch ? { branch } : {}) } };
@@ -172,12 +214,69 @@ function destinationStep(
   return { id, type: "store_data", capabilityId: "flowmind_data_store", title: "Store inside CrazyLoops", description: "Stores the submission and completed results in Activity.", ...(branch ? { config: { branch } } : {}) };
 }
 
+function triggerStep(plan: WorkflowPlan): Step {
+  if (!plan.trigger) throw new Error("Workflow trigger is missing.");
+  const trigger = plan.trigger;
+  if (trigger.capabilityId === "schedule.trigger") {
+    return {
+      id: "step_1",
+      type: "scheduled_trigger",
+      capabilityId: "schedule.trigger",
+      title: plan.schedule?.humanLabel ?? "Scheduled run",
+      description: `Runs ${plan.schedule?.humanLabel.toLowerCase() ?? "on the configured schedule"} in ${plan.schedule?.timezone ?? "the selected timezone"}.`,
+      config: { schedule: plan.schedule ?? undefined },
+    };
+  }
+
+  const connectorCapability = getCapability(trigger.capabilityId)?.connectorOperation;
+  const type: Step["type"] = trigger.capabilityId === "generic_webhook_trigger"
+    ? "webhook_trigger"
+    : connectorCapability || trigger.capabilityId === "manual_trigger"
+      ? "connector_trigger"
+      : "public_form_trigger";
+  const description = trigger.capabilityId.startsWith("gmail_")
+    ? "Starts from a new message resolved through Gmail history."
+    : trigger.capabilityId === "slack_new_channel_message"
+      ? `Starts from a new message in ${trigger.instruction ?? "the selected Slack channel"}.`
+      : trigger.capabilityId.startsWith("notion_page_")
+        ? "Starts from a verified Notion event."
+        : trigger.capabilityId === "manual_trigger"
+          ? "Starts when you explicitly run this workflow."
+          : trigger.capabilityId === "generic_webhook_trigger"
+            ? "Starts from an authenticated CrazyLoops webhook endpoint."
+            : "Starts when someone submits the hosted CrazyLoops form.";
+  const inputsRequired = trigger.capabilityId === "slack_new_channel_message"
+    ? [{ key: "channel", label: "Slack channel", type: "text" as const }]
+    : trigger.capabilityId.startsWith("notion_page_")
+      ? [{ key: "resourceId", label: "Notion page or data source", type: "text" as const }]
+      : undefined;
+  const settings = trigger.capabilityId.startsWith("gmail_") && trigger.instruction
+    ? { search: trigger.instruction }
+    : trigger.capabilityId === "slack_new_channel_message"
+      ? { ...(trigger.instruction ? { channelNameHint: trigger.instruction } : {}) }
+      : connectorCapability
+        ? {}
+        : undefined;
+  const connector = connectorCapability
+    ? connectorForCapability(trigger.capabilityId, { mappings: [], ...(settings ? { settings } : {}) })
+    : undefined;
+
+  return {
+    id: "step_1",
+    type,
+    capabilityId: trigger.capabilityId,
+    title: trigger.displayName,
+    description,
+    ...(inputsRequired ? { inputsRequired } : {}),
+    ...(connector ? { config: { connector } } : {}),
+  };
+}
+
 export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWorkflow {
   if (plan.status !== "READY_TO_COMPILE" || !plan.trigger || !plan.destination) throw new Error("Only READY_TO_COMPILE plans can become workflows.");
+  assertPlanCapabilities(plan);
   const workflowName = titleFromPrompt(prompt).slice(0, 80);
-  const trigger: Step = plan.trigger.capabilityId === "schedule.trigger"
-    ? { id: "step_1", type: "scheduled_trigger", capabilityId: "schedule.trigger", title: plan.schedule?.humanLabel ?? "Scheduled run", description: `Runs ${plan.schedule?.humanLabel.toLowerCase() ?? "on the configured schedule"} in ${plan.schedule?.timezone ?? "the selected timezone"}.`, config: { schedule: plan.schedule ?? undefined } }
-    : { id: "step_1", type: plan.trigger.capabilityId.startsWith("gmail_") || plan.trigger.capabilityId.startsWith("slack_") || plan.trigger.capabilityId.startsWith("notion_page_") || plan.trigger.capabilityId === "manual_trigger" ? "connector_trigger" : plan.trigger.capabilityId === "generic_webhook_trigger" ? "webhook_trigger" : "public_form_trigger", capabilityId: plan.trigger.capabilityId, title: plan.trigger.displayName, description: plan.trigger.capabilityId.startsWith("gmail_") ? "Starts from a new message resolved through Gmail history." : plan.trigger.capabilityId === "slack_new_channel_message" ? `Starts from a new message in ${plan.trigger.instruction ?? "the selected Slack channel"}.` : plan.trigger.capabilityId.startsWith("notion_page_") ? "Starts from a verified Notion event." : plan.trigger.capabilityId === "manual_trigger" ? "Starts when you explicitly run this workflow." : plan.trigger.capabilityId === "generic_webhook_trigger" ? "Starts from an authenticated CrazyLoops webhook endpoint." : "Starts when someone submits the hosted CrazyLoops form.", ...(plan.trigger.capabilityId === "slack_new_channel_message" ? { inputsRequired: [{ key: "channel", label: "Slack channel", type: "text" as const }] } : plan.trigger.capabilityId.startsWith("notion_page_") ? { inputsRequired: [{ key: "resourceId", label: "Notion page or data source", type: "text" as const }] } : {}), ...(plan.trigger.capabilityId.startsWith("gmail_") ? { config: { connector: { connectorId: "google_gmail", operationKind: "trigger" as const, operationKey: plan.trigger.capabilityId === "gmail_new_email_matching_search" ? "new_email_matching_search" : "new_email", operationVersion: 1, mappings: [], ...(plan.trigger.instruction ? { settings: { search: plan.trigger.instruction } } : {}) } } } : plan.trigger.capabilityId === "slack_new_channel_message" ? { config: { connector: { connectorId: "slack", operationKind: "trigger" as const, operationKey: "new_channel_message", operationVersion: 1, mappings: [], settings: { ...(plan.trigger.instruction ? { channelNameHint: plan.trigger.instruction } : {}) } } } } : plan.trigger.capabilityId.startsWith("notion_page_") ? { config: { connector: { connectorId: "notion", operationKind: "trigger" as const, operationKey: plan.trigger.capabilityId === "notion_page_created_or_added" ? "page_created_or_added" : "page_updated", operationVersion: 1, mappings: [], settings: {} } } } : plan.trigger.capabilityId === "generic_webhook_trigger" ? { config: { connector: { connectorId: "flowmind_webhook", operationKind: "trigger" as const, operationKey: "event_received", operationVersion: 1, mappings: [] } } } : {}) };
+  const trigger = triggerStep(plan);
 
   const steps: Step[] = [trigger];
   const latestFormatterStepByTriggerPath = new Map<string, string>();
@@ -201,7 +300,7 @@ export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWo
     steps.push(transformation.capabilityId === "formatter.transform" && formatter
       ? { id, type: "formatter_transform", capabilityId: "formatter.transform", title: formatterTitle(transformation), description: formatterDescription(transformation), config: { formatter } }
       : transformation.capabilityId === "notion_find_item"
-      ? { id, type: "connector_action", capabilityId: "notion_find_item", title: transformation.displayName, description: "Finds exactly one item in the selected Notion data source.", inputsRequired: [{ key: "dataSourceId", label: "Notion data source", type: "text" }, { key: "matchProperty", label: "Exact-match property", type: "text" }, { key: "matchValue", label: "Value to find", type: "text" }], config: { connector: { connectorId: "notion", operationKind: "action", operationKey: "find_item", operationVersion: 1, mappings: [] } } }
+      ? { id, type: "connector_action", capabilityId: "notion_find_item", title: transformation.displayName, description: "Finds exactly one item in the selected Notion data source.", inputsRequired: [{ key: "dataSourceId", label: "Notion data source", type: "text" }, { key: "matchProperty", label: "Exact-match property", type: "text" }, { key: "matchValue", label: "Value to find", type: "text" }], config: { connector: connectorForCapability("notion_find_item", { mappings: [] }) } }
       : { id, type: "ai_transform", capabilityId: "ai_text_transform", title: transformationTitle(transformation.instruction ?? "", steps.length - 1), description: transformation.instruction ?? "Transform the input.", config: { transformPrompt: transformation.instruction ?? "Transform the input accurately." } });
     if (transformation.formatter?.source.kind === "trigger" && transformation.formatter.source.path) {
       latestFormatterStepByTriggerPath.set(transformation.formatter.source.path, id);

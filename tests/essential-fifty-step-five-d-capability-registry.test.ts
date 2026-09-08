@@ -1,0 +1,282 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+import {
+  CAPABILITY_REGISTRY,
+  assessCapability,
+  assessCapabilityVersion,
+  getCapability,
+  getCapabilityVersion,
+  getConnectorCapability,
+  getConnectorOnboarding,
+  getCustomerVisibleCapabilities,
+  getPlannerVisibleCapabilities,
+  resolveStepCapabilityId,
+  resolveCapabilityImplementation,
+  type CapabilityDefinition,
+} from "../lib/capability-registry";
+import { validateCapabilityRegistry } from "../lib/capability-registry-validation";
+import { getConnectorOperation } from "../lib/connectors/registry";
+import { resolveExecutorSelection } from "../lib/executors/router";
+import type { CompiledWorkflow } from "../lib/schemas/workflow";
+import { compileReadyPlan } from "../lib/workflow-compiler";
+import { planWorkflow, type WorkflowPlan } from "../lib/workflow-planner";
+import { getWorkflowReadiness } from "../lib/workflow-readiness";
+
+function cloneCapability(capability: CapabilityDefinition): CapabilityDefinition {
+  return structuredClone(capability);
+}
+
+function replaceCapability(
+  capability: CapabilityDefinition,
+  replacement: CapabilityDefinition,
+): CapabilityDefinition[] {
+  return Object.values(CAPABILITY_REGISTRY).map((candidate) =>
+    candidate.id === capability.id ? replacement : candidate,
+  );
+}
+
+function compiledHubSpotWorkflow(): CompiledWorkflow {
+  const prompt = "When I run this workflow, get HubSpot contact 12345.";
+  const plan = planWorkflow(prompt);
+  assert.equal(plan.status, "READY_TO_COMPILE");
+  if (plan.status !== "READY_TO_COMPILE") throw new Error("HubSpot plan unavailable.");
+  return compileReadyPlan(prompt, plan);
+}
+
+test("5D-1 the current CrazyLoops capability registry validates deterministically", () => {
+  assert.deepEqual(validateCapabilityRegistry(), []);
+  assert.ok(Object.values(CAPABILITY_REGISTRY).every((capability) => capability.versions.length >= 1));
+  assert.ok(Object.values(CAPABILITY_REGISTRY).every((capability) =>
+    Boolean(getCapabilityVersion(capability.id, capability.defaultCapabilityVersion))));
+});
+
+test("5D-2 duplicate, missing-operation, executor, and version contradictions fail validation", () => {
+  const hubspot = cloneCapability(CAPABILITY_REGISTRY["hubspot.get_contact"]);
+  assert.match(
+    validateCapabilityRegistry([...Object.values(CAPABILITY_REGISTRY), hubspot]).join(" "),
+    /Duplicate capability ID/,
+  );
+
+  const missingOperation = cloneCapability(hubspot);
+  assert.ok(missingOperation.connectorOperation);
+  missingOperation.connectorOperation.operationKey = "missing_operation";
+  const missingVersionOperation = missingOperation.versions[0].connectorOperation;
+  assert.ok(missingVersionOperation);
+  missingVersionOperation.operationKey = "missing_operation";
+  assert.match(
+    validateCapabilityRegistry(replaceCapability(hubspot, missingOperation)).join(" "),
+    /Missing connector operation/,
+  );
+
+  const executorMismatch = cloneCapability(hubspot);
+  executorMismatch.versions = [{
+    ...executorMismatch.versions[0],
+    executor: "native",
+  }];
+  executorMismatch.executorVersions = { 1: "native" };
+  assert.match(
+    validateCapabilityRegistry(replaceCapability(hubspot, executorMismatch)).join(" "),
+    /Executor mismatch/,
+  );
+
+  const versionMismatch = cloneCapability(hubspot);
+  versionMismatch.defaultCapabilityVersion = 2;
+  assert.match(
+    validateCapabilityRegistry(replaceCapability(hubspot, versionMismatch)).join(" "),
+    /Default capability version is not registered/,
+  );
+});
+
+test("5D-2b invalid maturity, visibility, credentials, and onboarding fail closed", () => {
+  const airtable = cloneCapability(CAPABILITY_REGISTRY["airtable.create_record"]);
+  const invalidAvailable = { ...airtable, availableInProduction: false };
+  assert.match(
+    validateCapabilityRegistry(replaceCapability(airtable, invalidAvailable)).join(" "),
+    /AVAILABLE capability is not enabled/,
+  );
+
+  const internal = cloneCapability(CAPABILITY_REGISTRY["internal.connector_runner_canary"]);
+  const exposedInternal = { ...internal, customerVisible: true };
+  assert.match(
+    validateCapabilityRegistry(replaceCapability(internal, exposedInternal)).join(" "),
+    /Internal capability is customer visible/,
+  );
+
+  const missingCredentials = { ...airtable, credentialsRequired: false };
+  assert.match(
+    validateCapabilityRegistry(replaceCapability(airtable, missingCredentials)).join(" "),
+    /does not require credentials/,
+  );
+
+  const hubspot = cloneCapability(CAPABILITY_REGISTRY["hubspot.get_contact"]);
+  const invalidOnboarding = {
+    ...hubspot,
+    onboarding: { available: true, method: "api_key" as const },
+  };
+  assert.match(
+    validateCapabilityRegistry(replaceCapability(hubspot, invalidOnboarding)).join(" "),
+    /Invalid onboarding availability/,
+  );
+});
+
+test("5D-3 maturity and mode availability remain truthful", () => {
+  const hubspot = CAPABILITY_REGISTRY["hubspot.get_contact"];
+  const airtable = CAPABILITY_REGISTRY["airtable.create_record"];
+  assert.equal(hubspot.maturity, "TEST_ONLY");
+  assert.equal(assessCapability("hubspot.get_contact", "test").available, true);
+  assert.equal(assessCapability("hubspot.get_contact", "production").available, false);
+  assert.equal(airtable.maturity, "AVAILABLE");
+  assert.equal(assessCapability("airtable.create_record", "production").available, true);
+  assert.equal(CAPABILITY_REGISTRY["internal.connector_runner_canary"].internalOnly, true);
+  assert.equal(assessCapability("unknown.capability", "test").available, false);
+});
+
+test("5D-4 capability versions are exact and never fall forward", () => {
+  const implementation = resolveCapabilityImplementation("hubspot.get_contact", 1);
+  assert.equal(implementation?.version.executor, "connector_runner");
+  assert.equal(implementation?.version.connectorOperation?.operationKey, "get_contact");
+  assert.equal(resolveCapabilityImplementation("hubspot.get_contact", 2), null);
+  assert.equal(assessCapabilityVersion("hubspot.get_contact", 2, "test").available, false);
+  assert.match(assessCapabilityVersion("hubspot.get_contact", 2, "test").message ?? "", /version 2/i);
+});
+
+test("5D-5 customer, planner, builder, connection, and internal visibility are distinct", () => {
+  const plannerIds = getPlannerVisibleCapabilities().map(({ id }) => id);
+  const customerIds = getCustomerVisibleCapabilities().map(({ id }) => id);
+  assert.ok(plannerIds.includes("hubspot.get_contact"));
+  assert.ok(customerIds.includes("hubspot.get_contact"));
+  assert.equal(CAPABILITY_REGISTRY["hubspot.get_contact"].builderVisible, true);
+  assert.equal(CAPABILITY_REGISTRY["hubspot.get_contact"].connectionVisible, true);
+  assert.equal(CAPABILITY_REGISTRY["internal.connector_runner_canary"].customerVisible, false);
+  assert.equal(plannerIds.includes("internal.connector_runner_canary"), false);
+  assert.equal(customerIds.includes("internal.bridge_echo"), false);
+  assert.equal(CAPABILITY_REGISTRY.hubspot.plannerVisible, false);
+});
+
+test("5D-6 onboarding availability is separate from execution availability", () => {
+  assert.deepEqual(getConnectorOnboarding("hubspot"), { available: false, method: "oauth2" });
+  assert.deepEqual(getConnectorOnboarding("airtable"), { available: true, method: "api_key" });
+  assert.deepEqual(getConnectorOnboarding("slack"), { available: true, method: "oauth2" });
+  assert.deepEqual(getConnectorOnboarding("notion"), { available: true, method: "oauth2" });
+  assert.deepEqual(getConnectorOnboarding("google_gmail"), { available: true, method: "oauth2" });
+  assert.equal(CAPABILITY_REGISTRY["hubspot.get_contact"].availableInTest, true);
+  assert.equal(CAPABILITY_REGISTRY["hubspot.get_contact"].onboarding.available, false);
+});
+
+test("5D-7 connector operations and capability implementations resolve one exact authority chain", () => {
+  for (const capability of Object.values(CAPABILITY_REGISTRY)) {
+    const link = capability.connectorOperation;
+    if (!link) continue;
+    const operation = getConnectorOperation(
+      link.connectorId,
+      link.operationKind,
+      link.operationKey,
+      link.operationVersion,
+    );
+    assert.ok(operation, capability.id);
+    assert.equal(operation.operation.executor ?? "native", capability.versions[0].executor, capability.id);
+    assert.equal(operation.operation.testMode, capability.availableInTest, capability.id);
+    assert.equal(operation.operation.production, capability.availableInProduction, capability.id);
+    assert.equal(operation.operation.connectionRequired, capability.connectionRequired, capability.id);
+    assert.deepEqual(new Set(operation.operation.requiredScopes), new Set(capability.requiredScopes), capability.id);
+    assert.equal(
+      getConnectorCapability(link.connectorId, link.operationKind, link.operationKey, link.operationVersion)?.id,
+      capability.id,
+    );
+  }
+});
+
+test("5D-8 planner and compiler admit only registry-visible capabilities and derive implementation pins", () => {
+  const workflow = compiledHubSpotWorkflow();
+  const step = workflow.steps.find(({ capabilityId }) => capabilityId === "hubspot.get_contact");
+  const capability = getCapability("hubspot.get_contact");
+  assert.ok(step?.config?.connector);
+  assert.ok(capability?.connectorOperation);
+  assert.deepEqual(step.config.connector, {
+    connectorId: capability.connectorOperation.connectorId,
+    operationKind: capability.connectorOperation.operationKind,
+    operationKey: capability.connectorOperation.operationKey,
+    operationVersion: capability.connectorOperation.operationVersion,
+    mappings: [],
+  });
+  assert.deepEqual(step.executor, { kind: "connector_runner", capabilityVersion: 1 });
+  assert.deepEqual(resolveExecutorSelection(step, "hubspot.get_contact"), step.executor);
+
+  for (const prompt of [
+    "When I run this workflow, create a HubSpot contact.",
+    "When I run this workflow, update a HubSpot contact.",
+    "When I run this workflow, delete a HubSpot contact.",
+    "When I run this workflow, search arbitrary HubSpot objects.",
+  ]) {
+    assert.equal(planWorkflow(prompt).status, "UNSUPPORTED", prompt);
+  }
+
+  const unsafePlan = {
+    ...planWorkflow("When I run this workflow, get HubSpot contact 12345."),
+    status: "READY_TO_COMPILE",
+    destination: { capabilityId: "hubspot", displayName: "HubSpot" },
+  } as WorkflowPlan;
+  assert.throws(() => compileReadyPlan("Unsafe plan", unsafePlan), /cannot be compiled/);
+});
+
+test("5D-9 readiness uses registry TEST, LIVE, connection, and onboarding truth", () => {
+  const workflow = compiledHubSpotWorkflow();
+  const step = workflow.steps.find(({ capabilityId }) => capabilityId === "hubspot.get_contact");
+  assert.ok(step?.config?.connector);
+  const values = {
+    [`${step.id}-contactId`]: "12345",
+    [`${step.id}-properties`]: "firstname",
+  };
+  const missing = getWorkflowReadiness({
+    workflow,
+    workflowId: "30000000-0000-4000-8000-000000000003",
+    values,
+    configuredCredentialKeys: new Set(),
+    connections: [],
+  });
+  assert.equal(missing.testReady, false);
+  assert.equal(missing.activationReady, false);
+  assert.ok(missing.attention.some(({ title, actionLabel }) =>
+    /onboarding is unavailable/i.test(title) && actionLabel === "Review connection"));
+
+  const connectionId = "60000000-0000-4000-8000-000000000006";
+  step.config.connector.connectionId = connectionId;
+  const connected = getWorkflowReadiness({
+    workflow,
+    workflowId: "30000000-0000-4000-8000-000000000003",
+    values,
+    configuredCredentialKeys: new Set(),
+    connections: [{ id: connectionId, provider: "hubspot", status: "connected" }],
+  });
+  assert.equal(connected.testReady, true);
+  assert.equal(connected.activationReady, false);
+  assert.ok(connected.attention.some(({ blocksTest, blocksActivation }) => !blocksTest && blocksActivation));
+});
+
+test("5D-10 product UI reads registry maturity and onboarding without exposing secrets", async () => {
+  const [workspace, connections, registry] = await Promise.all([
+    readFile("components/automation-workspace.tsx", "utf8"),
+    readFile("components/connections-list.tsx", "utf8"),
+    readFile("lib/capability-registry.ts", "utf8"),
+  ]);
+  assert.match(workspace, /capability\?\.onboarding\.available/);
+  assert.match(workspace, /capability\?\.maturity === "TEST_ONLY"/);
+  assert.match(connections, /getConnectorOnboarding\(provider\)\?\.available/);
+  assert.doesNotMatch(registry, /client_secret|access_token|refresh_token|credentialCapsule|CONNECTOR_RUNNER_SECRET/);
+});
+
+test("5D-11 legacy unsupported steps remain detectable when hidden from customer surfaces", () => {
+  const legacyStep: CompiledWorkflow["steps"][number] = {
+    id: "legacy-salesforce",
+    type: "http_request",
+    title: "Send to Salesforce",
+    description: "Post a record to Salesforce.",
+    config: { endpoint: "https://1.1.1.1/test", method: "POST" },
+  };
+
+  assert.equal(CAPABILITY_REGISTRY.salesforce.plannerVisible, false);
+  assert.equal(CAPABILITY_REGISTRY.salesforce.intentRecognizable, true);
+  assert.equal(resolveStepCapabilityId(legacyStep), "salesforce");
+});
