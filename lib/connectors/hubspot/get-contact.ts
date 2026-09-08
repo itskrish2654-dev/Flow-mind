@@ -5,7 +5,6 @@ import type { DelegatedErrorCategory } from "@/lib/executors/types";
 const MAX_CONTACT_ID_LENGTH = 100;
 const MAX_PROPERTY_COUNT = 25;
 const MAX_PROPERTY_NAME_LENGTH = 100;
-const MAX_OUTPUT_PROPERTY_COUNT = 100;
 const MAX_OUTPUT_TEXT_LENGTH = 10_000;
 const CONTACT_ID = /^[A-Za-z0-9_-]+$/;
 const PROPERTY_NAME = /^[A-Za-z0-9_]+$/;
@@ -24,7 +23,7 @@ const HubSpotPropertySchema = z.string()
 
 const HubSpotGetContactInputSchema = z.object({
   contactId: HubSpotContactIdSchema,
-  properties: z.array(HubSpotPropertySchema).max(MAX_PROPERTY_COUNT),
+  properties: z.array(HubSpotPropertySchema).min(1).max(MAX_PROPERTY_COUNT),
 }).strict().transform((value) => ({
   contactId: value.contactId,
   properties: [...new Set(value.properties)],
@@ -36,7 +35,7 @@ const HubSpotGetContactOutputSchema = z.object({
     HubSpotPropertySchema,
     z.string().max(MAX_OUTPUT_TEXT_LENGTH).nullable(),
   ).refine(
-    (value) => Object.keys(value).length <= MAX_OUTPUT_PROPERTY_COUNT,
+    (value) => Object.keys(value).length <= MAX_PROPERTY_COUNT,
     "HubSpot returned too many contact properties.",
   ),
   createdAt: z.string().min(1).max(100).optional(),
@@ -45,6 +44,7 @@ const HubSpotGetContactOutputSchema = z.object({
 }).strict();
 
 export type HubSpotGetContactOutput = z.infer<typeof HubSpotGetContactOutputSchema>;
+export type HubSpotGetContactInput = z.infer<typeof HubSpotGetContactInputSchema>;
 
 function parseProperties(value: string | readonly string[]): string[] {
   const entries = (typeof value === "string" ? value.split(/[\n,]/) : value)
@@ -53,7 +53,7 @@ function parseProperties(value: string | readonly string[]): string[] {
   if (entries.length > MAX_PROPERTY_COUNT) {
     throw new Error(`Choose no more than ${MAX_PROPERTY_COUNT} HubSpot properties.`);
   }
-  const properties = z.array(HubSpotPropertySchema).max(MAX_PROPERTY_COUNT).parse(entries);
+  const properties = z.array(HubSpotPropertySchema).min(1).max(MAX_PROPERTY_COUNT).parse(entries);
   return [...new Set(properties)];
 }
 
@@ -75,6 +75,22 @@ export function parseHubSpotGetContactInput(value: unknown): {
 
 export function parseHubSpotGetContactOutput(value: unknown): HubSpotGetContactOutput {
   return HubSpotGetContactOutputSchema.parse(value);
+}
+
+export function validateHubSpotGetContactOutputForInput(
+  rawOutput: unknown,
+  authoritativeInput: unknown,
+): HubSpotGetContactOutput {
+  const input = parseHubSpotGetContactInput(authoritativeInput);
+  const output = parseHubSpotGetContactOutput(rawOutput);
+  if (output.contactId !== input.contactId) {
+    throw new Error("HubSpot returned a different contact than requested.");
+  }
+  const requestedProperties = new Set(input.properties);
+  if (Object.keys(output.properties).some((property) => !requestedProperties.has(property))) {
+    throw new Error("HubSpot returned a property that was not requested.");
+  }
+  return output;
 }
 
 export function hubSpotDelegatedErrorMessage(category: DelegatedErrorCategory): string {

@@ -16,7 +16,7 @@ import { buildAirtableCreateRecordInput, isValidAirtableRecordId } from "@/lib/c
 import {
   buildHubSpotGetContactInput,
   hubSpotDelegatedErrorMessage,
-  parseHubSpotGetContactOutput,
+  validateHubSpotGetContactOutputForInput,
 } from "@/lib/connectors/hubspot/get-contact";
 import { executeFormatter, FormatterError, type FormatterSource } from "@/lib/formatter";
 import {
@@ -598,7 +598,10 @@ export async function executeWorkflowSteps({
       let delegatedOutput = result.output;
       if (capabilityId === "hubspot.get_contact") {
         try {
-          delegatedOutput = parseHubSpotGetContactOutput(result.output);
+          delegatedOutput = validateHubSpotGetContactOutputForInput(
+            result.output,
+            delegatedInput,
+          );
         } catch {
           const normalized = new DelegatedExecutionError("DELEGATED_BAD_RESPONSE", false);
           await fail(

@@ -3,7 +3,7 @@ import "@/lib/server-only-runtime";
 import { getCapability } from "@/lib/capability-registry";
 import {
   parseHubSpotGetContactInput,
-  parseHubSpotGetContactOutput,
+  validateHubSpotGetContactOutputForInput,
 } from "@/lib/connectors/hubspot/get-contact";
 
 import {
@@ -142,6 +142,7 @@ function validateRunnerResponse(
   value: unknown,
   requestId: string,
   capabilityId: string,
+  authoritativeInput: unknown,
 ): CapabilityExecutionResult {
   if (
     !isRecord(value) ||
@@ -161,7 +162,10 @@ function validateRunnerResponse(
     let output = value.output;
     if (capabilityId === "hubspot.get_contact") {
       try {
-        output = parseHubSpotGetContactOutput(value.output);
+        output = validateHubSpotGetContactOutputForInput(
+          value.output,
+          authoritativeInput,
+        );
       } catch {
         throw new DelegatedExecutionError("DELEGATED_BAD_RESPONSE", false);
       }
@@ -414,6 +418,7 @@ export class ConnectorRunnerExecutor implements CapabilityExecutor {
             parsed,
             request.envelope.requestId,
             request.envelope.capabilityId,
+            authoritativeInput,
           );
         } catch (error) {
           if (!response.ok && error instanceof DelegatedExecutionError) {

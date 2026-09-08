@@ -10,6 +10,7 @@ import {
 import {
   buildHubSpotGetContactInput,
   parseHubSpotGetContactOutput,
+  validateHubSpotGetContactOutputForInput,
 } from "../lib/connectors/hubspot/get-contact";
 import { getConnector, getConnectorOperation } from "../lib/connectors/registry";
 import {
@@ -183,10 +184,141 @@ test("5C-3 input and output are exact, bounded, and provider URLs are not accept
     properties: "firstname\nlastname,email\nemail",
   }), { contactId: "12345", properties: ["firstname", "lastname", "email"] });
   assert.throws(() => buildHubSpotGetContactInput({ contactId: "https://api.hubapi.com/contact/1", properties: [] }));
+  assert.throws(() => buildHubSpotGetContactInput({ contactId: "12345", properties: [] }));
   assert.throws(() => buildHubSpotGetContactInput({ contactId: "123", properties: Array.from({ length: 26 }, (_, index) => `property_${index}`) }));
   assert.throws(() => buildHubSpotGetContactInput({ contactId: "123", properties: ["x".repeat(101)] }));
   assert.throws(() => parseHubSpotGetContactOutput({ contactId: "123", properties: {}, archived: false, accessToken: TOKEN }));
   assert.throws(() => parseHubSpotGetContactOutput({ contactId: "123", properties: { notes: "x".repeat(10_001) }, archived: false }));
+});
+
+test("5C-3a empty HubSpot property input fails before credential or Runner access", async () => {
+  let credentialReads = 0;
+  let runnerCalls = 0;
+  const result = await new ConnectorRunnerExecutor({
+    resolveCredential: async () => {
+      credentialReads += 1;
+      return Buffer.from(TOKEN);
+    },
+    captureTelemetry: async () => undefined,
+    fetchImplementation: async () => {
+      runnerCalls += 1;
+      return new Response();
+    },
+  }).execute(runnerRequest({ input: { contactId: "12345", properties: [] } }));
+  assert.deepEqual(result, {
+    ok: false,
+    errorCategory: "DELEGATED_EXECUTION_FAILED",
+    retryable: false,
+  });
+  assert.equal(credentialReads, 0);
+  assert.equal(runnerCalls, 0);
+});
+
+test("5C-3b Runner success is bound to the authorized contact and property set", async () => {
+  for (const [label, output] of [
+    ["wrong-contact", { contactId: "99999", properties: { firstname: "Ada" }, archived: false }],
+    ["extra-property", { contactId: "12345", properties: { firstname: "Ada", email: "ada@example.test" }, archived: false }],
+  ] as const) {
+    await withRunnerEnvironment(async () => {
+      let calls = 0;
+      const request = runnerRequest({ input: { contactId: "12345", properties: ["firstname"] } });
+      const result = await new ConnectorRunnerExecutor({
+        resolveCredential: async () => Buffer.from(TOKEN),
+        captureTelemetry: async () => undefined,
+        now: () => FIXED_NOW,
+        fetchImplementation: async () => {
+          calls += 1;
+          return successResponse(request.envelope.requestId, { output });
+        },
+      }).execute(request);
+      assert.equal(calls, 1, label);
+      assert.deepEqual(result, {
+        ok: false,
+        errorCategory: "DELEGATED_BAD_RESPONSE",
+        retryable: false,
+      }, label);
+      assert.doesNotMatch(JSON.stringify(result), /ada@example\.test/, label);
+    });
+  }
+});
+
+test("5C-3c requested HubSpot property subsets and exact sets are accepted", async () => {
+  const authoritativeInput = {
+    contactId: "12345",
+    properties: ["firstname", "lastname", "email"],
+  };
+  assert.deepEqual(
+    validateHubSpotGetContactOutputForInput(
+      { contactId: "12345", properties: { firstname: "Ada" }, archived: false },
+      authoritativeInput,
+    ),
+    { contactId: "12345", properties: { firstname: "Ada" }, archived: false },
+  );
+  assert.deepEqual(
+    validateHubSpotGetContactOutputForInput(
+      {
+        contactId: "12345",
+        properties: { firstname: "Ada", lastname: "Lovelace", email: "ada@example.test" },
+        archived: false,
+      },
+      authoritativeInput,
+    ),
+    {
+      contactId: "12345",
+      properties: { firstname: "Ada", lastname: "Lovelace", email: "ada@example.test" },
+      archived: false,
+    },
+  );
+});
+
+test("5C-3d workflow persistence rejects delegated output outside authorized input", async () => {
+  const { workflow, step } = compiledHubSpotWorkflow();
+  for (const [label, output] of [
+    ["wrong-contact", { contactId: "99999", properties: { firstname: "Ada" }, archived: false }],
+    ["extra-property", { contactId: "12345", properties: { firstname: "Ada", email: "ada@example.test" }, archived: false }],
+  ] as const) {
+    let calls = 0;
+    let finishedStatus: string | undefined;
+    let finishedError: unknown;
+    const result = await executeWorkflowSteps({
+      userId: USER_A,
+      workflowOwnerId: USER_A,
+      workflowId: WORKFLOW_ID,
+      workflowVersionId: VERSION_ID,
+      telemetryExecutionId: EXECUTION_ID,
+      workflowName: workflow.workflowName,
+      steps: workflow.steps.map((item) => item.id === step.id ? step : item),
+      inputValues: {
+        [`${step.id}-contactId`]: "12345",
+        [`${step.id}-properties`]: "firstname",
+      },
+      mode: "test",
+      delegatedExecutor: {
+        kind: "connector_runner",
+        async execute() {
+          calls += 1;
+          return { ok: true, acknowledged: true, output };
+        },
+      },
+      stateHooks: {
+        async onStepFinish(finishedStep, state) {
+          if (finishedStep.id === step.id) {
+            finishedStatus = state.status;
+            finishedError = state.error;
+          }
+        },
+      },
+    });
+    assert.equal(calls, 1, label);
+    assert.equal(result.ok, false, label);
+    assert.equal(result.delivered, false, label);
+    assert.equal(finishedStatus, "failed", label);
+    assert.equal(finishedError instanceof DelegatedExecutionError, true, label);
+    assert.equal((finishedError as DelegatedExecutionError).category, "DELEGATED_BAD_RESPONSE", label);
+    assert.equal(Object.hasOwn(result.outputData.connector_results, step.id), false, label);
+    assert.equal(result.outputData.steps.find((item) => item.stepId === step.id)?.status, "failed", label);
+    assert.doesNotMatch(JSON.stringify(result), /ada@example\.test/, label);
+  }
 });
 
 test("5C-4 owned HubSpot connection resolves only its existing vault credential", async () => {
