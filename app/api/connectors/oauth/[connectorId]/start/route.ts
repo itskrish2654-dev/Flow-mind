@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getConnectorOnboarding } from "@/lib/capability-registry";
 import { buildAuthorizationUrl } from "@/lib/connectors/oauth-exchange";
 import { createOAuthAuthorization, oauthReturnWorkflowId, safeOAuthReturnPath, withOAuthResult } from "@/lib/connectors/oauth";
 import { getConnector } from "@/lib/connectors/registry";
@@ -13,7 +14,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ conn
   const { connectorId } = await params; const supabase = await createClient(); const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.redirect(getSiteUrl("/login?next=/connections", new URL(request.url).origin));
   const connector = getConnector(connectorId);
-  if (!connector || connector.manifest.auth.type !== "oauth2" || connector.manifest.status === "COMING_SOON" || (connector.manifest.status === "INTERNAL" && process.env.NODE_ENV === "production")) return NextResponse.json({ error: "Connector not found." }, { status: 404 });
+  if (!connector || !getConnectorOnboarding(connectorId)?.available || connector.manifest.auth.type !== "oauth2" || connector.manifest.status === "COMING_SOON" || (connector.manifest.status === "INTERNAL" && process.env.NODE_ENV === "production")) return NextResponse.json({ error: "Connector not found." }, { status: 404 });
   const requestUrl = new URL(request.url);
   let returnPath = "/connections";
   try {

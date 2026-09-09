@@ -18,21 +18,21 @@ const USER_B = "20000000-0000-4000-8000-000000000002";
 const CONNECTION_ID = "30000000-0000-4000-8000-000000000003";
 const SECRET = "delegated-secret-value-that-must-never-be-logged";
 
-function connectedSlackConnection(overrides: Record<string, unknown> = {}) {
+function connectedHubSpotConnection(overrides: Record<string, unknown> = {}) {
   return {
     id: CONNECTION_ID,
     user_id: USER_A,
-    connector_id: "slack",
-    provider_family: "slack",
+    connector_id: "hubspot",
+    provider_family: "hubspot",
     auth_type: "oauth2" as const,
     status: "connected" as const,
-    granted_scopes: ["channels:read", "chat:write"],
+    granted_scopes: ["crm.objects.contacts.read"],
     ...overrides,
   };
 }
 
 function resolverFixture(options: {
-  connection?: ReturnType<typeof connectedSlackConnection> | null;
+  connection?: ReturnType<typeof connectedHubSpotConnection> | null;
   readCredential?: DelegatedCredentialResolverDependencies["readCredential"];
 } = {}) {
   const calls = {
@@ -42,7 +42,7 @@ function resolverFixture(options: {
   const dependencies: DelegatedCredentialResolverDependencies = {
     async loadOwnedConnection(input) {
       calls.loads.push(input);
-      return options.connection === undefined ? connectedSlackConnection() : options.connection;
+      return options.connection === undefined ? connectedHubSpotConnection() : options.connection;
     },
     async readCredential(input) {
       calls.reads.push(input);
@@ -58,8 +58,8 @@ function validInput(overrides: Record<string, unknown> = {}) {
     authenticatedUserId: USER_A,
     workflowOwnerId: USER_A,
     connectionId: CONNECTION_ID,
-    connectorId: "slack",
-    capabilityId: "slack_send_channel_message",
+    connectorId: "hubspot",
+    capabilityId: "hubspot.get_contact",
     ...overrides,
   };
 }
@@ -96,7 +96,7 @@ test("D1 cross-user workflow ownership is rejected before database access", asyn
 });
 
 test("D1 revoked connection is rejected before vault access", async () => {
-  const fixture = resolverFixture({ connection: connectedSlackConnection({ status: "revoked" }) });
+  const fixture = resolverFixture({ connection: connectedHubSpotConnection({ status: "revoked" }) });
   await rejectsWithCategory(
     fixture.resolve(validInput()),
     "DELEGATED_CREDENTIAL_CONNECTION_UNAVAILABLE",
@@ -112,7 +112,7 @@ test("D1 connector and provider mismatches fail closed", async () => {
   );
   assert.equal(wrongRequest.calls.loads.length, 0);
 
-  const wrongRecord = resolverFixture({ connection: connectedSlackConnection({ provider_family: "notion" }) });
+  const wrongRecord = resolverFixture({ connection: connectedHubSpotConnection({ provider_family: "notion" }) });
   await rejectsWithCategory(
     wrongRecord.resolve(validInput()),
     "DELEGATED_CREDENTIAL_CONNECTOR_MISMATCH",
@@ -132,7 +132,7 @@ test("D1 missing or wrongly typed vault credentials are rejected", async () => {
 
 test("D1 insufficient scopes are rejected before vault access", async () => {
   const fixture = resolverFixture({
-    connection: connectedSlackConnection({ granted_scopes: ["channels:read"] }),
+    connection: connectedHubSpotConnection({ granted_scopes: [] }),
   });
   await rejectsWithCategory(
     fixture.resolve(validInput()),
@@ -324,7 +324,7 @@ test("D1 revocation removes delegated authorization immediately", async () => {
   status = "revoked";
   secretPresent = false;
   const revoked = resolverFixture({
-    connection: connectedSlackConnection({ status }),
+    connection: connectedHubSpotConnection({ status }),
     readCredential: async () => { throw new Error("deleted"); },
   });
   await rejectsWithCategory(

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getConnectorOnboarding } from "@/lib/capability-registry";
 import { storeConnectionSecret } from "@/lib/connectors/connection-vault";
 import { consumeOAuthState, withOAuthResult } from "@/lib/connectors/oauth";
 import { exchangeAuthorizationCode } from "@/lib/connectors/oauth-exchange";
@@ -14,7 +15,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ conn
   const { connectorId } = await params; const supabase = await createClient(); const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.redirect(getSiteUrl("/login?next=/connections", new URL(request.url).origin));
   const url = new URL(request.url); const code = url.searchParams.get("code"); const state = url.searchParams.get("state"); const providerError = url.searchParams.get("error"); const oauthCancelled = providerError === "access_denied" || providerError === "user_cancelled"; const connector = getConnector(connectorId);
-  if (!state || !connector || connector.manifest.auth.type !== "oauth2" || (connector.manifest.status === "INTERNAL" && process.env.NODE_ENV === "production")) return NextResponse.redirect(getSiteUrl("/connections?error=invalid_callback", url.origin));
+  if (!state || !connector || !getConnectorOnboarding(connectorId)?.available || connector.manifest.auth.type !== "oauth2" || (connector.manifest.status === "INTERNAL" && process.env.NODE_ENV === "production")) return NextResponse.redirect(getSiteUrl("/connections?error=invalid_callback", url.origin));
   let returnPath = "/connections";
   try {
     const oauth = await consumeOAuthState({ userId: user.id, connectorId, state });

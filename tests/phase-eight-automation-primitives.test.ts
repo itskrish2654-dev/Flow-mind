@@ -117,7 +117,7 @@ test("8B-4. numeric branch execution is deterministic", async () => {
 });
 
 test("8B-5. AI classification compiles before condition and retry can reuse its decision", async () => {
-  const plan = planWorkflow("Use a hosted form. If this looks like a sales lead, notify Slack. Otherwise save it.");
+  const plan = planWorkflow("Use a hosted form. If this looks like a sales lead, store it as a sales lead in CrazyLoops. Otherwise save it in CrazyLoops.");
   assert.equal(plan.status, "READY_TO_COMPILE");
   if (plan.status !== "READY_TO_COMPILE") return;
   const workflow = compileReadyPlan(plan.intent, plan);

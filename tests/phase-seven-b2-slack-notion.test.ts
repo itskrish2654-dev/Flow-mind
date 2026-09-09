@@ -9,7 +9,6 @@ import { getSlackUrlVerificationChallenge, normalizeSlackMessage, verifySlackReq
 import { SLACK_SCOPES, slackScopesForOperation } from "../lib/connectors/slack/scopes";
 import { encodeNotionProperty, mapNotionProperties, notionExactMatchFilter } from "../lib/connectors/notion/properties";
 import { getInitialNotionVerificationToken, verifyNotionWebhook } from "../lib/connectors/notion/webhooks";
-import { compileReadyPlan } from "../lib/workflow-compiler";
 import { planWorkflow } from "../lib/workflow-planner";
 
 test("7B2-1. Slack and Notion are truthful beta manifests with only accepted initial operations", () => {
@@ -137,17 +136,17 @@ test("7B2-13. webhook ingress persists durable deduplicated receipts before disp
   for (const source of [slack, notion]) { assert.match(source, /provider_event_key/); assert.match(source, /23505/); assert.match(source, /connection_id/); }
 });
 
-test("7B2-14. planner composes Slack to AI to Notion and other required connector paths", () => {
+test("7B2-14. reviewed Slack and Notion operations remain unavailable to the product planner", () => {
   const cases = [
-    ["When someone posts in #sales, summarize it and save it to Notion.", ["slack_new_channel_message", "ai_text_transform", "notion_create_data_source_item"]],
-    ["When a new message is posted in Slack, summarize the message with AI and create a new page in Notion.", ["slack_new_channel_message", "ai_text_transform", "notion_create_page"]],
-    ["When a Notion page is updated, send a message to Slack.", ["notion_page_updated", "slack_send_channel_message"]],
-    ["When a public form is submitted, add it to Notion.", ["public_form_submission", "notion_create_data_source_item"]],
-    ["When an incoming webhook arrives, summarize it and send to Slack.", ["generic_webhook_trigger", "ai_text_transform", "slack_send_channel_message"]],
-    ["When I run this manually, send a message to Slack.", ["manual_trigger", "slack_send_channel_message"]],
-    ["When I run this manually, find a Notion item and update it.", ["manual_trigger", "notion_find_item", "notion_update_item"]],
+    "When someone posts in #sales, summarize it and save it to Notion.",
+    "When a new message is posted in Slack, summarize the message with AI and create a new page in Notion.",
+    "When a Notion page is updated, send a message to Slack.",
+    "When a public form is submitted, add it to Notion.",
+    "When an incoming webhook arrives, summarize it and send to Slack.",
+    "When I run this manually, send a message to Slack.",
+    "When I run this manually, find a Notion item and update it.",
   ] as const;
-  for (const [prompt, expected] of cases) { const plan = planWorkflow(prompt); assert.equal(plan.status, "READY_TO_COMPILE", prompt); if (plan.status === "READY_TO_COMPILE") assert.deepEqual(compileReadyPlan(prompt, plan).steps.map((step) => step.capabilityId), expected); }
+  for (const prompt of cases) assert.equal(planWorkflow(prompt).status, "UNSUPPORTED", prompt);
 });
 
 test("7B2-15. exact connection ownership and secret boundaries are enforced server-side", async () => {

@@ -472,6 +472,33 @@ export function planWorkflow(prompt: string): WorkflowPlan {
           : "google_sheets_add_row",
     );
   }
+  if (asksForSlack) {
+    unavailableRequestedCapabilityIds.push(
+      /\b(reply)\b[^.]{0,30}\bthread\b|\bthread\b[^.]{0,30}\breply\b/i.test(normalizedPrompt)
+        ? "slack_reply_in_thread"
+        : /\b(send|post|alert|notify)\b/i.test(normalizedPrompt)
+          ? "slack_send_channel_message"
+          : "slack_new_channel_message",
+    );
+  }
+  if (asksForNotion) {
+    const notionTrigger = !/\b(manual(?:ly)?|when i run|on demand)\b/i.test(normalizedPrompt)
+      && /\b(when|whenever)\b/i.test(normalizedPrompt)
+      && /\b(updated?|changed?|created?|added?)\b/i.test(normalizedPrompt);
+    unavailableRequestedCapabilityIds.push(
+      notionTrigger
+        ? /\b(created?|added?|new)\b/i.test(normalizedPrompt)
+          ? "notion_page_created_or_added"
+          : "notion_page_updated"
+        : /\bupdate\b/i.test(normalizedPrompt)
+          ? "notion_update_item"
+          : /\b(find|lookup)\b/i.test(normalizedPrompt)
+            ? "notion_find_item"
+            : /\bcreate\b[^.]{0,30}\bpage\b|\bpage\b[^.]{0,30}\bcreate\b/i.test(normalizedPrompt)
+              ? "notion_create_page"
+              : "notion_create_data_source_item",
+    );
+  }
   for (const capabilityId of unavailableRequestedCapabilityIds) {
     const capability = getCapability(capabilityId);
     if (capability && !capability.supported) unsupported.push(capability);

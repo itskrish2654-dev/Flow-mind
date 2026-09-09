@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHash, randomBytes } from "node:crypto";
 
+import { getConnectorOnboarding } from "@/lib/capability-registry";
 import { getConnector } from "@/lib/connectors/registry";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { decryptCredential, encryptCredential } from "@/lib/security/credential-crypto";
@@ -22,6 +23,7 @@ function stateHash(state: string) { return createHash("sha256").update(state).di
 export async function createOAuthAuthorization(input: { userId: string; connectorId: string; scopes?: string[]; returnPath?: string; connectionId?: string; operationKey?: string }) {
   const registered = getConnector(input.connectorId);
   if (!registered || registered.manifest.auth.type !== "oauth2") throw new Error("OAuth is not available for this connector.");
+  if (!getConnectorOnboarding(input.connectorId)?.available) throw new Error("This connector is not available.");
   if (registered.manifest.status === "COMING_SOON" || (registered.manifest.status === "INTERNAL" && process.env.NODE_ENV === "production")) throw new Error("This connector is not available.");
   const state = randomBytes(32).toString("base64url");
   const pkce = createPkcePair();

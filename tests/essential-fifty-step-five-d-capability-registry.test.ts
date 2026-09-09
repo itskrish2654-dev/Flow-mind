@@ -76,6 +76,16 @@ function syntheticConnectorEvidence(
   };
 }
 
+function syntheticConnectorEvidenceWithModes(
+  availableInTest: boolean,
+  availableInProduction: boolean,
+) {
+  return (operation: CapabilityConnectorOperation): CapabilityConnectorOperationEvidence | null => {
+    const evidence = syntheticConnectorEvidence(operation);
+    return evidence ? { ...evidence, availableInTest, availableInProduction } : null;
+  };
+}
+
 function syntheticMultiVersionCapability(): CapabilityDefinition {
   const source = cloneCapability(CAPABILITY_REGISTRY["airtable.create_record"]);
   const versionOneOperation = syntheticConnectorOperation(1);
@@ -208,6 +218,51 @@ test("5D-2c invalid visibility, credentials, and onboarding fail closed", () => 
   );
 });
 
+test("5D-2d product availability is a strict subset of technical connector support", () => {
+  const reviewed = syntheticMultiVersionCapability();
+  Object.assign(reviewed, {
+    maturity: "REVIEWED" as const,
+    supported: false,
+    availableInTest: false,
+    availableInProduction: false,
+    onboarding: { available: false, method: "api_key" as const },
+    plannerVisible: false,
+    builderVisible: false,
+    connectionVisible: false,
+    customerVisible: false,
+  });
+  assert.deepEqual(
+    validateCapabilityDefinitions(
+      [reviewed],
+      syntheticConnectorEvidenceWithModes(true, true),
+    ),
+    [],
+  );
+  assert.equal(reviewed.maturity, "REVIEWED");
+  assert.equal(reviewed.availableInTest, false);
+  assert.equal(reviewed.availableInProduction, false);
+
+  const productTest = syntheticMultiVersionCapability();
+  productTest.maturity = "TEST_ONLY";
+  productTest.availableInProduction = false;
+  assert.match(
+    validateCapabilityDefinitions(
+      [productTest],
+      syntheticConnectorEvidenceWithModes(false, true),
+    ).join(" "),
+    /TEST availability exceeds connector support/,
+  );
+
+  const productLive = syntheticMultiVersionCapability();
+  assert.match(
+    validateCapabilityDefinitions(
+      [productLive],
+      syntheticConnectorEvidenceWithModes(true, false),
+    ).join(" "),
+    /LIVE availability exceeds connector support/,
+  );
+});
+
 test("5D-3 maturity and mode availability remain truthful", () => {
   const hubspot = CAPABILITY_REGISTRY["hubspot.get_contact"];
   const airtable = CAPABILITY_REGISTRY["airtable.create_record"];
@@ -218,12 +273,14 @@ test("5D-3 maturity and mode availability remain truthful", () => {
   assert.equal(assessCapability("airtable.create_record", "production").available, true);
   assert.equal(CAPABILITY_REGISTRY.gmail_send_email.maturity, "REVIEWED");
   assert.equal(CAPABILITY_REGISTRY.google_sheets_add_row.maturity, "REVIEWED");
-  assert.equal(CAPABILITY_REGISTRY.slack_send_channel_message.maturity, "AVAILABLE");
-  assert.equal(CAPABILITY_REGISTRY.notion_create_page.maturity, "AVAILABLE");
+  assert.equal(CAPABILITY_REGISTRY.slack_send_channel_message.maturity, "REVIEWED");
+  assert.equal(CAPABILITY_REGISTRY.notion_create_page.maturity, "REVIEWED");
   assert.equal(CAPABILITY_REGISTRY["internal.connector_runner_canary"].maturity, "TEST_ONLY");
   assert.equal(CAPABILITY_REGISTRY["internal.connector_runner_canary"].internalOnly, true);
   assert.equal(assessCapability("gmail_send_email", "test").available, false);
   assert.equal(assessCapability("google_sheets_add_row", "production").available, false);
+  assert.equal(assessCapability("slack_send_channel_message", "test").available, false);
+  assert.equal(assessCapability("notion_create_page", "production").available, false);
   assert.equal(assessCapability("unknown.capability", "test").available, false);
 });
 
@@ -304,8 +361,8 @@ test("5D-5 customer, planner, builder, connection, and internal visibility are d
 test("5D-6 onboarding availability is separate from execution availability", () => {
   assert.deepEqual(getConnectorOnboarding("hubspot"), { available: false, method: "oauth2" });
   assert.deepEqual(getConnectorOnboarding("airtable"), { available: true, method: "api_key" });
-  assert.deepEqual(getConnectorOnboarding("slack"), { available: true, method: "oauth2" });
-  assert.deepEqual(getConnectorOnboarding("notion"), { available: true, method: "oauth2" });
+  assert.deepEqual(getConnectorOnboarding("slack"), { available: false, method: "oauth2" });
+  assert.deepEqual(getConnectorOnboarding("notion"), { available: false, method: "oauth2" });
   assert.deepEqual(getConnectorOnboarding("google_gmail"), { available: false, method: "oauth2" });
   assert.deepEqual(getConnectorOnboarding("google_sheets"), { available: false, method: "oauth2" });
   assert.equal(CAPABILITY_REGISTRY["hubspot.get_contact"].availableInTest, true);
@@ -414,6 +471,97 @@ test("5D-8 planner and compiler admit only registry-visible capabilities and der
     destination: { capabilityId: "hubspot", displayName: "HubSpot" },
   } as WorkflowPlan;
   assert.throws(() => compileReadyPlan("Unsafe plan", unsafePlan), /cannot be compiled/);
+});
+
+test("5D-8b reviewed Slack and Notion stay out of planner, compiler, readiness, and onboarding", async () => {
+  for (const prompt of [
+    "When a new message is posted in Slack, summarize it with AI and create a page in Notion.",
+    "When I run this manually, send a message to Slack.",
+    "When a Notion page is updated, store it in CrazyLoops.",
+  ]) {
+    assert.equal(planWorkflow(prompt).status, "UNSUPPORTED", prompt);
+  }
+
+  const unsafePlan = {
+    ...planWorkflow("When I run this workflow, get HubSpot contact 12345."),
+    status: "READY_TO_COMPILE",
+    destination: { capabilityId: "slack_send_channel_message", displayName: "Slack" },
+  } as WorkflowPlan;
+  assert.throws(() => compileReadyPlan("Unsafe Slack plan", unsafePlan), /cannot be compiled/);
+
+  const workflow: CompiledWorkflow = {
+    workflowName: "Legacy Slack workflow",
+    summary: "A previously saved workflow using an unaccepted connector.",
+    steps: [{
+      id: "send-slack",
+      type: "connector_action",
+      capabilityId: "slack_send_channel_message",
+      executor: { kind: "native", capabilityVersion: 1 },
+      title: "Send a Slack message",
+      description: "Previously configured Slack delivery.",
+      config: {
+        connector: {
+          connectorId: "slack",
+          operationKind: "action",
+          operationKey: "send_channel_message",
+          operationVersion: 1,
+          mappings: [],
+        },
+      },
+    }],
+  };
+  const readiness = getWorkflowReadiness({
+    workflow,
+    workflowId: "30000000-0000-4000-8000-000000000003",
+    values: {},
+    configuredCredentialKeys: new Set(),
+    connections: [],
+  });
+  assert.equal(readiness.testReady, false);
+  assert.equal(readiness.activationReady, false);
+  assert.ok(readiness.attention.some(({ key, title, description }) =>
+    key === "send-slack:unsupported"
+      && /not available/i.test(title)
+      && /live Slack acceptance is complete/i.test(description)));
+
+  const [startRoute, callbackRoute, oauth] = await Promise.all([
+    readFile("app/api/connectors/oauth/[connectorId]/start/route.ts", "utf8"),
+    readFile("app/api/connectors/oauth/[connectorId]/callback/route.ts", "utf8"),
+    readFile("lib/connectors/oauth.ts", "utf8"),
+  ]);
+  for (const source of [startRoute, callbackRoute, oauth]) {
+    assert.match(source, /getConnectorOnboarding\([^)]*\)\?\.available/);
+  }
+});
+
+test("5D-8c beta metadata agrees with reviewed Slack and Notion product maturity", async () => {
+  const [connectorRegistry, connectorGuide, homepage] = await Promise.all([
+    readFile("lib/connectors/registry.ts", "utf8"),
+    readFile("docs/CONNECTORS_SLACK_NOTION.md", "utf8"),
+    readFile("app/page.tsx", "utf8"),
+  ]);
+  for (const capabilityId of [
+    "slack_new_channel_message",
+    "slack_send_channel_message",
+    "slack_reply_in_thread",
+    "notion_page_created_or_added",
+    "notion_page_updated",
+    "notion_create_page",
+    "notion_create_data_source_item",
+    "notion_find_item",
+    "notion_update_item",
+  ] as const) {
+    const capability = CAPABILITY_REGISTRY[capabilityId];
+    assert.equal(capability.maturity, "REVIEWED", capabilityId);
+    assert.equal(capability.supported, false, capabilityId);
+    assert.equal(capability.availableInTest, false, capabilityId);
+    assert.equal(capability.availableInProduction, false, capabilityId);
+    assert.equal(capability.customerVisible, false, capabilityId);
+  }
+  assert.match(connectorRegistry, /Beta until live Slack app acceptance is complete/);
+  assert.match(connectorRegistry, /Beta until live Notion public integration acceptance is complete/);
+  assert.match(connectorGuide, /remain `BETA` until the live acceptance scenarios are completed/);
+  assert.match(homepage, /Live acceptance pending/);
 });
 
 test("5D-9 readiness uses registry TEST, LIVE, connection, and onboarding truth", () => {
