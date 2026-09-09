@@ -8,12 +8,17 @@ import {
   assessCapabilityVersion,
   getCapability,
   getCapabilityVersion,
+  getCapabilityVersionFromDefinition,
   getConnectorCapability,
+  getConnectorCapabilityVersion,
   getConnectorOnboarding,
   getCustomerVisibleCapabilities,
   getPlannerVisibleCapabilities,
   resolveStepCapabilityId,
   resolveCapabilityImplementation,
+  validateCapabilityDefinitions,
+  type CapabilityConnectorOperation,
+  type CapabilityConnectorOperationEvidence,
   type CapabilityDefinition,
 } from "../lib/capability-registry";
 import { validateCapabilityRegistry } from "../lib/capability-registry-validation";
@@ -37,6 +42,62 @@ function replaceCapability(
   );
 }
 
+function syntheticConnectorOperation(
+  operationVersion: number,
+  operationKey = "do_thing",
+): CapabilityConnectorOperation {
+  return {
+    connectorId: "synthetic",
+    providerFamily: "synthetic",
+    operationKind: "action",
+    operationKey,
+    operationVersion,
+  };
+}
+
+function syntheticConnectorEvidence(
+  operation: CapabilityConnectorOperation,
+): CapabilityConnectorOperationEvidence | null {
+  if (operation.connectorId !== "synthetic"
+    || operation.providerFamily !== "synthetic"
+    || operation.operationKind !== "action"
+    || !["do_thing", "other_thing"].includes(operation.operationKey)
+    || ![1, 2].includes(operation.operationVersion)) {
+    return null;
+  }
+  return {
+    ...operation,
+    authType: operation.operationKey === "other_thing" ? "oauth2" : "api_key",
+    executor: "connector_runner",
+    requiredScopes: ["records:write"],
+    connectionRequired: true,
+    availableInTest: true,
+    availableInProduction: true,
+  };
+}
+
+function syntheticMultiVersionCapability(): CapabilityDefinition {
+  const source = cloneCapability(CAPABILITY_REGISTRY["airtable.create_record"]);
+  const versionOneOperation = syntheticConnectorOperation(1);
+  const versionTwoOperation = syntheticConnectorOperation(2);
+  return {
+    ...source,
+    id: "synthetic.multi_version",
+    displayName: "Synthetic multi-version action",
+    executionImplementation: "connector:synthetic/do_thing@1",
+    connectorOperation: versionOneOperation,
+    providerFamily: "synthetic",
+    requiredScopes: ["records:write"],
+    aliases: [],
+    versions: [
+      { version: 1, executor: "connector_runner", connectorOperation: versionOneOperation },
+      { version: 2, executor: "connector_runner", connectorOperation: versionTwoOperation },
+    ],
+    executorVersions: { 1: "connector_runner", 2: "connector_runner" },
+    defaultCapabilityVersion: 1,
+  };
+}
+
 function compiledHubSpotWorkflow(): CompiledWorkflow {
   const prompt = "When I run this workflow, get HubSpot contact 12345.";
   const plan = planWorkflow(prompt);
@@ -52,33 +113,11 @@ test("5D-1 the current CrazyLoops capability registry validates deterministicall
     Boolean(getCapabilityVersion(capability.id, capability.defaultCapabilityVersion))));
 });
 
-test("5D-2 duplicate, missing-operation, executor, and version contradictions fail validation", () => {
+test("5D-2 duplicate capability IDs and invalid default versions fail validation", () => {
   const hubspot = cloneCapability(CAPABILITY_REGISTRY["hubspot.get_contact"]);
   assert.match(
     validateCapabilityRegistry([...Object.values(CAPABILITY_REGISTRY), hubspot]).join(" "),
     /Duplicate capability ID/,
-  );
-
-  const missingOperation = cloneCapability(hubspot);
-  assert.ok(missingOperation.connectorOperation);
-  missingOperation.connectorOperation.operationKey = "missing_operation";
-  const missingVersionOperation = missingOperation.versions[0].connectorOperation;
-  assert.ok(missingVersionOperation);
-  missingVersionOperation.operationKey = "missing_operation";
-  assert.match(
-    validateCapabilityRegistry(replaceCapability(hubspot, missingOperation)).join(" "),
-    /Missing connector operation/,
-  );
-
-  const executorMismatch = cloneCapability(hubspot);
-  executorMismatch.versions = [{
-    ...executorMismatch.versions[0],
-    executor: "native",
-  }];
-  executorMismatch.executorVersions = { 1: "native" };
-  assert.match(
-    validateCapabilityRegistry(replaceCapability(hubspot, executorMismatch)).join(" "),
-    /Executor mismatch/,
   );
 
   const versionMismatch = cloneCapability(hubspot);
@@ -89,13 +128,61 @@ test("5D-2 duplicate, missing-operation, executor, and version contradictions fa
   );
 });
 
-test("5D-2b invalid maturity, visibility, credentials, and onboarding fail closed", () => {
+test("5D-2b explicit maturity validates legacy mode flags without being inferred from them", async () => {
   const airtable = cloneCapability(CAPABILITY_REGISTRY["airtable.create_record"]);
   const invalidAvailable = { ...airtable, availableInProduction: false };
   assert.match(
     validateCapabilityRegistry(replaceCapability(airtable, invalidAvailable)).join(" "),
     /AVAILABLE capability is not enabled/,
   );
+
+  const hubspot = cloneCapability(CAPABILITY_REGISTRY["hubspot.get_contact"]);
+  assert.match(
+    validateCapabilityRegistry(replaceCapability(hubspot, {
+      ...hubspot,
+      availableInProduction: true,
+    })).join(" "),
+    /TEST_ONLY capability has invalid mode availability/,
+  );
+
+  const gmail = cloneCapability(CAPABILITY_REGISTRY.gmail_send_email);
+  const invalidReviewed = { ...gmail, supported: true };
+  assert.match(
+    validateCapabilityRegistry(replaceCapability(gmail, invalidReviewed)).join(" "),
+    /Non-executable maturity exposes an execution mode/,
+  );
+  const legacyFlagsOnly = {
+    ...gmail,
+    supported: true,
+    availableInTest: true,
+    availableInProduction: true,
+  };
+  assert.equal(legacyFlagsOnly.maturity, "REVIEWED");
+  assert.match(
+    validateCapabilityRegistry(replaceCapability(gmail, legacyFlagsOnly)).join(" "),
+    /Non-executable maturity exposes an execution mode/,
+  );
+
+  for (const id of ["salesforce", "gmail_send_email", "formatter.scripting"] as const) {
+    const capability = cloneCapability(CAPABILITY_REGISTRY[id]);
+    const invalidNonExecutable = {
+      ...capability,
+      availableInTest: true,
+      customerVisible: true,
+    };
+    assert.match(
+      validateCapabilityRegistry(replaceCapability(capability, invalidNonExecutable)).join(" "),
+      /Non-executable maturity exposes an execution mode/,
+      id,
+    );
+  }
+
+  const registrySource = await readFile("lib/capability-registry.ts", "utf8");
+  assert.doesNotMatch(registrySource, /inferredMaturity/);
+});
+
+test("5D-2c invalid visibility, credentials, and onboarding fail closed", () => {
+  const airtable = cloneCapability(CAPABILITY_REGISTRY["airtable.create_record"]);
 
   const internal = cloneCapability(CAPABILITY_REGISTRY["internal.connector_runner_canary"]);
   const exposedInternal = { ...internal, customerVisible: true };
@@ -117,7 +204,7 @@ test("5D-2b invalid maturity, visibility, credentials, and onboarding fail close
   };
   assert.match(
     validateCapabilityRegistry(replaceCapability(hubspot, invalidOnboarding)).join(" "),
-    /Invalid onboarding availability/,
+    /Invalid onboarding (method|availability)/,
   );
 });
 
@@ -129,7 +216,14 @@ test("5D-3 maturity and mode availability remain truthful", () => {
   assert.equal(assessCapability("hubspot.get_contact", "production").available, false);
   assert.equal(airtable.maturity, "AVAILABLE");
   assert.equal(assessCapability("airtable.create_record", "production").available, true);
+  assert.equal(CAPABILITY_REGISTRY.gmail_send_email.maturity, "REVIEWED");
+  assert.equal(CAPABILITY_REGISTRY.google_sheets_add_row.maturity, "REVIEWED");
+  assert.equal(CAPABILITY_REGISTRY.slack_send_channel_message.maturity, "AVAILABLE");
+  assert.equal(CAPABILITY_REGISTRY.notion_create_page.maturity, "AVAILABLE");
+  assert.equal(CAPABILITY_REGISTRY["internal.connector_runner_canary"].maturity, "TEST_ONLY");
   assert.equal(CAPABILITY_REGISTRY["internal.connector_runner_canary"].internalOnly, true);
+  assert.equal(assessCapability("gmail_send_email", "test").available, false);
+  assert.equal(assessCapability("google_sheets_add_row", "production").available, false);
   assert.equal(assessCapability("unknown.capability", "test").available, false);
 });
 
@@ -140,6 +234,58 @@ test("5D-4 capability versions are exact and never fall forward", () => {
   assert.equal(resolveCapabilityImplementation("hubspot.get_contact", 2), null);
   assert.equal(assessCapabilityVersion("hubspot.get_contact", 2, "test").available, false);
   assert.match(assessCapabilityVersion("hubspot.get_contact", 2, "test").message ?? "", /version 2/i);
+});
+
+test("5D-4b every capability version owns its exact connector operation", () => {
+  const capability = syntheticMultiVersionCapability();
+  assert.deepEqual(validateCapabilityDefinitions([capability], syntheticConnectorEvidence), []);
+
+  const versionOne = getCapabilityVersionFromDefinition(capability, 1);
+  const versionTwo = getCapabilityVersionFromDefinition(capability, 2);
+  assert.equal(versionOne?.connectorOperation?.operationVersion, 1);
+  assert.equal(versionTwo?.connectorOperation?.operationVersion, 2);
+  assert.equal(getCapabilityVersionFromDefinition(capability, 3), null);
+  assert.equal(capability.connectorOperation?.operationVersion, 1);
+
+  const reverseOne = getConnectorCapabilityVersion(
+    "synthetic", "action", "do_thing", 1, [capability],
+  );
+  const reverseTwo = getConnectorCapabilityVersion(
+    "synthetic", "action", "do_thing", 2, [capability],
+  );
+  assert.equal(reverseOne?.capability.id, capability.id);
+  assert.equal(reverseOne?.version.version, 1);
+  assert.equal(reverseTwo?.capability.id, capability.id);
+  assert.equal(reverseTwo?.version.version, 2);
+  assert.equal(getConnectorCapabilityVersion("synthetic", "action", "do_thing", 3, [capability]), null);
+});
+
+test("5D-4c every version fails closed for missing operations, executor drift, and duplicates", () => {
+  const capability = syntheticMultiVersionCapability();
+  const missingOperation = cloneCapability(capability);
+  const versionTwo = missingOperation.versions[1];
+  assert.ok(versionTwo.connectorOperation);
+  versionTwo.connectorOperation.operationKey = "missing_operation";
+  assert.match(
+    validateCapabilityDefinitions([missingOperation], syntheticConnectorEvidence).join(" "),
+    /Missing connector operation for synthetic\.multi_version@2/,
+  );
+
+  const executorMismatch = cloneCapability(capability);
+  executorMismatch.versions[1].executor = "native";
+  executorMismatch.executorVersions = { 1: "connector_runner", 2: "native" };
+  assert.match(
+    validateCapabilityDefinitions([executorMismatch], syntheticConnectorEvidence).join(" "),
+    /Executor mismatch for synthetic\.multi_version@2/,
+  );
+
+  const duplicate = cloneCapability(capability);
+  duplicate.versions = [...duplicate.versions, cloneCapability(capability).versions[1]];
+  duplicate.executorVersions = { 1: "connector_runner", 2: "connector_runner" };
+  assert.match(
+    validateCapabilityDefinitions([duplicate], syntheticConnectorEvidence).join(" "),
+    /Duplicate capability version: synthetic\.multi_version@2/,
+  );
 });
 
 test("5D-5 customer, planner, builder, connection, and internal visibility are distinct", () => {
@@ -160,31 +306,80 @@ test("5D-6 onboarding availability is separate from execution availability", () 
   assert.deepEqual(getConnectorOnboarding("airtable"), { available: true, method: "api_key" });
   assert.deepEqual(getConnectorOnboarding("slack"), { available: true, method: "oauth2" });
   assert.deepEqual(getConnectorOnboarding("notion"), { available: true, method: "oauth2" });
-  assert.deepEqual(getConnectorOnboarding("google_gmail"), { available: true, method: "oauth2" });
+  assert.deepEqual(getConnectorOnboarding("google_gmail"), { available: false, method: "oauth2" });
+  assert.deepEqual(getConnectorOnboarding("google_sheets"), { available: false, method: "oauth2" });
   assert.equal(CAPABILITY_REGISTRY["hubspot.get_contact"].availableInTest, true);
   assert.equal(CAPABILITY_REGISTRY["hubspot.get_contact"].onboarding.available, false);
 });
 
+test("5D-6b onboarding method comes from available capabilities and conflicts fail validation", () => {
+  const unavailableOauth = syntheticMultiVersionCapability();
+  unavailableOauth.id = "synthetic.unavailable_oauth";
+  unavailableOauth.onboarding = { available: false, method: "oauth2" };
+
+  const availableApiKey = syntheticMultiVersionCapability();
+  availableApiKey.id = "synthetic.available_api_key";
+  assert.deepEqual(
+    getConnectorOnboarding("synthetic", [unavailableOauth, availableApiKey]),
+    { available: true, method: "api_key" },
+  );
+
+  const oauthCapability = syntheticMultiVersionCapability();
+  const otherOperation = syntheticConnectorOperation(1, "other_thing");
+  oauthCapability.id = "synthetic.oauth_action";
+  oauthCapability.executionImplementation = "connector:synthetic/other_thing@1";
+  oauthCapability.connectorOperation = otherOperation;
+  oauthCapability.versions = [{
+    version: 1,
+    executor: "connector_runner",
+    connectorOperation: otherOperation,
+  }];
+  oauthCapability.executorVersions = { 1: "connector_runner" };
+  oauthCapability.onboarding = { available: true, method: "oauth2" };
+  assert.match(
+    validateCapabilityDefinitions(
+      [syntheticMultiVersionCapability(), oauthCapability],
+      syntheticConnectorEvidence,
+    ).join(" "),
+    /Conflicting onboarding methods for connector: synthetic/,
+  );
+});
+
 test("5D-7 connector operations and capability implementations resolve one exact authority chain", () => {
   for (const capability of Object.values(CAPABILITY_REGISTRY)) {
-    const link = capability.connectorOperation;
-    if (!link) continue;
-    const operation = getConnectorOperation(
-      link.connectorId,
-      link.operationKind,
-      link.operationKey,
-      link.operationVersion,
+    const defaultVersion = getCapabilityVersionFromDefinition(
+      capability,
+      capability.defaultCapabilityVersion,
     );
-    assert.ok(operation, capability.id);
-    assert.equal(operation.operation.executor ?? "native", capability.versions[0].executor, capability.id);
-    assert.equal(operation.operation.testMode, capability.availableInTest, capability.id);
-    assert.equal(operation.operation.production, capability.availableInProduction, capability.id);
-    assert.equal(operation.operation.connectionRequired, capability.connectionRequired, capability.id);
-    assert.deepEqual(new Set(operation.operation.requiredScopes), new Set(capability.requiredScopes), capability.id);
-    assert.equal(
-      getConnectorCapability(link.connectorId, link.operationKind, link.operationKey, link.operationVersion)?.id,
-      capability.id,
-    );
+    assert.deepEqual(capability.connectorOperation, defaultVersion?.connectorOperation ?? null);
+    for (const version of capability.versions) {
+      const link = version.connectorOperation;
+      if (!link) continue;
+      const operation = getConnectorOperation(
+        link.connectorId,
+        link.operationKind,
+        link.operationKey,
+        link.operationVersion,
+      );
+      assert.ok(operation, `${capability.id}@${version.version}`);
+      assert.equal(operation.operation.executor ?? "native", version.executor, capability.id);
+      assert.ok(!capability.availableInTest || operation.operation.testMode, capability.id);
+      assert.ok(!capability.availableInProduction || operation.operation.production, capability.id);
+      assert.equal(operation.operation.connectionRequired, capability.connectionRequired, capability.id);
+      assert.deepEqual(new Set(operation.operation.requiredScopes), new Set(capability.requiredScopes), capability.id);
+      assert.equal(
+        getConnectorCapability(link.connectorId, link.operationKind, link.operationKey, link.operationVersion)?.id,
+        capability.id,
+      );
+      const reverse = getConnectorCapabilityVersion(
+        link.connectorId,
+        link.operationKind,
+        link.operationKey,
+        link.operationVersion,
+      );
+      assert.equal(reverse?.capability.id, capability.id);
+      assert.equal(reverse?.version.version, version.version);
+    }
   }
 });
 

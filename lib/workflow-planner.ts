@@ -451,6 +451,31 @@ export function planWorkflow(prompt: string): WorkflowPlan {
     !(asksForAirtableCreate && capability.id === "airtable") &&
     !(asksForHubSpotGet && capability.id === "hubspot"),
   );
+  const unavailableRequestedCapabilityIds: CapabilityId[] = [];
+  if (asksForGmail) {
+    unavailableRequestedCapabilityIds.push(
+      /\breply\b/i.test(normalizedPrompt)
+        ? "gmail_reply_to_email"
+        : /\b(send|email it|mail it)\b/i.test(normalizedPrompt)
+          ? "gmail_send_email"
+          : /\b(contains?|from|subject)\b/i.test(normalizedPrompt)
+            ? "gmail_new_email_matching_search"
+            : "gmail_new_email",
+    );
+  }
+  if (asksForSheets && /\b(add|save|store|update|find|lookup)\b/i.test(normalizedPrompt)) {
+    unavailableRequestedCapabilityIds.push(
+      /\bupdate row\b/i.test(normalizedPrompt)
+        ? "google_sheets_update_row"
+        : /\b(find|lookup)\b/i.test(normalizedPrompt)
+          ? "google_sheets_find_row"
+          : "google_sheets_add_row",
+    );
+  }
+  for (const capabilityId of unavailableRequestedCapabilityIds) {
+    const capability = getCapability(capabilityId);
+    if (capability && !capability.supported) unsupported.push(capability);
+  }
   const asksForUnknownExternalConnection =
     /\b(connect(?:\s+to)?|sync\s+(?:to|with)|post\s+(?:it\s+)?to)\b/i.test(
       normalizedPrompt,

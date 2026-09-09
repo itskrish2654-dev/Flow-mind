@@ -22,7 +22,6 @@ import {
 } from "../lib/connectors/google/sheets-values";
 import { assessConnectorPlan } from "../lib/connectors/planning";
 import { getConnector } from "../lib/connectors/registry";
-import { compileReadyPlan } from "../lib/workflow-compiler";
 import { deriveGmailSearch, planWorkflow } from "../lib/workflow-planner";
 
 const b64url = (value: string) => Buffer.from(value).toString("base64url");
@@ -226,45 +225,40 @@ test("7B-23. Google 429 and ambiguous write outcomes remain truthful", async () 
   assert.match(api, /externallyDelivered: false/);
 });
 
-test("7B-24. planner supports Gmail to CrazyLoops and Gmail to AI to Sheets", () => {
+test("7B-24. reviewed Gmail and Sheets operations remain unavailable to the product planner", () => {
   const storePrompt = "When a new Gmail message arrives, store it inside CrazyLoops.";
   const storePlan = planWorkflow(storePrompt);
-  assert.equal(storePlan.status, "READY_TO_COMPILE");
-  if (storePlan.status === "READY_TO_COMPILE") {
-    const workflow = compileReadyPlan(storePrompt, storePlan);
-    assert.deepEqual(workflow.steps.map((step) => step.capabilityId), ["gmail_new_email", "flowmind_data_store"]);
-  }
+  assert.equal(storePlan.status, "UNSUPPORTED");
   const sheetsPrompt = "When a new Gmail message contains 'invoice', summarize it with AI and add it to Google Sheets.";
   const sheetsPlan = planWorkflow(sheetsPrompt);
-  assert.equal(sheetsPlan.status, "READY_TO_COMPILE");
-  if (sheetsPlan.status === "READY_TO_COMPILE") {
-    const workflow = compileReadyPlan(sheetsPrompt, sheetsPlan);
-    assert.deepEqual(workflow.steps.map((step) => step.capabilityId), ["gmail_new_email_matching_search", "ai_text_transform", "google_sheets_add_row"]);
-  }
+  assert.equal(sheetsPlan.status, "UNSUPPORTED");
+  assert.equal(assessCapability("gmail_new_email", "test").available, false);
+  assert.equal(assessCapability("google_sheets_add_row", "production").available, false);
 });
 
-test("7B-25. planner supports form to Sheets and manual to Gmail", () => {
+test("7B-25. product planning fails closed for reviewed Google destinations", () => {
   for (const prompt of ["When a public form is submitted, add a row to Google Sheets.", "When I run this manually, send an email through Gmail."]) {
     const plan = planWorkflow(prompt);
-    assert.equal(plan.status, "READY_TO_COMPILE", prompt);
-    if (plan.status === "READY_TO_COMPILE") assert.ok(compileReadyPlan(prompt, plan).steps.some((step) => step.type === "connector_action"));
+    assert.equal(plan.status, "UNSUPPORTED", prompt);
   }
 });
 
 test("7B-26. Gmail search is derived only from concrete sender, phrase, or subject", () => {
   assert.equal(deriveGmailSearch("When Gmail from @acme.com contains 'invoice'"), 'from:(@acme.com) "invoice"');
-  assert.equal(planWorkflow("When a new Gmail message arrives from a customer, store it in CrazyLoops.").status, "NEEDS_CLARIFICATION");
+  assert.equal(planWorkflow("When a new Gmail message arrives from a customer, store it in CrazyLoops.").status, "UNSUPPORTED");
 });
 
-test("7B-27. compiled Google steps pin connector, operation, version, and exact connection slot", () => {
+test("7B-27. reviewed Google operation metadata stays exact without product compilation", () => {
   const prompt = "When a public form is submitted, add a row to Google Sheets.";
   const plan = planWorkflow(prompt);
-  assert.equal(plan.status, "READY_TO_COMPILE");
-  if (plan.status !== "READY_TO_COMPILE") return;
-  const workflow = compileReadyPlan(prompt, plan);
-  const connector = workflow.steps.at(-1)?.config?.connector;
-  assert.deepEqual({ id: connector?.connectorId, key: connector?.operationKey, version: connector?.operationVersion }, { id: "google_sheets", key: "add_row", version: 1 });
-  assert.equal(connector?.connectionId, undefined);
+  assert.equal(plan.status, "UNSUPPORTED");
+  const operation = getConnector("google_sheets")?.manifest.actions.find(
+    ({ key, version }) => key === "add_row" && version === 1,
+  );
+  assert.deepEqual(
+    { id: "google_sheets", key: operation?.key, version: operation?.version },
+    { id: "google_sheets", key: "add_row", version: 1 },
+  );
 });
 
 test("7B-28. tokens remain server-only and browser connection responses expose metadata only", async () => {
