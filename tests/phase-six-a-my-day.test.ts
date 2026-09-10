@@ -7,6 +7,7 @@ import {
   buildMyDayData,
   indexCredentialMetadata,
   MY_DAY_LIMITS,
+  relevantUnboundConnectionProvidersFromWorkflows,
   selectedConnectionIdsFromWorkflows,
   type BuildMyDayInput,
   type MyDayExecutionCandidate,
@@ -145,7 +146,7 @@ test("Phase 6A retains an older selected connection beyond the recent connection
     }),
     setupConfig: { "step-1-contactId": "123", "step-1-properties": "email" },
   });
-  const newerConnections = Array.from({ length: MY_DAY_LIMITS.connections + 1 }, (_, index) => ({
+  const newerConnections = Array.from({ length: 26 }, (_, index) => ({
     id: `00000000-0000-4000-8001-${String(index).padStart(12, "0")}`,
     userId: userA,
     provider: "hubspot" as const,
@@ -161,6 +162,136 @@ test("Phase 6A retains an older selected connection beyond the recent connection
   const server = await readFile("lib/my-day.ts", "utf8");
   assert.match(server, /\.in\("id", selectedConnectionIds\)/);
   assert.match(server, /\.limit\(MY_DAY_LIMITS\.selectedConnections\)/);
+});
+
+test("Phase 6A finds an older connected HubSpot account for an unbound step without global recency truth", async () => {
+  const hubspot = workflow({
+    name: "Look up contact",
+    workflow: compiledStep("hubspot.get_contact", "connector_action", {
+      connector: {
+        connectorId: "hubspot",
+        operationKind: "action",
+        operationKey: "get_contact",
+        operationVersion: 1,
+        mappings: [],
+      },
+    }),
+    setupConfig: { "step-1-contactId": "123", "step-1-properties": "email" },
+  });
+  const crowd = Array.from({ length: 26 }, (_, index) => ({
+    id: `00000000-0000-4000-8100-${String(index).padStart(12, "0")}`,
+    userId: userA,
+    provider: index % 2 === 0 ? "slack" : "hubspot",
+    status: index % 2 === 0 ? "connected" as const : "revoked" as const,
+  }));
+  const result = buildMyDayData(input({
+    workflows: [hubspot],
+    connections: [...crowd, { id: connectionA, userId: userA, provider: "hubspot", status: "connected" }],
+  }));
+  const connectionAttention = result.needsYou.find((item) => item.id.endsWith(":connection"));
+  assert.equal(connectionAttention?.title, "Choose Hubspot account");
+  assert.doesNotMatch(connectionAttention?.title ?? "", /onboarding is unavailable/i);
+  assert.deepEqual(relevantUnboundConnectionProvidersFromWorkflows([hubspot.workflow]), ["hubspot"]);
+
+  const server = await readFile("lib/my-day.ts", "utf8");
+  assert.match(server, /relevantUnboundConnectionProvidersFromWorkflows/);
+  assert.match(server, /\.eq\("provider_family", provider\)/);
+  assert.match(server, /\.eq\("status", "connected"\)/);
+  assert.match(server, /\.limit\(1\)/);
+  assert.doesNotMatch(server, /recentConnectionResult|MY_DAY_LIMITS\.connections/);
+});
+
+test("Phase 6A prefers choosing an existing account for a provider with available onboarding", () => {
+  const airtable = workflow({
+    name: "Create Airtable record",
+    workflow: compiledStep("airtable.create_record", "connector_action", {
+      connector: {
+        connectorId: "airtable",
+        operationKind: "action",
+        operationKey: "create_record",
+        operationVersion: 1,
+        mappings: [],
+      },
+    }),
+  });
+  const result = buildMyDayData(input({
+    workflows: [airtable],
+    connections: [{ id: connectionA, userId: userA, provider: "airtable", status: "connected" }],
+  }));
+  const connectionAttention = result.needsYou.find((item) => item.id.endsWith(":connection"));
+  assert.equal(connectionAttention?.title, "Choose Airtable account");
+  assert.equal(connectionAttention?.cta.label, "Choose Airtable account");
+});
+
+test("Phase 6A does not let revoked connection rows hide a valid connected account", () => {
+  const hubspot = workflow({
+    workflow: compiledStep("hubspot.get_contact", "connector_action", {
+      connector: {
+        connectorId: "hubspot",
+        operationKind: "action",
+        operationKey: "get_contact",
+        operationVersion: 1,
+        mappings: [],
+      },
+    }),
+  });
+  const revoked = Array.from({ length: 30 }, (_, index) => ({
+    id: `00000000-0000-4000-8200-${String(index).padStart(12, "0")}`,
+    userId: userA,
+    provider: "hubspot",
+    status: "revoked" as const,
+  }));
+  const result = buildMyDayData(input({
+    workflows: [hubspot],
+    connections: [...revoked, { id: connectionA, userId: userA, provider: "hubspot", status: "connected" }],
+  }));
+  assert.equal(result.needsYou.find((item) => item.id.endsWith(":connection"))?.title, "Choose Hubspot account");
+});
+
+test("Phase 6A does not let other-provider connections hide the relevant provider", () => {
+  const hubspot = workflow({
+    workflow: compiledStep("hubspot.get_contact", "connector_action", {
+      connector: {
+        connectorId: "hubspot",
+        operationKind: "action",
+        operationKey: "get_contact",
+        operationVersion: 1,
+        mappings: [],
+      },
+    }),
+  });
+  const otherProviders = Array.from({ length: 30 }, (_, index) => ({
+    id: `00000000-0000-4000-8300-${String(index).padStart(12, "0")}`,
+    userId: userA,
+    provider: index % 2 === 0 ? "slack" : "google",
+    status: "connected" as const,
+  }));
+  const result = buildMyDayData(input({
+    workflows: [hubspot],
+    connections: [...otherProviders, { id: connectionA, userId: userA, provider: "hubspot", status: "connected" }],
+  }));
+  assert.equal(result.needsYou.find((item) => item.id.endsWith(":connection"))?.title, "Choose Hubspot account");
+});
+
+test("Phase 6A never treats another user's connected account as provider availability", () => {
+  const hubspot = workflow({
+    workflow: compiledStep("hubspot.get_contact", "connector_action", {
+      connector: {
+        connectorId: "hubspot",
+        operationKind: "action",
+        operationKey: "get_contact",
+        operationVersion: 1,
+        mappings: [],
+      },
+    }),
+  });
+  const result = buildMyDayData(input({
+    workflows: [hubspot],
+    connections: [{ id: connectionA, userId: userB, provider: "hubspot", status: "connected" }],
+  }));
+  const connectionAttention = result.needsYou.find((item) => item.id.endsWith(":connection"));
+  assert.match(connectionAttention?.title ?? "", /onboarding is unavailable/i);
+  assert.doesNotMatch(connectionAttention?.title ?? "", /^Choose /i);
 });
 
 test("Phase 6A never lets another user's connection satisfy an exact workflow binding", () => {
@@ -289,6 +420,47 @@ test("Phase 6A presents cancelled executions as cancelled rather than failed", (
   assert.equal(result.recentActivity[0]?.title, "Run cancelled");
 });
 
+test("Phase 6A treats established HTTP client and configuration failures as user-actionable", () => {
+  for (const failureCategory of ["HTTP_UNAUTHORIZED", "HTTP_INVALID_JSON"]) {
+    const result = buildMyDayData(input({
+      executions: [execution({ status: "failed", failureCategory })],
+    }));
+    assert.ok(result.needsYou.some((item) => item.id.includes("execution:")), failureCategory);
+  }
+});
+
+test("Phase 6A treats deterministic formatter failures as user-actionable", () => {
+  const result = buildMyDayData(input({
+    executions: [execution({ status: "failed", failureCategory: "FORMATTER_INVALID_DATE" })],
+  }));
+  assert.ok(result.needsYou.some((item) => item.id.includes("execution:")));
+});
+
+test("Phase 6A treats user-correctable AI request size failures as user-actionable", () => {
+  const result = buildMyDayData(input({
+    executions: [execution({ status: "failed", failureCategory: "AI_INPUT_TOO_LARGE" })],
+  }));
+  assert.ok(result.needsYou.some((item) => item.id.includes("execution:")));
+});
+
+test("Phase 6A excludes transient provider and AI failures from user-actionable attention", () => {
+  for (const failureCategory of ["provider_rate_limit", "AI_PROVIDER_TIMEOUT", "provider_unavailable"]) {
+    const result = buildMyDayData(input({
+      executions: [execution({ status: "failed", failureCategory })],
+    }));
+    assert.equal(result.needsYou.some((item) => item.id.includes("execution:")), false, failureCategory);
+  }
+});
+
+test("Phase 6A preserves ambiguous external results as higher-priority manual verification", () => {
+  const result = buildMyDayData(input({
+    executions: [execution({ status: "failed", failureCategory: "ambiguous_external_result" })],
+  }));
+  const attention = result.needsYou.find((item) => item.id.includes("execution:"));
+  assert.equal(attention?.priority, 2);
+  assert.equal(attention?.title, "Check the provider result");
+});
+
 test("Phase 6A counts all relevant attention before applying the display limit", () => {
   const workflows = Array.from({ length: MY_DAY_LIMITS.needsYou + 4 }, (_, index) => workflow({
     id: `00000000-0000-4000-9000-${String(index).padStart(12, "0")}`,
@@ -346,7 +518,8 @@ test("Phase 6A UI exposes the required calm workday sections, navigation, and re
 test("Phase 6A query bounds are explicit and aggregation avoids per-workflow query loops", async () => {
   const server = await readFile("lib/my-day.ts", "utf8");
   assert.match(server, /Promise\.all\(\[/);
-  assert.ok((server.match(/\.limit\(MY_DAY_LIMITS\./g) ?? []).length >= 5);
+  assert.ok((server.match(/\.limit\(MY_DAY_LIMITS\./g) ?? []).length >= 4);
+  assert.match(server, /\.eq\("provider_family", provider\)[\s\S]*?\.limit\(1\)/);
   assert.match(server, /\.in\("id", versionIds\)/);
   assert.match(server, /\.in\("id", selectedConnectionIds\)/);
   assert.match(server, /\.in\("workflow_id", workflowIds\)/);

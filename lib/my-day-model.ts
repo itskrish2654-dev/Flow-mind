@@ -1,5 +1,9 @@
 import { CompiledWorkflowSchema, type CompiledWorkflow } from "@/lib/schemas/workflow";
-import { annotateWorkflowCapabilities } from "@/lib/capability-registry";
+import {
+  annotateWorkflowCapabilities,
+  getCapability,
+  resolveStepCapabilityId,
+} from "@/lib/capability-registry";
 import {
   getWorkflowReadiness,
   type WorkflowConnectionReadiness,
@@ -9,7 +13,6 @@ import { getStepInputs } from "@/lib/workflow-setup";
 export const MY_DAY_LIMITS = {
   workflows: 30,
   executions: 10,
-  connections: 25,
   selectedConnections: 300,
   credentials: 200,
   credentialPages: 5,
@@ -110,7 +113,34 @@ const USER_ACTION_FAILURES = new Set([
   "invalid_input",
   "invalid_workflow",
   "unsupported_capability",
+  "http_invalid_url",
+  "http_blocked_destination",
+  "http_unauthorized",
+  "http_forbidden",
+  "http_not_found",
+  "http_conflict",
+  "http_client_error",
+  "http_invalid_json",
+  "http_response_too_large",
+  "formatter_invalid_input",
+  "formatter_invalid_number",
+  "formatter_division_by_zero",
+  "formatter_invalid_date",
+  "formatter_timezone_required",
+  "formatter_output_too_large",
+  "ai_invalid_request",
+  "ai_input_too_large",
 ]);
+
+const READINESS_CONNECTION_PROVIDERS = [
+  "airtable",
+  "google",
+  "slack",
+  "notion",
+  "hubspot",
+] as const;
+type ReadinessConnectionProvider = (typeof READINESS_CONNECTION_PROVIDERS)[number];
+const READINESS_CONNECTION_PROVIDER_SET = new Set<string>(READINESS_CONNECTION_PROVIDERS);
 
 function safeText(value: string, fallback: string, maxLength = 140): string {
   const cleaned = value.replace(/\s+/g, " ").trim().slice(0, maxLength);
@@ -141,15 +171,37 @@ function setupValues(value: unknown): Record<string, string> {
 function readinessConnections(
   connections: readonly MyDayConnectionCandidate[],
 ): WorkflowConnectionReadiness[] {
-  const allowedProviders = new Set(["airtable", "google", "slack", "notion", "hubspot"]);
   return connections.flatMap((connection) => {
-    if (!allowedProviders.has(connection.provider) || connection.status === "revoked") return [];
+    if (!READINESS_CONNECTION_PROVIDER_SET.has(connection.provider) || connection.status === "revoked") return [];
     return [{
       id: connection.id,
       provider: connection.provider as WorkflowConnectionReadiness["provider"],
       status: connection.status,
     }];
   });
+}
+
+export function relevantUnboundConnectionProvidersFromWorkflows(
+  workflows: readonly unknown[],
+): ReadinessConnectionProvider[] {
+  const providers = new Set<ReadinessConnectionProvider>();
+  for (const value of workflows) {
+    const parsed = CompiledWorkflowSchema.safeParse(value);
+    if (!parsed.success) continue;
+    for (const step of parsed.data.steps) {
+      const connector = step.config?.connector;
+      if (!connector || connector.connectionId || connector.connectorId.startsWith("flowmind_")) continue;
+      const capabilityId = resolveStepCapabilityId(step);
+      const capability = capabilityId ? getCapability(capabilityId) : null;
+      if (!(capability?.connectionRequired ?? true)) continue;
+      const provider = capability?.providerFamily
+        ?? (connector.connectorId.startsWith("google_") ? "google" : connector.connectorId);
+      if (READINESS_CONNECTION_PROVIDER_SET.has(provider)) {
+        providers.add(provider as ReadinessConnectionProvider);
+      }
+    }
+  }
+  return [...providers].sort();
 }
 
 export function selectedConnectionIdsFromWorkflows(workflows: readonly unknown[]): string[] {

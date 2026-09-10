@@ -6,6 +6,7 @@ import {
   buildMyDayData,
   indexCredentialMetadata,
   MY_DAY_LIMITS,
+  relevantUnboundConnectionProvidersFromWorkflows,
   selectedConnectionIdsFromWorkflows,
   type MyDayConnectionCandidate,
   type MyDayCredentialMetadataCandidate,
@@ -112,6 +113,9 @@ export async function loadMyDayData(): Promise<MyDayData | null> {
   const selectedConnectionIds = selectedConnectionIdsFromWorkflows(
     workflowSnapshots.map(({ version }) => version.compiled_workflow),
   );
+  const relevantUnboundProviders = relevantUnboundConnectionProvidersFromWorkflows(
+    workflowSnapshots.map(({ version }) => version.compiled_workflow),
+  );
   if (selectedConnectionIds.length > MY_DAY_LIMITS.selectedConnections) {
     throw new Error("My Day could not safely resolve selected connections.");
   }
@@ -124,17 +128,23 @@ export async function loadMyDayData(): Promise<MyDayData | null> {
         .in("id", selectedConnectionIds)
         .limit(MY_DAY_LIMITS.selectedConnections)
     : Promise.resolve({ data: [], error: null });
-  const [selectedConnectionResult, recentConnectionResult, credentialResult] = await Promise.all([
-    selectedConnectionRequest,
-    auth.supabase
+  const providerConnectionRequest = Promise.all(
+    relevantUnboundProviders.map((provider) => auth.supabase
       .from("connector_connections")
       .select("id, user_id, provider_family, status")
       .eq("user_id", userId)
+      .eq("provider_family", provider)
+      .eq("status", "connected")
       .order("updated_at", { ascending: false })
-      .limit(MY_DAY_LIMITS.connections),
+      .order("id", { ascending: true })
+      .limit(1)),
+  );
+  const [selectedConnectionResult, providerConnectionResults, credentialResult] = await Promise.all([
+    selectedConnectionRequest,
+    providerConnectionRequest,
     loadRelevantCredentialMetadata({ userId, workflowIds: relevantWorkflowIds }),
   ]);
-  if (selectedConnectionResult.error || recentConnectionResult.error) {
+  if (selectedConnectionResult.error || providerConnectionResults.some((result) => result.error)) {
     throw new Error("My Day could not load connection status safely.");
   }
 
@@ -165,8 +175,9 @@ export async function loadMyDayData(): Promise<MyDayData | null> {
     completedAt: execution.completed_at,
     failureCategory: execution.failure_category,
   }));
+  const providerConnectionRows = providerConnectionResults.flatMap((result) => result.data ?? []);
   const connectionRows = new Map(
-    [...recentConnectionResult.data, ...selectedConnectionResult.data]
+    [...providerConnectionRows, ...selectedConnectionResult.data]
       .map((connection) => [connection.id, connection] as const),
   );
   const connections: MyDayConnectionCandidate[] = [...connectionRows.values()].map((connection) => ({
