@@ -32,6 +32,7 @@ const statusStyles: Record<MyDayItemStatus, string> = {
   running: "border-blue-200 bg-blue-50 text-blue-700",
   success: "border-emerald-200 bg-emerald-50 text-emerald-700",
   failed: "border-rose-200 bg-rose-50 text-rose-700",
+  cancelled: "border-slate-200 bg-slate-100 text-slate-600",
 };
 
 const statusLabels: Record<MyDayItemStatus, string> = {
@@ -41,6 +42,7 @@ const statusLabels: Record<MyDayItemStatus, string> = {
   running: "Running",
   success: "Success",
   failed: "Failed",
+  cancelled: "Cancelled",
 };
 
 function MyDayItemCard({ item }: { item: MyDayItem }) {
@@ -104,6 +106,7 @@ function MyDaySection({
   icon,
   items,
   empty,
+  totalCount = items.length,
 }: {
   id: string;
   title: string;
@@ -111,12 +114,18 @@ function MyDaySection({
   icon: typeof ListChecks;
   items: MyDayItem[];
   empty: string;
+  totalCount?: number;
 }) {
   return (
     <section aria-labelledby={id} className="rounded-3xl border border-[#ded6ca] bg-white/65 p-4 shadow-[0_18px_60px_rgba(44,39,31,0.035)] sm:p-6">
-      <SectionHeader id={id} title={title} description={description} icon={icon} count={items.length} />
+      <SectionHeader id={id} title={title} description={description} icon={icon} count={totalCount} />
       {items.length > 0 ? (
-        <div className="mt-5 space-y-3">{items.map((item) => <MyDayItemCard key={item.id} item={item} />)}</div>
+        <>
+          <div className="mt-5 space-y-3">{items.map((item) => <MyDayItemCard key={item.id} item={item} />)}</div>
+          {totalCount > items.length && (
+            <p className="mt-3 text-xs text-slate-500">Showing the {items.length} highest-priority items out of {totalCount}.</p>
+          )}
+        </>
       ) : (
         <div className="mt-5 rounded-2xl border border-dashed border-[#ddd3c2] bg-[#faf8f4] px-5 py-8 text-center">
           <CircleCheck className="mx-auto size-5 text-[#a49372]" aria-hidden="true" />
@@ -149,6 +158,7 @@ export function MyDayView({ data }: { data: MyDayData }) {
               description="Configuration, connection, or run issues that need a decision."
               icon={TriangleAlert}
               items={data.needsYou}
+              totalCount={data.summary.attentionCount}
               empty="You’re clear for now."
             />
           </div>

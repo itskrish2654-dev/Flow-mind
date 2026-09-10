@@ -5,7 +5,9 @@ import test from "node:test";
 import { CAPABILITY_REGISTRY } from "../lib/capability-registry";
 import {
   buildMyDayData,
+  indexCredentialMetadata,
   MY_DAY_LIMITS,
+  selectedConnectionIdsFromWorkflows,
   type BuildMyDayInput,
   type MyDayExecutionCandidate,
   type MyDayWorkflowCandidate,
@@ -47,6 +49,7 @@ function workflow(overrides: Partial<MyDayWorkflowCandidate> = {}): MyDayWorkflo
     workflow: compiledStep(),
     setupConfig: {},
     configuredCredentialKeys: [],
+    credentialMetadataComplete: true,
     ...overrides,
   };
 }
@@ -127,6 +130,114 @@ test("Phase 6A keeps HubSpot TEST_ONLY testable while activation remains visibly
   assert.ok(result.needsYou.some((item) => /test-only/i.test(item.title)));
 });
 
+test("Phase 6A retains an older selected connection beyond the recent connection cutoff", async () => {
+  const hubspot = workflow({
+    name: "Look up contact",
+    workflow: compiledStep("hubspot.get_contact", "connector_action", {
+      connector: {
+        connectorId: "hubspot",
+        operationKind: "action",
+        operationKey: "get_contact",
+        operationVersion: 1,
+        connectionId: connectionA,
+        mappings: [],
+      },
+    }),
+    setupConfig: { "step-1-contactId": "123", "step-1-properties": "email" },
+  });
+  const newerConnections = Array.from({ length: MY_DAY_LIMITS.connections + 1 }, (_, index) => ({
+    id: `00000000-0000-4000-8001-${String(index).padStart(12, "0")}`,
+    userId: userA,
+    provider: "hubspot" as const,
+    status: "connected" as const,
+  }));
+  const result = buildMyDayData(input({
+    workflows: [hubspot],
+    connections: [...newerConnections, { id: connectionA, userId: userA, provider: "hubspot", status: "connected" }],
+  }));
+  assert.equal(result.needsYou.some((item) => item.id.endsWith(":connection")), false);
+  assert.deepEqual(selectedConnectionIdsFromWorkflows([hubspot.workflow]), [connectionA]);
+
+  const server = await readFile("lib/my-day.ts", "utf8");
+  assert.match(server, /\.in\("id", selectedConnectionIds\)/);
+  assert.match(server, /\.limit\(MY_DAY_LIMITS\.selectedConnections\)/);
+});
+
+test("Phase 6A never lets another user's connection satisfy an exact workflow binding", () => {
+  const alternativeConnection = "00000000-0000-4000-8000-000000000021";
+  const hubspot = workflow({
+    workflow: compiledStep("hubspot.get_contact", "connector_action", {
+      connector: {
+        connectorId: "hubspot",
+        operationKind: "action",
+        operationKey: "get_contact",
+        operationVersion: 1,
+        connectionId: connectionA,
+        mappings: [],
+      },
+    }),
+    setupConfig: { "step-1-contactId": "123", "step-1-properties": "email" },
+  });
+  const result = buildMyDayData(input({
+    workflows: [hubspot],
+    connections: [
+      { id: connectionA, userId: userB, provider: "hubspot", status: "connected" },
+      { id: alternativeConnection, userId: userA, provider: "hubspot", status: "connected" },
+    ],
+  }));
+  assert.ok(result.needsYou.some((item) => item.id.endsWith(":connection")));
+});
+
+test("Phase 6A scopes credential metadata to displayed workflows and rejects foreign metadata", async () => {
+  const unrelated = Array.from({ length: MY_DAY_LIMITS.credentials + 25 }, (_, index) => ({
+    userId: userA,
+    workflowId: `unrelated-${index}`,
+    connectorId: "http.request",
+    credentialKey: `key-${index}`,
+  }));
+  const indexed = indexCredentialMetadata({
+    userId: userA,
+    workflowIds: new Set([workflowA]),
+    credentials: [
+      ...unrelated,
+      { userId: userA, workflowId: workflowA, connectorId: "http.request", credentialKey: "apiKey" },
+      { userId: userB, workflowId: workflowA, connectorId: "http.request", credentialKey: "foreignKey" },
+    ],
+  });
+  assert.deepEqual(indexed.get(workflowA), ["http.request:apiKey"]);
+  assert.equal(indexed.size, 1);
+
+  const server = await readFile("lib/my-day.ts", "utf8");
+  assert.match(server, /\.from\("workflow_credentials"\)[\s\S]*?\.eq\("user_id", userId\)[\s\S]*?\.in\("workflow_id", workflowIds\)/);
+  assert.match(server, /MY_DAY_LIMITS\.credentialPages/);
+  assert.match(server, /complete: overflow\.length === 0/);
+  assert.doesNotMatch(server, /select\("[^"]*(?:ciphertext|nonce|auth_tag|plaintext|access_token|refresh_token)/i);
+});
+
+test("Phase 6A fails closed without falsely claiming a credential is missing when metadata is incomplete", () => {
+  const secured = compiledStep("http.request", "http_request", {
+    http: {
+      version: 2,
+      url: "https://example.com/callback",
+      method: "POST",
+      authType: "api_key_header",
+      authName: "X-API-Key",
+    },
+  });
+  secured.steps[0].inputsRequired = [{
+    key: "apiKey",
+    label: "Private key",
+    type: "secret",
+    required: true,
+  }];
+  const result = buildMyDayData(input({
+    workflows: [workflow({ workflow: secured, credentialMetadataComplete: false })],
+  }));
+  assert.ok(result.needsYou.some((item) => item.title === "Confirm saved security setup"));
+  assert.equal(result.needsYou.some((item) => /add private key/i.test(item.title)), false);
+  assert.equal(result.summary.readyToTestCount, 0);
+});
+
 test("Phase 6A never presents REVIEWED connectors as usable or connectable", () => {
   const reviewedCapabilities = [
     "gmail_send_email",
@@ -170,6 +281,24 @@ test("Phase 6A Waiting On uses only real durable queued executions", () => {
   const queued = buildMyDayData(input({ executions: [execution({ status: "queued", completedAt: null })] }));
   assert.equal(queued.waitingOn.length, 1);
   assert.match(queued.waitingOn[0]?.description ?? "", /durably queued/i);
+});
+
+test("Phase 6A presents cancelled executions as cancelled rather than failed", () => {
+  const result = buildMyDayData(input({ executions: [execution({ status: "cancelled" })] }));
+  assert.equal(result.recentActivity[0]?.status, "cancelled");
+  assert.equal(result.recentActivity[0]?.title, "Run cancelled");
+});
+
+test("Phase 6A counts all relevant attention before applying the display limit", () => {
+  const workflows = Array.from({ length: MY_DAY_LIMITS.needsYou + 4 }, (_, index) => workflow({
+    id: `00000000-0000-4000-9000-${String(index).padStart(12, "0")}`,
+    name: `HTTP workflow ${index}`,
+    workflow: compiledStep("http.request", "http_request"),
+  }));
+  const result = buildMyDayData(input({ workflows }));
+  assert.equal(result.needsYou.length, MY_DAY_LIMITS.needsYou);
+  assert.equal(result.summary.attentionCount, workflows.length);
+  assert.match(result.summary.sentence, new RegExp(`${workflows.length} things need you`));
 });
 
 test("Phase 6A activity is bounded, newest first, and cannot surface raw secret payloads", () => {
@@ -219,5 +348,7 @@ test("Phase 6A query bounds are explicit and aggregation avoids per-workflow que
   assert.match(server, /Promise\.all\(\[/);
   assert.ok((server.match(/\.limit\(MY_DAY_LIMITS\./g) ?? []).length >= 5);
   assert.match(server, /\.in\("id", versionIds\)/);
+  assert.match(server, /\.in\("id", selectedConnectionIds\)/);
+  assert.match(server, /\.in\("workflow_id", workflowIds\)/);
   assert.doesNotMatch(server, /for \([^)]*workflow[^)]*\)[\s\S]{0,240}\.from\(/);
 });

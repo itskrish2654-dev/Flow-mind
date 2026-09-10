@@ -4,12 +4,15 @@ import {
   getWorkflowReadiness,
   type WorkflowConnectionReadiness,
 } from "@/lib/workflow-readiness";
+import { getStepInputs } from "@/lib/workflow-setup";
 
 export const MY_DAY_LIMITS = {
   workflows: 30,
   executions: 10,
   connections: 25,
+  selectedConnections: 300,
   credentials: 200,
+  credentialPages: 5,
   needsYou: 8,
   today: 5,
   waitingOn: 5,
@@ -23,7 +26,8 @@ export type MyDayItemStatus =
   | "waiting"
   | "running"
   | "success"
-  | "failed";
+  | "failed"
+  | "cancelled";
 
 export type MyDayItem = {
   id: string;
@@ -64,6 +68,7 @@ export type MyDayWorkflowCandidate = {
   workflow: unknown;
   setupConfig: unknown;
   configuredCredentialKeys: readonly string[];
+  credentialMetadataComplete: boolean;
 };
 
 export type MyDayExecutionCandidate = {
@@ -82,6 +87,13 @@ export type MyDayConnectionCandidate = {
   userId: string;
   provider: string;
   status: "connected" | "expired" | "revoked" | "error";
+};
+
+export type MyDayCredentialMetadataCandidate = {
+  userId: string;
+  workflowId: string;
+  connectorId: string;
+  credentialKey: string;
 };
 
 export type BuildMyDayInput = {
@@ -140,6 +152,46 @@ function readinessConnections(
   });
 }
 
+export function selectedConnectionIdsFromWorkflows(workflows: readonly unknown[]): string[] {
+  const selected = new Set<string>();
+  for (const value of workflows) {
+    const parsed = CompiledWorkflowSchema.safeParse(value);
+    if (!parsed.success) continue;
+    for (const step of parsed.data.steps) {
+      const connectionId = step.config?.connector?.connectionId;
+      if (connectionId) selected.add(connectionId);
+    }
+  }
+  return [...selected].sort();
+}
+
+export function indexCredentialMetadata({
+  userId,
+  workflowIds,
+  credentials,
+}: {
+  userId: string;
+  workflowIds: ReadonlySet<string>;
+  credentials: readonly MyDayCredentialMetadataCandidate[];
+}): Map<string, string[]> {
+  const byWorkflow = new Map<string, string[]>();
+  for (const credential of credentials) {
+    if (credential.userId !== userId || !workflowIds.has(credential.workflowId)) continue;
+    const keys = byWorkflow.get(credential.workflowId) ?? [];
+    keys.push(`${credential.connectorId}:${credential.credentialKey}`);
+    byWorkflow.set(credential.workflowId, keys);
+  }
+  return byWorkflow;
+}
+
+function requiredCredentialKeys(workflow: CompiledWorkflow, workflowId: string): string[] {
+  return workflow.steps.flatMap((step) =>
+    getStepInputs(step, workflowId)
+      .filter((input) => input.type === "secret" && input.required !== false)
+      .map((input) => `${step.capabilityId ?? step.type}:${input.key}`),
+  );
+}
+
 function attentionPriority(key: string): number {
   if (key.includes(":connection") || key.includes(":unsupported") || key.includes(":unavailable")) return 1;
   if (key.includes(":test-only")) return 4;
@@ -161,7 +213,7 @@ function activityStatus(status: MyDayExecutionCandidate["status"]): {
     case "partially_failed":
       return { status: "failed", title: "Run needs review", description: "Some steps completed before the run stopped." };
     case "cancelled":
-      return { status: "failed", title: "Run cancelled", description: "The run ended before it completed." };
+      return { status: "cancelled", title: "Run cancelled", description: "The run was cancelled before it completed." };
     default:
       return { status: "failed", title: "Run failed", description: "The run stopped before it completed." };
   }
@@ -178,8 +230,7 @@ export function buildMyDayData(input: BuildMyDayInput): MyDayData {
   const workflowById = new Map(workflows.map((workflow) => [workflow.id, workflow]));
   const connections = readinessConnections(
     input.connections
-      .filter((connection) => connection.userId === input.userId)
-      .slice(0, MY_DAY_LIMITS.connections),
+      .filter((connection) => connection.userId === input.userId),
   );
   const executions = input.executions
     .filter((execution) => execution.userId === input.userId && workflowById.has(execution.workflowId))
@@ -190,13 +241,37 @@ export function buildMyDayData(input: BuildMyDayInput): MyDayData {
     const parsed = CompiledWorkflowSchema.safeParse(candidate.workflow);
     if (!parsed.success) return [];
     const workflow: CompiledWorkflow = annotateWorkflowCapabilities(parsed.data);
-    const readiness = getWorkflowReadiness({
+    const requiredKeys = requiredCredentialKeys(workflow, candidate.id);
+    const readinessCredentialKeys = new Set(candidate.configuredCredentialKeys);
+    if (!candidate.credentialMetadataComplete) {
+      for (const key of requiredKeys) readinessCredentialKeys.add(key);
+    }
+    const baseReadiness = getWorkflowReadiness({
       workflow,
       workflowId: candidate.id,
       values: setupValues(candidate.setupConfig),
-      configuredCredentialKeys: new Set(candidate.configuredCredentialKeys),
+      configuredCredentialKeys: readinessCredentialKeys,
       connections,
     });
+    const readiness = !candidate.credentialMetadataComplete && requiredKeys.length > 0
+      ? {
+          ...baseReadiness,
+          attention: [
+            ...baseReadiness.attention,
+            {
+              key: `${workflow.steps[0].id}:credential-status-unavailable`,
+              stepId: workflow.steps[0].id,
+              title: "Confirm saved security setup",
+              description: "CrazyLoops could not safely confirm every saved security key for this workflow. Open it to review setup.",
+              actionLabel: "Review workflow",
+              blocksTest: true,
+              blocksActivation: true,
+            },
+          ],
+          testReady: false,
+          activationReady: false,
+        }
+      : baseReadiness;
     return [{ candidate, workflow, readiness }];
   });
 
@@ -241,9 +316,8 @@ export function buildMyDayData(input: BuildMyDayInput): MyDayData {
     }];
   });
 
-  const needsYou = [...readinessAttention, ...executionAttention]
-    .sort(attentionSort)
-    .slice(0, MY_DAY_LIMITS.needsYou);
+  const allNeedsYou = [...readinessAttention, ...executionAttention].sort(attentionSort);
+  const needsYou = allNeedsYou.slice(0, MY_DAY_LIMITS.needsYou);
 
   const readyToday = evaluated
     .filter(({ readiness }) => readiness.testReady)
@@ -318,7 +392,7 @@ export function buildMyDayData(input: BuildMyDayInput): MyDayData {
   const recentCompletedCount = executions.filter((execution) => Boolean(execution.completedAt)).length;
   const readyToTestCount = evaluated.filter(({ readiness }) => readiness.testReady).length;
   const sentence = [
-    `${plural(needsYou.length, "thing")} need${needsYou.length === 1 ? "s" : ""} you.`,
+    `${plural(allNeedsYou.length, "thing")} need${allNeedsYou.length === 1 ? "s" : ""} you.`,
     `${plural(readyToTestCount, "workflow")} ${readyToTestCount === 1 ? "is" : "are"} ready to test.`,
     `${plural(recentCompletedCount, "run")} completed recently.`,
   ].join(" ");
@@ -326,7 +400,7 @@ export function buildMyDayData(input: BuildMyDayInput): MyDayData {
   return {
     summary: {
       workflowCount: workflows.length,
-      attentionCount: needsYou.length,
+      attentionCount: allNeedsYou.length,
       readyToTestCount,
       recentCompletedCount,
       sentence,
