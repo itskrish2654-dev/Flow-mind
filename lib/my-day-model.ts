@@ -1,0 +1,340 @@
+import { CompiledWorkflowSchema, type CompiledWorkflow } from "@/lib/schemas/workflow";
+import { annotateWorkflowCapabilities } from "@/lib/capability-registry";
+import {
+  getWorkflowReadiness,
+  type WorkflowConnectionReadiness,
+} from "@/lib/workflow-readiness";
+
+export const MY_DAY_LIMITS = {
+  workflows: 30,
+  executions: 10,
+  connections: 25,
+  credentials: 200,
+  needsYou: 8,
+  today: 5,
+  waitingOn: 5,
+  recentActivity: 5,
+} as const;
+
+export type MyDayItemKind = "attention" | "today" | "waiting" | "activity";
+export type MyDayItemStatus =
+  | "action_required"
+  | "ready"
+  | "waiting"
+  | "running"
+  | "success"
+  | "failed";
+
+export type MyDayItem = {
+  id: string;
+  kind: MyDayItemKind;
+  priority: number;
+  title: string;
+  description: string;
+  source: string;
+  timestamp: string | null;
+  status: MyDayItemStatus;
+  cta: {
+    label: string;
+    href: string;
+  };
+};
+
+export type MyDayData = {
+  summary: {
+    workflowCount: number;
+    attentionCount: number;
+    readyToTestCount: number;
+    recentCompletedCount: number;
+    sentence: string;
+  };
+  startWith: MyDayItem | null;
+  needsYou: MyDayItem[];
+  today: MyDayItem[];
+  waitingOn: MyDayItem[];
+  recentActivity: MyDayItem[];
+};
+
+export type MyDayWorkflowCandidate = {
+  id: string;
+  userId: string;
+  name: string;
+  lifecycleState: "active" | "disabled" | "archived";
+  updatedAt: string;
+  workflow: unknown;
+  setupConfig: unknown;
+  configuredCredentialKeys: readonly string[];
+};
+
+export type MyDayExecutionCandidate = {
+  id: string;
+  userId: string;
+  workflowId: string;
+  status: "queued" | "running" | "succeeded" | "partially_failed" | "failed" | "cancelled";
+  triggerType: string;
+  createdAt: string;
+  completedAt: string | null;
+  failureCategory: string | null;
+};
+
+export type MyDayConnectionCandidate = {
+  id: string;
+  userId: string;
+  provider: string;
+  status: "connected" | "expired" | "revoked" | "error";
+};
+
+export type BuildMyDayInput = {
+  userId: string;
+  workflows: readonly MyDayWorkflowCandidate[];
+  executions: readonly MyDayExecutionCandidate[];
+  connections: readonly MyDayConnectionCandidate[];
+};
+
+const USER_ACTION_FAILURES = new Set([
+  "authorization",
+  "invalid_credentials",
+  "invalid_destination",
+  "invalid_input",
+  "invalid_workflow",
+  "unsupported_capability",
+]);
+
+function safeText(value: string, fallback: string, maxLength = 140): string {
+  const cleaned = value.replace(/\s+/g, " ").trim().slice(0, maxLength);
+  return cleaned || fallback;
+}
+
+function timestampValue(value: string | null): number {
+  if (!value) return 0;
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function newestFirst<T extends { timestamp: string | null; id: string }>(left: T, right: T): number {
+  return timestampValue(right.timestamp) - timestampValue(left.timestamp) || left.id.localeCompare(right.id);
+}
+
+function attentionSort(left: MyDayItem, right: MyDayItem): number {
+  return left.priority - right.priority || newestFirst(left, right) || left.title.localeCompare(right.title);
+}
+
+function setupValues(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  );
+}
+
+function readinessConnections(
+  connections: readonly MyDayConnectionCandidate[],
+): WorkflowConnectionReadiness[] {
+  const allowedProviders = new Set(["airtable", "google", "slack", "notion", "hubspot"]);
+  return connections.flatMap((connection) => {
+    if (!allowedProviders.has(connection.provider) || connection.status === "revoked") return [];
+    return [{
+      id: connection.id,
+      provider: connection.provider as WorkflowConnectionReadiness["provider"],
+      status: connection.status,
+    }];
+  });
+}
+
+function attentionPriority(key: string): number {
+  if (key.includes(":connection") || key.includes(":unsupported") || key.includes(":unavailable")) return 1;
+  if (key.includes(":test-only")) return 4;
+  return 5;
+}
+
+function activityStatus(status: MyDayExecutionCandidate["status"]): {
+  status: MyDayItemStatus;
+  title: string;
+  description: string;
+} {
+  switch (status) {
+    case "queued":
+      return { status: "waiting", title: "Waiting to start", description: "This run is queued and has not started yet." };
+    case "running":
+      return { status: "running", title: "Run in progress", description: "CrazyLoops is working through this workflow." };
+    case "succeeded":
+      return { status: "success", title: "Run completed", description: "The workflow completed successfully." };
+    case "partially_failed":
+      return { status: "failed", title: "Run needs review", description: "Some steps completed before the run stopped." };
+    case "cancelled":
+      return { status: "failed", title: "Run cancelled", description: "The run ended before it completed." };
+    default:
+      return { status: "failed", title: "Run failed", description: "The run stopped before it completed." };
+  }
+}
+
+function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : pluralForm}`;
+}
+
+export function buildMyDayData(input: BuildMyDayInput): MyDayData {
+  const workflows = input.workflows
+    .filter((workflow) => workflow.userId === input.userId && workflow.lifecycleState !== "archived")
+    .slice(0, MY_DAY_LIMITS.workflows);
+  const workflowById = new Map(workflows.map((workflow) => [workflow.id, workflow]));
+  const connections = readinessConnections(
+    input.connections
+      .filter((connection) => connection.userId === input.userId)
+      .slice(0, MY_DAY_LIMITS.connections),
+  );
+  const executions = input.executions
+    .filter((execution) => execution.userId === input.userId && workflowById.has(execution.workflowId))
+    .sort((left, right) => timestampValue(right.createdAt) - timestampValue(left.createdAt) || left.id.localeCompare(right.id))
+    .slice(0, MY_DAY_LIMITS.executions);
+
+  const evaluated = workflows.flatMap((candidate) => {
+    const parsed = CompiledWorkflowSchema.safeParse(candidate.workflow);
+    if (!parsed.success) return [];
+    const workflow: CompiledWorkflow = annotateWorkflowCapabilities(parsed.data);
+    const readiness = getWorkflowReadiness({
+      workflow,
+      workflowId: candidate.id,
+      values: setupValues(candidate.setupConfig),
+      configuredCredentialKeys: new Set(candidate.configuredCredentialKeys),
+      connections,
+    });
+    return [{ candidate, workflow, readiness }];
+  });
+
+  const readinessAttention = evaluated.flatMap(({ candidate, readiness }) => {
+    const source = safeText(candidate.name, "Untitled workflow");
+    return readiness.attention.map<MyDayItem>((attention) => ({
+      id: `workflow:${candidate.id}:${attention.key}`,
+      kind: "attention",
+      priority: attentionPriority(attention.key),
+      title: safeText(attention.title, "Review workflow"),
+      description: safeText(attention.description, "This workflow needs your attention.", 240),
+      source,
+      timestamp: candidate.updatedAt,
+      status: "action_required",
+      cta: {
+        label: safeText(attention.actionLabel, "Review workflow", 40),
+        href: `/dashboard/projects/${candidate.id}?step=${encodeURIComponent(attention.stepId)}`,
+      },
+    }));
+  });
+
+  const seenExecutionAttention = new Set<string>();
+  const executionAttention = executions.flatMap<MyDayItem>((execution) => {
+    const category = execution.failureCategory?.toLowerCase() ?? "";
+    const isAmbiguous = category === "ambiguous_external_result";
+    const requiresAction = isAmbiguous || USER_ACTION_FAILURES.has(category);
+    if (!requiresAction || seenExecutionAttention.has(execution.workflowId)) return [];
+    seenExecutionAttention.add(execution.workflowId);
+    const workflow = workflowById.get(execution.workflowId);
+    return [{
+      id: `execution:${execution.id}:attention`,
+      kind: "attention",
+      priority: isAmbiguous ? 2 : 3,
+      title: isAmbiguous ? "Check the provider result" : "Review the failed run",
+      description: isAmbiguous
+        ? "The provider response could not be confirmed. Review the run before trying it again."
+        : "This run needs a configuration or permission change before it can succeed.",
+      source: safeText(workflow?.name ?? "Workflow", "Workflow"),
+      timestamp: execution.completedAt ?? execution.createdAt,
+      status: "action_required",
+      cta: { label: "Open workflow", href: `/dashboard/projects/${execution.workflowId}` },
+    }];
+  });
+
+  const needsYou = [...readinessAttention, ...executionAttention]
+    .sort(attentionSort)
+    .slice(0, MY_DAY_LIMITS.needsYou);
+
+  const readyToday = evaluated
+    .filter(({ readiness }) => readiness.testReady)
+    .map<MyDayItem>(({ candidate, readiness }) => ({
+      id: `workflow:${candidate.id}:ready-to-test`,
+      kind: "today",
+      priority: readiness.activationReady ? 1 : 2,
+      title: "Ready to test",
+      description: readiness.activationReady
+        ? "Every required detail is in place. Run a test when you are ready."
+        : "This workflow can be tested now, but it still has a limitation before activation.",
+      source: safeText(candidate.name, "Untitled workflow"),
+      timestamp: candidate.updatedAt,
+      status: "ready",
+      cta: { label: "Open workflow", href: `/dashboard/projects/${candidate.id}` },
+    }));
+
+  const setupToday = evaluated
+    .filter(({ readiness }) => !readiness.testReady && !readiness.attention.some((item) => item.key.includes(":unsupported")))
+    .flatMap<MyDayItem>(({ candidate, readiness }) => {
+      const next = readiness.attention.find((item) => item.blocksTest);
+      if (!next) return [];
+      return [{
+        id: `workflow:${candidate.id}:continue-setup`,
+        kind: "today",
+        priority: 3,
+        title: "Continue setup",
+        description: safeText(next.description, "Add the next required detail to move this workflow forward.", 240),
+        source: safeText(candidate.name, "Untitled workflow"),
+        timestamp: candidate.updatedAt,
+        status: "ready",
+        cta: { label: safeText(next.actionLabel, "Review workflow", 40), href: `/dashboard/projects/${candidate.id}?step=${encodeURIComponent(next.stepId)}` },
+      }];
+    });
+
+  const today = [...readyToday, ...setupToday]
+    .sort((left, right) => left.priority - right.priority || newestFirst(left, right))
+    .slice(0, MY_DAY_LIMITS.today);
+
+  const waitingOn = executions
+    .filter((execution) => execution.status === "queued")
+    .slice(0, MY_DAY_LIMITS.waitingOn)
+    .map<MyDayItem>((execution) => ({
+      id: `execution:${execution.id}:waiting`,
+      kind: "waiting",
+      priority: 1,
+      title: "Waiting to start",
+      description: "This run is durably queued and has not started yet.",
+      source: safeText(workflowById.get(execution.workflowId)?.name ?? "Workflow", "Workflow"),
+      timestamp: execution.createdAt,
+      status: "waiting",
+      cta: { label: "Open workflow", href: `/dashboard/projects/${execution.workflowId}` },
+    }));
+
+  const recentActivity = executions
+    .slice(0, MY_DAY_LIMITS.recentActivity)
+    .map<MyDayItem>((execution) => {
+      const display = activityStatus(execution.status);
+      return {
+        id: `execution:${execution.id}:activity`,
+        kind: "activity",
+        priority: 1,
+        title: display.title,
+        description: display.description,
+        source: safeText(workflowById.get(execution.workflowId)?.name ?? "Workflow", "Workflow"),
+        timestamp: execution.completedAt ?? execution.createdAt,
+        status: display.status,
+        cta: { label: "View workflow", href: `/dashboard/projects/${execution.workflowId}` },
+      };
+    });
+
+  const recentCompletedCount = executions.filter((execution) => Boolean(execution.completedAt)).length;
+  const readyToTestCount = evaluated.filter(({ readiness }) => readiness.testReady).length;
+  const sentence = [
+    `${plural(needsYou.length, "thing")} need${needsYou.length === 1 ? "s" : ""} you.`,
+    `${plural(readyToTestCount, "workflow")} ${readyToTestCount === 1 ? "is" : "are"} ready to test.`,
+    `${plural(recentCompletedCount, "run")} completed recently.`,
+  ].join(" ");
+
+  return {
+    summary: {
+      workflowCount: workflows.length,
+      attentionCount: needsYou.length,
+      readyToTestCount,
+      recentCompletedCount,
+      sentence,
+    },
+    startWith: needsYou[0] ?? today[0] ?? null,
+    needsYou,
+    today,
+    waitingOn,
+    recentActivity,
+  };
+}

@@ -30,7 +30,7 @@ export async function updateSession(request: NextRequest) {
 
   const { data } = await supabase.auth.getClaims();
   const isAuthenticated = Boolean(data?.claims?.sub);
-  const isProtectedRoute = request.nextUrl.pathname.startsWith("/dashboard") || request.nextUrl.pathname.startsWith("/settings");
+  const isProtectedRoute = request.nextUrl.pathname.startsWith("/dashboard") || request.nextUrl.pathname.startsWith("/settings") || request.nextUrl.pathname.startsWith("/my-day");
   const isLoginRoute = request.nextUrl.pathname === "/login";
 
   if (isProtectedRoute && !isAuthenticated) {
