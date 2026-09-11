@@ -1,35 +1,111 @@
 import { readConnectionSecret } from "@/lib/connectors/connection-vault";
 import { ConnectorError, classifyConnectorHttpFailure } from "@/lib/connectors/errors";
 import { refreshGoogleAccessToken } from "@/lib/connectors/google/oauth-provider";
+import { decideGoogleTokenAction } from "@/lib/connectors/google/token-lifecycle-core";
 import { refreshConnectionToken } from "@/lib/connectors/token-refresh";
 import { captureOperationalEvent } from "@/lib/observability";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const GOOGLE_API_TIMEOUT_MS = 12_000;
+const CONCURRENT_REFRESH_WAIT_MS = [50, 100, 200] as const;
+
+async function loadGoogleConnection(userId: string, connectionId: string) {
+  return createAdminClient()
+    .from("connector_connections")
+    .select("id,provider_family,status,granted_scopes,token_expires_at,last_error_category")
+    .eq("id", connectionId)
+    .eq("user_id", userId)
+    .eq("provider_family", "google")
+    .maybeSingle();
+}
+
+function reconnectRequired(): never {
+  throw new ConnectorError({
+    category: "authentication",
+    code: "GOOGLE_RECONNECT_REQUIRED",
+    message: "Reconnect Google to continue.",
+    retryable: false,
+  });
+}
+
+function assertRequiredScopes(grantedScopes: string[], requiredScopes: string[]) {
+  const missing = requiredScopes.filter((scope) => !grantedScopes.includes(scope));
+  if (missing.length) {
+    throw new ConnectorError({
+      category: "authorization",
+      code: "GOOGLE_ADDITIONAL_SCOPE_REQUIRED",
+      message: "CrazyLoops needs additional Google permission for this workflow.",
+      retryable: false,
+    });
+  }
+}
 
 export async function getGoogleAccessToken(input: { userId: string; connectionId: string; requiredScopes: string[] }) {
-  const admin = createAdminClient();
-  let result = await admin.from("connector_connections")
-    .select("id,provider_family,status,granted_scopes,token_expires_at")
-    .eq("id", input.connectionId).eq("user_id", input.userId).eq("provider_family", "google").maybeSingle();
-  if (result.error || !result.data || result.data.status !== "connected") {
-    throw new ConnectorError({ category: "authentication", code: "GOOGLE_RECONNECT_REQUIRED", message: "Reconnect Google to continue.", retryable: false });
-  }
-  const missing = input.requiredScopes.filter((scope) => !result.data!.granted_scopes.includes(scope));
-  if (missing.length) {
-    throw new ConnectorError({ category: "authorization", code: "GOOGLE_ADDITIONAL_SCOPE_REQUIRED", message: "CrazyLoops needs additional Google permission for this workflow.", retryable: false });
-  }
-  if (!result.data.token_expires_at || Date.parse(result.data.token_expires_at) < Date.now() + 60_000) {
+  let result = await loadGoogleConnection(input.userId, input.connectionId);
+  if (result.error || !result.data) reconnectRequired();
+  assertRequiredScopes(result.data.granted_scopes, input.requiredScopes);
+
+  const decision = decideGoogleTokenAction({
+    status: result.data.status,
+    tokenExpiresAt: result.data.token_expires_at,
+    lastErrorCategory: result.data.last_error_category,
+  });
+  if (decision === "reconnect") reconnectRequired();
+  if (decision === "refresh") {
     try {
-      await refreshConnectionToken({ userId: input.userId, connectionId: input.connectionId, refresh: refreshGoogleAccessToken });
+      const refresh = await refreshConnectionToken({
+        userId: input.userId,
+        connectionId: input.connectionId,
+        connectorId: "google",
+        refresh: refreshGoogleAccessToken,
+      });
+      if (!refresh.refreshed) {
+        for (const waitMs of CONCURRENT_REFRESH_WAIT_MS) {
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+          result = await loadGoogleConnection(input.userId, input.connectionId);
+          if (
+            result.data &&
+            decideGoogleTokenAction({
+              status: result.data.status,
+              tokenExpiresAt: result.data.token_expires_at,
+              lastErrorCategory: result.data.last_error_category,
+            }) === "use_access_token"
+          ) {
+            break;
+          }
+        }
+      }
     } catch (error) {
-      await captureOperationalEvent({ level: "warn", event: "google_reconnect_required", userId: input.userId, status: "expired", errorCategory: "authentication" });
+      const failedConnection = await loadGoogleConnection(input.userId, input.connectionId);
+      if (
+        failedConnection.data &&
+        decideGoogleTokenAction({
+          status: failedConnection.data.status,
+          tokenExpiresAt: failedConnection.data.token_expires_at,
+          lastErrorCategory: failedConnection.data.last_error_category,
+        }) === "reconnect"
+      ) {
+        await captureOperationalEvent({ level: "warn", event: "google_reconnect_required", userId: input.userId, status: "expired", errorCategory: "authentication" });
+      }
       throw error;
     }
-    result = await admin.from("connector_connections")
-      .select("id,provider_family,status,granted_scopes,token_expires_at")
-      .eq("id", input.connectionId).eq("user_id", input.userId).eq("provider_family", "google").maybeSingle();
-    if (!result.data || result.data.status !== "connected") throw new Error("Reconnect Google to continue.");
+    result = await loadGoogleConnection(input.userId, input.connectionId);
+    if (
+      !result.data ||
+      decideGoogleTokenAction({
+        status: result.data.status,
+        tokenExpiresAt: result.data.token_expires_at,
+        lastErrorCategory: result.data.last_error_category,
+      }) !== "use_access_token"
+    ) {
+      throw new ConnectorError({
+        category: "provider_unavailable",
+        code: "GOOGLE_REFRESH_IN_PROGRESS",
+        message: "Google authorization is being refreshed. Try again shortly.",
+        retryable: true,
+      });
+    }
+    assertRequiredScopes(result.data.granted_scopes, input.requiredScopes);
   }
   return readConnectionSecret({ userId: input.userId, connectionId: input.connectionId, credentialKey: "access_token" });
 }

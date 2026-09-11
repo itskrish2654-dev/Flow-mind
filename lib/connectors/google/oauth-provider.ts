@@ -35,6 +35,14 @@ async function tokenRequest(params: URLSearchParams): Promise<GoogleTokenRespons
     signal: AbortSignal.timeout(10_000),
   });
   const body = await response.json().catch(() => ({})) as GoogleTokenResponse;
+  if (body.error === "invalid_grant") {
+    throw new ConnectorError({
+      category: "authentication",
+      code: "GOOGLE_REFRESH_REVOKED",
+      message: "Reconnect Google to continue.",
+      retryable: false,
+    });
+  }
   if (!response.ok || !body.access_token) throw new ConnectorError(classifyConnectorHttpFailure(response.status));
   return body;
 }

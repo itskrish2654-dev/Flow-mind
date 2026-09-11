@@ -1,29 +1,94 @@
 import "server-only";
 
-import { readConnectionSecret, storeConnectionSecret } from "@/lib/connectors/connection-vault";
+import {
+  prepareConnectionCredential,
+  readConnectionSecret,
+} from "@/lib/connectors/connection-vault";
+import { ConnectorError } from "@/lib/connectors/errors";
+import {
+  runTokenRefresh,
+  type RefreshTokens,
+} from "@/lib/connectors/google/token-lifecycle-core";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { Json } from "@/lib/supabase/types";
 
-export type RefreshTokens = { accessToken: string; refreshToken?: string; expiresAt: string; grantedScopes?: string[] };
+export type { RefreshTokens } from "@/lib/connectors/google/token-lifecycle-core";
 export type TokenRefresher = (refreshToken: string) => Promise<RefreshTokens>;
 
-export async function refreshConnectionToken(input: { userId: string; connectionId: string; refresh: TokenRefresher }) {
+export async function refreshConnectionToken(input: {
+  userId: string;
+  connectionId: string;
+  connectorId: "google";
+  refresh: TokenRefresher;
+}) {
   const admin = createAdminClient();
-  const { data: claimed, error: claimError } = await admin.rpc("claim_connector_token_refresh", { p_connection_id: input.connectionId, p_user_id: input.userId, p_lease_seconds: 30 });
-  if (claimError || !claimed) return { refreshed: false as const, reason: "refresh_in_progress" as const };
-  try {
-    const refreshToken = await readConnectionSecret({ userId: input.userId, connectionId: input.connectionId, credentialKey: "refresh_token" });
-    const tokens = await input.refresh(refreshToken);
-    await storeConnectionSecret({ userId: input.userId, connectionId: input.connectionId, credentialKey: "access_token", credentialType: "oauth_access_token", plaintext: tokens.accessToken });
-    if (tokens.refreshToken) await storeConnectionSecret({ userId: input.userId, connectionId: input.connectionId, credentialKey: "refresh_token", credentialType: "oauth_refresh_token", plaintext: tokens.refreshToken });
-    const update: { status: "connected"; token_expires_at: string; last_refreshed_at: string; last_error_category: null; updated_at: string; granted_scopes?: string[] } = { status: "connected", token_expires_at: tokens.expiresAt, last_refreshed_at: new Date().toISOString(), last_error_category: null, updated_at: new Date().toISOString() };
-    if (tokens.grantedScopes) update.granted_scopes = tokens.grantedScopes;
-    const { error } = await admin.from("connector_connections").update(update).eq("id", input.connectionId).eq("user_id", input.userId);
-    if (error) throw new Error("Refreshed connection metadata could not be stored.");
-    return { refreshed: true as const, expiresAt: tokens.expiresAt };
-  } catch (error) {
-    await admin.from("connector_connections").update({ status: "expired", last_error_category: "authentication", updated_at: new Date().toISOString() }).eq("id", input.connectionId).eq("user_id", input.userId);
-    throw error;
-  } finally {
-    await admin.rpc("release_connector_token_refresh", { p_connection_id: input.connectionId, p_user_id: input.userId });
-  }
+  return runTokenRefresh({
+    claimLease: async () => {
+      const { data, error } = await admin.rpc("claim_connector_token_refresh", {
+        p_connection_id: input.connectionId,
+        p_user_id: input.userId,
+        p_lease_seconds: 30,
+      });
+      return !error && data === true;
+    },
+    readRefreshToken: () =>
+      readConnectionSecret({
+        userId: input.userId,
+        connectionId: input.connectionId,
+        credentialKey: "refresh_token",
+      }),
+    requestTokens: input.refresh,
+    isReconnectRequiredError: (error) =>
+      error instanceof ConnectorError && error.details.category === "authentication",
+    finalizeTokens: async (tokens) => {
+      const accessCredential = prepareConnectionCredential({
+        userId: input.userId,
+        connectionId: input.connectionId,
+        connectorId: input.connectorId,
+        credentialKey: "access_token",
+        credentialType: "oauth_access_token",
+        plaintext: tokens.accessToken,
+      });
+      const refreshCredential = tokens.refreshToken
+        ? prepareConnectionCredential({
+            userId: input.userId,
+            connectionId: input.connectionId,
+            connectorId: input.connectorId,
+            credentialKey: "refresh_token",
+            credentialType: "oauth_refresh_token",
+            plaintext: tokens.refreshToken,
+          })
+        : null;
+      const { data, error } = await admin.rpc("finalize_google_token_refresh", {
+        p_connection_id: input.connectionId,
+        p_user_id: input.userId,
+        p_token_expires_at: tokens.expiresAt,
+        p_granted_scopes: tokens.grantedScopes ?? null,
+        p_access_credential: accessCredential as Json,
+        p_refresh_credential: refreshCredential as Json | null,
+      });
+      if (error || data !== true) {
+        throw new Error("Refreshed Google credentials could not be finalized.");
+      }
+    },
+    markReconnectRequired: async () => {
+      const { error } = await admin
+        .from("connector_connections")
+        .update({
+          status: "expired",
+          last_error_category: "authentication",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", input.connectionId)
+        .eq("user_id", input.userId)
+        .eq("provider_family", "google");
+      if (error) throw new Error("Google reconnect state could not be stored.");
+    },
+    releaseLease: async () => {
+      await admin.rpc("release_connector_token_refresh", {
+        p_connection_id: input.connectionId,
+        p_user_id: input.userId,
+      });
+    },
+  });
 }

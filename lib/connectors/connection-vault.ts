@@ -7,6 +7,45 @@ function context(userId: string, connectionId: string, connectorId: string, cred
   return { userId, workflowId: `connection:${connectionId}`, connectorId, credentialKey };
 }
 
+export type PreparedConnectionCredential = {
+  credential_key: string;
+  credential_type: string;
+  ciphertext: string;
+  nonce: string;
+  auth_tag: string;
+  algorithm: "aes-256-gcm";
+  encryption_version: 1;
+};
+
+/**
+ * Encrypt a connection credential without publishing it. Callers that need an
+ * atomic metadata + vault commit can pass this opaque material to a narrowly
+ * scoped database transaction.
+ */
+export function prepareConnectionCredential(input: {
+  userId: string;
+  connectionId: string;
+  connectorId: string;
+  credentialKey: string;
+  credentialType: string;
+  plaintext: string;
+}): PreparedConnectionCredential {
+  if (!input.plaintext) throw new Error("Connection credential is empty.");
+  const encrypted = encryptCredential(
+    input.plaintext,
+    context(input.userId, input.connectionId, input.connectorId, input.credentialKey),
+  );
+  return {
+    credential_key: input.credentialKey,
+    credential_type: input.credentialType,
+    ciphertext: encrypted.ciphertext,
+    nonce: encrypted.nonce,
+    auth_tag: encrypted.authTag,
+    algorithm: encrypted.algorithm,
+    encryption_version: encrypted.encryptionVersion,
+  };
+}
+
 async function assertOwnedConnection(userId: string, connectionId: string) {
   const admin = createAdminClient();
   const { data, error } = await admin.from("connector_connections").select("id, connector_id, provider_family, status").eq("id", connectionId).eq("user_id", userId).maybeSingle();
@@ -16,11 +55,14 @@ async function assertOwnedConnection(userId: string, connectionId: string) {
 
 export async function storeConnectionSecret(input: { userId: string; connectionId: string; credentialKey: string; credentialType: string; plaintext: string }) {
   const connection = await assertOwnedConnection(input.userId, input.connectionId);
-  const encrypted = encryptCredential(input.plaintext, context(input.userId, input.connectionId, connection.connector_id, input.credentialKey));
+  const credential = prepareConnectionCredential({
+    ...input,
+    connectorId: connection.connector_id,
+  });
   const { error } = await createAdminClient().from("connector_connection_credentials").upsert({
     connection_id: input.connectionId, user_id: input.userId, credential_key: input.credentialKey, credential_type: input.credentialType,
-    ciphertext: encrypted.ciphertext, nonce: encrypted.nonce, auth_tag: encrypted.authTag, algorithm: encrypted.algorithm,
-    encryption_version: encrypted.encryptionVersion, updated_at: new Date().toISOString(),
+    ciphertext: credential.ciphertext, nonce: credential.nonce, auth_tag: credential.auth_tag, algorithm: credential.algorithm,
+    encryption_version: credential.encryption_version, updated_at: new Date().toISOString(),
   }, { onConflict: "connection_id,credential_key" });
   if (error) throw new Error("Connection credential could not be stored.");
 }

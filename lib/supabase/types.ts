@@ -642,6 +642,31 @@ export type Database = {
         Args: { p_connection_id: string; p_user_id: string };
         Returns: boolean;
       };
+      finalize_google_oauth_connection: {
+        Args: {
+          p_connection_id: string;
+          p_user_id: string;
+          p_external_account_id: string;
+          p_external_account_label: string | null;
+          p_granted_scopes: string[];
+          p_token_expires_at: string | null;
+          p_safe_metadata: Json;
+          p_access_credential: Json;
+          p_refresh_credential: Json | null;
+        };
+        Returns: string;
+      };
+      finalize_google_token_refresh: {
+        Args: {
+          p_connection_id: string;
+          p_user_id: string;
+          p_token_expires_at: string;
+          p_granted_scopes: string[] | null;
+          p_access_credential: Json;
+          p_refresh_credential: Json | null;
+        };
+        Returns: boolean;
+      };
       run_operational_maintenance: {
         Args: {
           p_stale_before: string;
