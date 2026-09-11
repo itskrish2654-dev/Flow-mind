@@ -63,7 +63,6 @@ export async function refreshConnectionToken(input: {
         p_connection_id: input.connectionId,
         p_user_id: input.userId,
         p_token_expires_at: tokens.expiresAt,
-        p_granted_scopes: tokens.grantedScopes ?? null,
         p_access_credential: accessCredential as Json,
         p_refresh_credential: refreshCredential as Json | null,
       });

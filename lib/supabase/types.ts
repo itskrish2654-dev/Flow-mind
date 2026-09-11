@@ -661,7 +661,6 @@ export type Database = {
           p_connection_id: string;
           p_user_id: string;
           p_token_expires_at: string;
-          p_granted_scopes: string[] | null;
           p_access_credential: Json;
           p_refresh_credential: Json | null;
         };

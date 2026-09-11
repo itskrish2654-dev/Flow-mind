@@ -26,7 +26,29 @@ type GoogleTokenResponse = {
   error?: string;
 };
 
-async function tokenRequest(params: URLSearchParams): Promise<GoogleTokenResponse> {
+export type GoogleTokenRequestPurpose = "authorization_code" | "refresh_token";
+
+export function classifyGoogleInvalidGrant(purpose: GoogleTokenRequestPurpose) {
+  if (purpose === "refresh_token") {
+    return {
+      category: "authentication" as const,
+      code: "GOOGLE_REFRESH_REVOKED",
+      message: "Reconnect Google to continue.",
+      retryable: false,
+    };
+  }
+  return {
+    category: "validation" as const,
+    code: "GOOGLE_AUTHORIZATION_CODE_REJECTED",
+    message: "Google authorization could not be completed. Start the connection again.",
+    retryable: false,
+  };
+}
+
+async function tokenRequest(
+  purpose: GoogleTokenRequestPurpose,
+  params: URLSearchParams,
+): Promise<GoogleTokenResponse> {
   const response = await fetch(GOOGLE_TOKEN_URL, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -36,12 +58,7 @@ async function tokenRequest(params: URLSearchParams): Promise<GoogleTokenRespons
   });
   const body = await response.json().catch(() => ({})) as GoogleTokenResponse;
   if (body.error === "invalid_grant") {
-    throw new ConnectorError({
-      category: "authentication",
-      code: "GOOGLE_REFRESH_REVOKED",
-      message: "Reconnect Google to continue.",
-      retryable: false,
-    });
+    throw new ConnectorError(classifyGoogleInvalidGrant(purpose));
   }
   if (!response.ok || !body.access_token) throw new ConnectorError(classifyConnectorHttpFailure(response.status));
   return body;
@@ -49,7 +66,7 @@ async function tokenRequest(params: URLSearchParams): Promise<GoogleTokenRespons
 
 export async function exchangeGoogleAuthorizationCode(input: { code: string; verifier: string; redirectUri: string; requestedScopes: string[] }) {
   const { clientId, clientSecret } = googleClientConfig();
-  const token = await tokenRequest(new URLSearchParams({
+  const token = await tokenRequest("authorization_code", new URLSearchParams({
     code: input.code,
     client_id: clientId,
     client_secret: clientSecret,
@@ -78,7 +95,7 @@ export async function exchangeGoogleAuthorizationCode(input: { code: string; ver
 
 export async function refreshGoogleAccessToken(refreshToken: string) {
   const { clientId, clientSecret } = googleClientConfig();
-  const token = await tokenRequest(new URLSearchParams({
+  const token = await tokenRequest("refresh_token", new URLSearchParams({
     refresh_token: refreshToken,
     client_id: clientId,
     client_secret: clientSecret,

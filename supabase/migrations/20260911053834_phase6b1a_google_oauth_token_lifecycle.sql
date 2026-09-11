@@ -164,7 +164,15 @@ begin
   update public.connector_connections set
     external_account_label = p_external_account_label,
     status = 'connected',
-    granted_scopes = p_granted_scopes,
+    granted_scopes = array(
+      select distinct scope
+      from unnest(
+        coalesce(v_connection.granted_scopes, '{}'::text[])
+        || p_granted_scopes
+      ) as scope
+      where scope <> 'https://www.googleapis.com/auth/spreadsheets'
+      order by scope
+    ),
     token_expires_at = p_token_expires_at,
     last_refreshed_at = clock_timestamp(),
     last_error_category = null,
@@ -188,7 +196,6 @@ create or replace function public.finalize_google_token_refresh(
   p_connection_id uuid,
   p_user_id uuid,
   p_token_expires_at timestamptz,
-  p_granted_scopes text[],
   p_access_credential jsonb,
   p_refresh_credential jsonb
 )
@@ -204,8 +211,7 @@ begin
      or p_user_id is null
      or p_token_expires_at is null
      or p_token_expires_at <= clock_timestamp()
-     or p_access_credential is null
-     or (p_granted_scopes is not null and 'https://www.googleapis.com/auth/spreadsheets' = any(p_granted_scopes)) then
+     or p_access_credential is null then
     raise exception 'invalid Google token refresh finalization';
   end if;
   if jsonb_typeof(p_access_credential) <> 'object'
@@ -298,7 +304,6 @@ begin
 
   update public.connector_connections set
     status = 'connected',
-    granted_scopes = coalesce(p_granted_scopes, granted_scopes),
     token_expires_at = p_token_expires_at,
     last_refreshed_at = clock_timestamp(),
     last_error_category = null,
@@ -308,8 +313,8 @@ begin
 end;
 $$;
 
-revoke all on function public.finalize_google_token_refresh(uuid, uuid, timestamptz, text[], jsonb, jsonb) from public, anon, authenticated;
-grant execute on function public.finalize_google_token_refresh(uuid, uuid, timestamptz, text[], jsonb, jsonb) to service_role;
+revoke all on function public.finalize_google_token_refresh(uuid, uuid, timestamptz, jsonb, jsonb) from public, anon, authenticated;
+grant execute on function public.finalize_google_token_refresh(uuid, uuid, timestamptz, jsonb, jsonb) to service_role;
 
 -- Ordinary Google access-token expiry is refreshable while an owner-bound
 -- durable refresh credential exists. Other OAuth providers retain the prior

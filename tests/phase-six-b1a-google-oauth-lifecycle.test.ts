@@ -11,6 +11,7 @@ import {
   unionGoogleScopes,
   type ExistingGoogleConnection,
 } from "../lib/connectors/google/oauth-finalization-core";
+import { classifyGoogleInvalidGrant } from "../lib/connectors/google/oauth-provider";
 import { GOOGLE_LEGACY_SHEETS_SCOPE, GOOGLE_SCOPES } from "../lib/connectors/google/scopes";
 import {
   decideGoogleTokenAction,
@@ -290,6 +291,64 @@ test("6B.1A-13 Gmail and Sheets share an account but remain scope-isolated", () 
     unionGoogleScopes([GOOGLE_SCOPES.driveFile], [GOOGLE_SCOPES.gmailSend], GOOGLE_LEGACY_SHEETS_SCOPE),
     [GOOGLE_SCOPES.driveFile, GOOGLE_SCOPES.gmailSend],
   );
+});
+
+test("6B.1A-13b OAuth scope union uses the locked current row and cannot lose a concurrent grant", async () => {
+  const scopeA = "openid";
+  const scopeB = GOOGLE_SCOPES.driveFile;
+  const scopeC = GOOGLE_SCOPES.gmailSend;
+  assert.deepEqual(
+    unionGoogleScopes(
+      [scopeA, scopeB],
+      [scopeA, scopeC, GOOGLE_LEGACY_SHEETS_SCOPE],
+      GOOGLE_LEGACY_SHEETS_SCOPE,
+    ),
+    [scopeA, scopeB, scopeC],
+  );
+
+  const migration = await readFile(migrationFile, "utf8");
+  const oauthFunction = migration.slice(
+    migration.indexOf("create or replace function public.finalize_google_oauth_connection"),
+    migration.indexOf("create or replace function public.finalize_google_token_refresh"),
+  );
+  const rowLock = oauthFunction.indexOf("for update");
+  const scopeMerge = oauthFunction.indexOf("coalesce(v_connection.granted_scopes");
+  assert.ok(rowLock >= 0 && scopeMerge > rowLock);
+  assert.match(oauthFunction, /coalesce\(v_connection\.granted_scopes, '\{\}'::text\[\]\)[\s\S]*\|\| p_granted_scopes/);
+  assert.match(oauthFunction, /where scope <> 'https:\/\/www\.googleapis\.com\/auth\/spreadsheets'/);
+  assert.doesNotMatch(oauthFunction, /granted_scopes = p_granted_scopes/);
+});
+
+test("6B.1A-13c token refresh cannot overwrite scopes granted by a concurrent OAuth flow", async () => {
+  const [migration, refreshRuntime] = await Promise.all([
+    readFile(migrationFile, "utf8"),
+    readFile("lib/connectors/token-refresh.ts", "utf8"),
+  ]);
+  const refreshFunction = migration.slice(
+    migration.indexOf("create or replace function public.finalize_google_token_refresh"),
+    migration.indexOf("create or replace function public.run_connector_maintenance"),
+  );
+  assert.doesNotMatch(refreshFunction, /p_granted_scopes/);
+  assert.doesNotMatch(refreshFunction, /granted_scopes\s*=/);
+  assert.doesNotMatch(refreshRuntime, /p_granted_scopes/);
+});
+
+test("6B.1A-13d invalid_grant classification is truthful to the Google token request purpose", async () => {
+  assert.deepEqual(classifyGoogleInvalidGrant("authorization_code"), {
+    category: "validation",
+    code: "GOOGLE_AUTHORIZATION_CODE_REJECTED",
+    message: "Google authorization could not be completed. Start the connection again.",
+    retryable: false,
+  });
+  assert.deepEqual(classifyGoogleInvalidGrant("refresh_token"), {
+    category: "authentication",
+    code: "GOOGLE_REFRESH_REVOKED",
+    message: "Reconnect Google to continue.",
+    retryable: false,
+  });
+  const provider = await readFile("lib/connectors/google/oauth-provider.ts", "utf8");
+  assert.match(provider, /tokenRequest\("authorization_code", new URLSearchParams/);
+  assert.match(provider, /tokenRequest\("refresh_token", new URLSearchParams/);
 });
 
 test("6B.1A-14 scheduled maintenance preserves refreshable Google OAuth rows", async () => {
