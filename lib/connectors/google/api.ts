@@ -121,6 +121,7 @@ export async function googleApiFetch(input: {
   dispatchMode?: "read" | "side_effect";
   onDispatch?: () => void;
   signal?: AbortSignal;
+  allowNotFoundResponse?: boolean;
 }) {
   if (input.signal?.aborted) {
     throw new ConnectorError({
@@ -169,6 +170,7 @@ export async function googleApiFetch(input: {
     throw new ConnectorError({ category: "ambiguous_acknowledgement", code: "GOOGLE_RESPONSE_UNKNOWN", message: "Google did not return an acknowledgement; the action may have happened.", retryable: false });
   }
   if (!response.ok) {
+    if (response.status === 404 && input.allowNotFoundResponse) return response;
     const details = classifyConnectorHttpFailure(response.status, response.headers.get("retry-after"));
     if (response.status === 401) {
       await createAdminClient().from("connector_connections").update({ status: "expired", last_error_category: "authentication", updated_at: new Date().toISOString() }).eq("id", input.connectionId).eq("user_id", input.userId);

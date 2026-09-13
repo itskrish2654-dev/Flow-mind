@@ -151,12 +151,15 @@ test("7B-14. Gmail push validates the exact OIDC audience and service account", 
   assert.match(push, /payload\.email === serviceAccount/);
 });
 
-test("7B-15. Gmail history is checkpointed only after durable deduped receipts", async () => {
+test("7B-15. Gmail history is durably enqueued and checkpointed only after deduped events", async () => {
   const push = await readFile("lib/connectors/google/gmail-push.ts", "utf8");
-  assert.ok(push.indexOf("connector_event_receipts") < push.indexOf("cursor_value: notification.historyId"));
-  assert.match(push, /provider_event_key: `gmail:\$\{messageId\}`/);
-  assert.match(push, /receiptError\.code !== "23505"/);
-  assert.match(push, /processingFailed/);
+  const migration = await readFile("supabase/migrations/20260913072359_phase6b1c_gmail_durable_ingestion.sql", "utf8");
+  assert.match(push, /enqueue_gmail_push_notification/);
+  assert.ok(push.indexOf("connector_event_receipts") < push.indexOf("complete_gmail_ingestion"));
+  assert.match(push, /provider_event_key: `gmail:\$\{entry\.messageId\}`/);
+  assert.match(push, /error\.code !== "23505"/);
+  assert.match(migration, /processed_history_id text not null/);
+  assert.match(migration, /observed_history_id text not null/);
 });
 
 test("7B-16. Gmail watches record expiry and renew through maintenance", async () => {

@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 
 import { reconcileFailedAccountDeletions } from "@/lib/account-deletion-maintenance";
 import { dispatchQueuedConnectorReceipts } from "@/lib/connectors/webhook-dispatch";
-import { renewDueGmailWatches } from "@/lib/connectors/google/gmail-push";
+import { drainGmailIngestion, renewDueGmailWatches } from "@/lib/connectors/google/gmail-push";
 import { captureOperationalError, captureOperationalEvent } from "@/lib/observability";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -38,6 +38,7 @@ export async function GET(request: Request) {
     if (connectorError) throw new Error("connector_maintenance_rpc_failed");
     const result = data && typeof data === "object" && !Array.isArray(data) ? data : {};
     const deletionJobs = await reconcileFailedAccountDeletions();
+    const gmailIngestion = await drainGmailIngestion(5);
     const gmailWatches = await renewDueGmailWatches();
     const connectorDispatch = await dispatchQueuedConnectorReceipts(20);
     await captureOperationalEvent({
@@ -54,6 +55,9 @@ export async function GET(request: Request) {
         deletionJobsRetried: deletionJobs.retried,
         deletionJobsSucceeded: deletionJobs.succeeded,
         connectorMetrics,
+        gmailIngestionClaimed: gmailIngestion.claimed,
+        gmailIngestionFailed: gmailIngestion.failed,
+        gmailIngestionReceipts: gmailIngestion.receipts,
         connectorReceiptsInspected: connectorDispatch.inspected,
         connectorReceiptsFailed: connectorDispatch.failed,
         gmailWatchesInspected: gmailWatches.inspected,

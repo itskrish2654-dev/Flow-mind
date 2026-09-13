@@ -3,8 +3,9 @@ import { after, NextResponse } from "next/server";
 
 import { getConnectorTrigger } from "@/lib/connectors/registry";
 import { verifyConnectorEndpointToken } from "@/lib/connectors/subscriptions";
-import { dispatchConnectorReceipt } from "@/lib/connectors/webhook-dispatch";
-import { processGmailPush, verifyGooglePubSubRequest } from "@/lib/connectors/google/gmail-push";
+import { dispatchConnectorReceipt, dispatchQueuedConnectorReceipts } from "@/lib/connectors/webhook-dispatch";
+import { GmailPushValidationError } from "@/lib/connectors/google/gmail-ingestion-core";
+import { drainGmailIngestion, queueGmailPushNotification, verifyGooglePubSubRequest } from "@/lib/connectors/google/gmail-push";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Json } from "@/lib/supabase/types";
 import { SECURITY_LIMITS, enforceRateLimit, enforceUsageQuota } from "@/lib/security/limits";
@@ -39,17 +40,33 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
   if (contentLength > MAX_EVENT_BYTES) return NextResponse.json({ error: "Payload too large." }, { status: 413 });
   const raw = new Uint8Array(await request.arrayBuffer());
   if (raw.byteLength > MAX_EVENT_BYTES) return NextResponse.json({ error: "Payload too large." }, { status: 413 });
-  let payload: unknown; try { payload = JSON.parse(Buffer.from(raw).toString("utf8")); } catch { return NextResponse.json({ error: "Valid JSON is required." }, { status: 400 }); }
   if (provider === "google_gmail") {
     if (!(await verifyGooglePubSubRequest(request))) {
       return NextResponse.json({ error: "Google notification verification failed." }, { status: 401 });
     }
+    let payload: unknown;
     try {
-      const receiptIds = await processGmailPush(request, payload, true);
-      after(() => Promise.allSettled(receiptIds.map((receiptId) => dispatchConnectorReceipt(receiptId))));
-      return NextResponse.json({ accepted: true, queued: receiptIds.length }, { status: 202 });
-    } catch { return NextResponse.json({ error: "Google notification processing is temporarily unavailable." }, { status: 503 }); }
+      payload = JSON.parse(Buffer.from(raw).toString("utf8"));
+    } catch {
+      return NextResponse.json({ accepted: true, dropped: true }, { status: 202 });
+    }
+    try {
+      const queued = await queueGmailPushNotification(payload);
+      if (queued.connectionCount > 0) {
+        after(async () => {
+          await drainGmailIngestion(1).catch(() => undefined);
+          await dispatchQueuedConnectorReceipts(20).catch(() => undefined);
+        });
+      }
+      return NextResponse.json({ accepted: true, queued: queued.insertedCount, duplicate: queued.duplicate }, { status: 202 });
+    } catch (error) {
+      if (error instanceof GmailPushValidationError) {
+        return NextResponse.json({ accepted: true, dropped: true }, { status: 202 });
+      }
+      return NextResponse.json({ error: "Google notification could not be durably queued." }, { status: 503 });
+    }
   }
+  let payload: unknown; try { payload = JSON.parse(Buffer.from(raw).toString("utf8")); } catch { return NextResponse.json({ error: "Valid JSON is required." }, { status: 400 }); }
   if (provider === "slack") {
     try {
       const slackPayload = payload as SlackEventEnvelope;

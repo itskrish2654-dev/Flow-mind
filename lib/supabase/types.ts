@@ -165,6 +165,18 @@ export type Database = {
         Update: { status?: "queued" | "processing" | "succeeded" | "failed" | "duplicate"; safe_metadata?: Json; execution_id?: string | null; processed_at?: string | null };
         Relationships: [];
       };
+      gmail_ingestion_states: {
+        Row: { connection_id: string; user_id: string; processed_history_id: string; observed_history_id: string; status: "idle" | "pending" | "processing" | "resync_required" | "reconnect_required"; lease_token: string | null; lease_until: string | null; next_attempt_at: string; attempt_count: number; last_error_category: string | null; created_at: string; updated_at: string };
+        Insert: { connection_id: string; user_id: string; processed_history_id: string; observed_history_id: string; status?: "idle" | "pending" | "processing" | "resync_required" | "reconnect_required"; lease_token?: string | null; lease_until?: string | null; next_attempt_at?: string; attempt_count?: number; last_error_category?: string | null; created_at?: string; updated_at?: string };
+        Update: { processed_history_id?: string; observed_history_id?: string; status?: "idle" | "pending" | "processing" | "resync_required" | "reconnect_required"; lease_token?: string | null; lease_until?: string | null; next_attempt_at?: string; attempt_count?: number; last_error_category?: string | null; updated_at?: string };
+        Relationships: [];
+      };
+      gmail_push_receipts: {
+        Row: { id: string; connection_id: string; user_id: string; pubsub_subscription: string; pubsub_message_id: string; history_id: string; publish_time: string | null; status: "queued" | "succeeded" | "rejected"; attempt_count: number; last_error_category: string | null; received_at: string; processed_at: string | null; expires_at: string };
+        Insert: { id?: string; connection_id: string; user_id: string; pubsub_subscription: string; pubsub_message_id: string; history_id: string; publish_time?: string | null; status?: "queued" | "succeeded" | "rejected"; attempt_count?: number; last_error_category?: string | null; received_at?: string; processed_at?: string | null; expires_at?: string };
+        Update: { status?: "queued" | "succeeded" | "rejected"; attempt_count?: number; last_error_category?: string | null; processed_at?: string | null };
+        Relationships: [];
+      };
       connector_provider_setup_secrets: {
         Row: { provider: string; ciphertext: string; nonce: string; auth_tag: string; encryption_version: number; algorithm: string; created_at: string; expires_at: string };
         Insert: { provider: string; ciphertext: string; nonce: string; auth_tag: string; encryption_version?: number; algorithm?: string; created_at?: string; expires_at: string };
@@ -664,6 +676,22 @@ export type Database = {
           p_access_credential: Json;
           p_refresh_credential: Json | null;
         };
+        Returns: boolean;
+      };
+      enqueue_gmail_push_notification: {
+        Args: { p_email_address: string; p_history_id: string; p_pubsub_subscription: string; p_pubsub_message_id: string; p_publish_time?: string | null };
+        Returns: Array<{ receipt_id: string; connection_id: string; inserted: boolean; processed_history_id: string; observed_history_id: string }>;
+      };
+      claim_gmail_ingestion: {
+        Args: { p_lease_seconds?: number };
+        Returns: Array<{ connection_id: string; user_id: string; processed_history_id: string; observed_history_id: string; lease_token: string }>;
+      };
+      complete_gmail_ingestion: {
+        Args: { p_connection_id: string; p_user_id: string; p_lease_token: string; p_expected_processed_history_id: string; p_completed_history_id: string };
+        Returns: boolean;
+      };
+      defer_gmail_ingestion: {
+        Args: { p_connection_id: string; p_user_id: string; p_lease_token: string; p_error_category: string };
         Returns: boolean;
       };
       run_operational_maintenance: {
