@@ -775,7 +775,16 @@ export async function executeWorkflowSteps({
           };
         }
         const result = await registered.handler(connectorInput, { userId, workflowId, executionId: telemetryExecutionId ?? idempotencyKey ?? workflowId, stepId: step.id, ...(connectorConfig.connectionId ? { connectionId: connectorConfig.connectionId } : {}), idempotencyKey: `${idempotencyKey ?? workflowId}:${step.id}` });
-        if (result.status !== "succeeded" || !result.acknowledged) { await fail(result.error?.message ?? "The connector did not acknowledge this action.", "failed", result.error ? new ConnectorError(result.error) : undefined); break; }
+        if (result.status !== "succeeded" || !result.acknowledged) {
+          await fail(
+            result.error?.message ?? "The connector did not acknowledge this action.",
+            "failed",
+            result.error ? new ConnectorError(result.error) : undefined,
+            result.error?.retryable ?? false,
+            result.metadata,
+          );
+          break;
+        }
         connectorStepOutputs[step.id] = result.output; variables[step.id] = result.output;
         delivered = delivered || result.externallyDelivered;
         await succeed(result.externallyDelivered ? `${registered.operation.displayName} was acknowledged by the provider.` : `${registered.operation.displayName} completed.`, result.metadata, result.providerReferenceId);

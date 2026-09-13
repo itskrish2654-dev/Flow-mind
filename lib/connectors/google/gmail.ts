@@ -1,65 +1,93 @@
-import { googleApiErrorResult, googleApiFetch } from "@/lib/connectors/google/api";
+import {
+  executeGmailReplyToEmail,
+  executeGmailSendEmail,
+  type GmailActionDependencies,
+} from "@/lib/connectors/google/gmail-action-core";
+import { googleApiFetch } from "@/lib/connectors/google/api";
 import { GOOGLE_SCOPES } from "@/lib/connectors/google/scopes";
-import type { ConnectorActionHandler } from "@/lib/connectors/types";
+import type { ConnectorActionContext, ConnectorActionHandler } from "@/lib/connectors/types";
 import { captureOperationalEvent } from "@/lib/observability";
-import { buildRawGmailMessage, gmailHeader } from "@/lib/connectors/google/gmail-message";
 export { htmlToSafeText, normalizeGmailMessage } from "@/lib/connectors/google/gmail-message";
 
-const EMAIL = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
-
-function addresses(value: unknown, required: boolean) {
-  const list = String(value ?? "").split(",").map((item) => item.trim()).filter(Boolean);
-  if (required && list.length === 0) throw new Error("At least one recipient is required.");
-  if (list.some((item) => !EMAIL.test(item))) throw new Error("Every recipient must be a valid email address.");
-  return list;
+function connectionId(context: ConnectorActionContext) {
+  if (!context.connectionId) throw new Error("Google connection is unavailable.");
+  return context.connectionId;
 }
 
-function safeHeader(value: unknown, label: string) {
-  const text = String(value ?? "").trim();
-  if (!text || /[\r\n]/.test(text)) throw new Error(`${label} is required and must not contain line breaks.`);
-  return text.slice(0, 998);
+function dependencies(sendScopes: string[]): GmailActionDependencies {
+  return {
+    readMessage: async ({ messageId, context, onDispatch }) => {
+      const response = await googleApiFetch({
+        userId: context.userId,
+        connectionId: connectionId(context),
+        requiredScopes: [GOOGLE_SCOPES.gmailReadonly],
+        url: `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References&metadataHeaders=Subject&metadataHeaders=Reply-To&metadataHeaders=From`,
+        dispatchMode: "read",
+        onDispatch,
+        signal: context.signal,
+      });
+      return response.json();
+    },
+    sendMessage: async ({ raw, threadId, context, onDispatch }) => {
+      const response = await googleApiFetch({
+        userId: context.userId,
+        connectionId: connectionId(context),
+        requiredScopes: sendScopes,
+        url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+        method: "POST",
+        body: { ...(threadId ? { threadId } : {}), raw },
+        dispatchMode: "side_effect",
+        onDispatch,
+        signal: context.signal,
+      });
+      return response.json();
+    },
+  };
+}
+
+async function recordGmailAction(
+  operation: "send_email" | "reply_to_email",
+  context: ConnectorActionContext,
+  result: Awaited<ReturnType<typeof executeGmailSendEmail>>,
+) {
+  try {
+    await captureOperationalEvent({
+      level: result.status === "succeeded" ? "info" : "warn",
+      event: result.status === "succeeded" ? "gmail_action_success" : "gmail_action_failure",
+      userId: context.userId,
+      workflowId: context.workflowId,
+      executionId: context.executionId,
+      stepId: context.stepId,
+      status: result.status,
+      errorCategory: result.error?.category,
+      metadata: {
+        operation,
+        providerReadDispatched: result.metadata.provider_read_dispatched === true,
+        sideEffectDispatched: result.metadata.side_effect_dispatched === true,
+        externalResultAmbiguous: result.metadata.external_result_ambiguous === true,
+      },
+    });
+  } catch {
+    // Provider truth must not be replaced by a telemetry persistence failure.
+  }
 }
 
 export const gmailSendEmail: ConnectorActionHandler = async (input, context) => {
-  try {
-    if (!context.connectionId) throw new Error("Choose a Google account before sending email.");
-    const to = addresses(input.to, true); const cc = addresses(input.cc, false); const bcc = addresses(input.bcc, false);
-    const subject = safeHeader(input.subject, "Subject"); const body = String(input.body ?? "").trim();
-    if (!body) throw new Error("Email body is required.");
-    const stableMessageId = `<${Buffer.from(context.idempotencyKey).toString("base64url").slice(0, 80)}@crazy-loops.com>`;
-    const response = await googleApiFetch({ userId: context.userId, connectionId: context.connectionId, requiredScopes: [GOOGLE_SCOPES.gmailSend], url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/send", method: "POST", body: { raw: buildRawGmailMessage({ to, cc, bcc, subject, body, messageId: stableMessageId }) } });
-    const sent = await response.json() as { id?: string; threadId?: string };
-    if (!sent.id) throw new Error("Gmail did not acknowledge the sent message.");
-    await captureOperationalEvent({ level: "info", event: "gmail_action_success", userId: context.userId, workflowId: context.workflowId, executionId: context.executionId, stepId: context.stepId, status: "succeeded", metadata: { operation: "send_email" } });
-    return { status: "succeeded", acknowledged: true, externallyDelivered: true, providerReferenceId: sent.id, output: { messageId: sent.id, threadId: sent.threadId ?? "" }, metadata: { operation: "send_email" } };
-  } catch (error) {
-    await captureOperationalEvent({ level: "warn", event: "gmail_action_failure", userId: context.userId, workflowId: context.workflowId, executionId: context.executionId, stepId: context.stepId, status: "failed", errorCategory: "provider" });
-    return googleApiErrorResult(error);
-  }
+  const result = await executeGmailSendEmail(
+    input,
+    context,
+    dependencies([GOOGLE_SCOPES.gmailSend]),
+  );
+  await recordGmailAction("send_email", context, result);
+  return result;
 };
 
 export const gmailReplyToEmail: ConnectorActionHandler = async (input, context) => {
-  try {
-    if (!context.connectionId) throw new Error("Choose a Google account before replying.");
-    const messageId = String(input.messageId ?? "").trim(); const threadId = String(input.threadId ?? "").trim();
-    if (!messageId || !threadId) throw new Error("A Gmail message and thread reference are required.");
-    const sourceResponse = await googleApiFetch({ userId: context.userId, connectionId: context.connectionId, requiredScopes: [GOOGLE_SCOPES.gmailReadonly], url: `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References&metadataHeaders=Subject&metadataHeaders=Reply-To&metadataHeaders=From` });
-    const source = await sourceResponse.json() as { threadId?: string; payload?: { headers?: Array<{ name?: string; value?: string }> } };
-    if (source.threadId !== threadId) throw new Error("The Gmail message does not belong to the selected thread.");
-    const headers = source.payload?.headers; const originalMessageId = gmailHeader(headers, "Message-ID");
-    if (!originalMessageId) throw new Error("The original Gmail message does not contain a valid thread reference.");
-    const to = addresses(input.to || gmailHeader(headers, "Reply-To") || gmailHeader(headers, "From").match(/<([^>]+)>/)?.[1] || gmailHeader(headers, "From"), true);
-    const originalSubject = gmailHeader(headers, "Subject"); const subject = safeHeader(input.subject || (/^re:/i.test(originalSubject) ? originalSubject : `Re: ${originalSubject}`), "Subject");
-    const replyBody = String(input.body ?? "").trim(); if (!replyBody) throw new Error("Reply body is required.");
-    const references = [gmailHeader(headers, "References"), originalMessageId].filter(Boolean).join(" ");
-    const stableMessageId = `<${Buffer.from(context.idempotencyKey).toString("base64url").slice(0, 80)}@crazy-loops.com>`;
-    const sendResponse = await googleApiFetch({ userId: context.userId, connectionId: context.connectionId, requiredScopes: [GOOGLE_SCOPES.gmailReadonly, GOOGLE_SCOPES.gmailSend], url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/send", method: "POST", body: { threadId, raw: buildRawGmailMessage({ to, subject, body: replyBody, messageId: stableMessageId, inReplyTo: originalMessageId, references }) } });
-    const sent = await sendResponse.json() as { id?: string; threadId?: string };
-    if (!sent.id || sent.threadId !== threadId) throw new Error("Gmail did not acknowledge the reply in the requested thread.");
-    await captureOperationalEvent({ level: "info", event: "gmail_action_success", userId: context.userId, workflowId: context.workflowId, executionId: context.executionId, stepId: context.stepId, status: "succeeded", metadata: { operation: "reply_to_email" } });
-    return { status: "succeeded", acknowledged: true, externallyDelivered: true, providerReferenceId: sent.id, output: { messageId: sent.id, threadId }, metadata: { operation: "reply_to_email" } };
-  } catch (error) {
-    await captureOperationalEvent({ level: "warn", event: "gmail_action_failure", userId: context.userId, workflowId: context.workflowId, executionId: context.executionId, stepId: context.stepId, status: "failed", errorCategory: "provider" });
-    return googleApiErrorResult(error);
-  }
+  const result = await executeGmailReplyToEmail(
+    input,
+    context,
+    dependencies([GOOGLE_SCOPES.gmailReadonly, GOOGLE_SCOPES.gmailSend]),
+  );
+  await recordGmailAction("reply_to_email", context, result);
+  return result;
 };

@@ -63,7 +63,9 @@ export function classifyExecutionError(error: unknown): ClassifiedExecutionError
   }
   if (error instanceof ConnectorError) {
     return {
-      category: error.details.code as ExecutionErrorCategory,
+      category: error.details.category === "ambiguous_acknowledgement"
+        ? "ambiguous_external_result"
+        : error.details.code as ExecutionErrorCategory,
       retryable: error.details.retryable,
       safeMessage: error.details.message,
       ...(error.details.retryAfterMs !== undefined ? { retryAfterMs: error.details.retryAfterMs } : {}),

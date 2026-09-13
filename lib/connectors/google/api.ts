@@ -118,10 +118,36 @@ export async function googleApiFetch(input: {
   method?: "GET" | "POST" | "PUT";
   body?: unknown;
   headers?: Record<string, string>;
+  dispatchMode?: "read" | "side_effect";
+  onDispatch?: () => void;
+  signal?: AbortSignal;
 }) {
+  if (input.signal?.aborted) {
+    throw new ConnectorError({
+      category: "timeout",
+      code: "GOOGLE_REQUEST_CANCELLED",
+      message: "The Google request was cancelled before dispatch.",
+      retryable: false,
+    });
+  }
   const accessToken = await getGoogleAccessToken(input);
+  let serializedBody: string | undefined;
+  if (input.body !== undefined) {
+    try {
+      serializedBody = JSON.stringify(input.body);
+    } catch {
+      throw new ConnectorError({
+        category: "validation",
+        code: "GOOGLE_REQUEST_SERIALIZATION_FAILED",
+        message: "The Google request data could not be prepared.",
+        retryable: false,
+      });
+    }
+  }
+  const dispatchMode = input.dispatchMode ?? ((!input.method || input.method === "GET") ? "read" : "side_effect");
   let response: Response;
   try {
+    input.onDispatch?.();
     response = await fetch(input.url, {
       method: input.method ?? "GET",
       headers: {
@@ -130,12 +156,14 @@ export async function googleApiFetch(input: {
         ...(input.body !== undefined ? { "content-type": "application/json" } : {}),
         ...input.headers,
       },
-      ...(input.body !== undefined ? { body: JSON.stringify(input.body) } : {}),
+      ...(serializedBody !== undefined ? { body: serializedBody } : {}),
       cache: "no-store",
-      signal: AbortSignal.timeout(GOOGLE_API_TIMEOUT_MS),
+      signal: input.signal
+        ? AbortSignal.any([input.signal, AbortSignal.timeout(GOOGLE_API_TIMEOUT_MS)])
+        : AbortSignal.timeout(GOOGLE_API_TIMEOUT_MS),
     });
   } catch {
-    if (!input.method || input.method === "GET") {
+    if (dispatchMode === "read") {
       throw new ConnectorError({ category: "provider_unavailable", code: "GOOGLE_READ_TIMEOUT", message: "Google did not respond in time.", retryable: true });
     }
     throw new ConnectorError({ category: "ambiguous_acknowledgement", code: "GOOGLE_RESPONSE_UNKNOWN", message: "Google did not return an acknowledgement; the action may have happened.", retryable: false });
