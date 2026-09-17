@@ -32,9 +32,10 @@ test("1. password recovery requests a recovery callback", () => {
   assert.match(resetPage, /ResetPasswordForm/);
 });
 
-test("2. password recovery requires CAPTCHA", () => {
-  assert.match(authAction, /captchaToken: CaptchaTokenSchema/);
-  assert.match(authAction, /captchaToken: parsed\.data\.captchaToken/);
+test("2. password recovery requires CAPTCHA by default with only the explicit isolated-environment bypass", () => {
+  assert.match(authAction, /captchaToken: CaptchaTokenSchema\.optional\(\)/);
+  assert.match(authAction, /const captchaRequired = isAuthCaptchaRequired\(\)/);
+  assert.match(authAction, /resetPasswordForEmail\([\s\S]*\.\.\.captchaOptions/);
 });
 
 test("3. expired and reused recovery links fail clearly", () => {

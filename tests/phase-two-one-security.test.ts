@@ -35,18 +35,19 @@ const context = {
   credentialKey: "api_key",
 };
 
-test("2.1-1. all public password auth flows forward a CAPTCHA token to Supabase", () => {
+test("2.1-1. public password auth is CAPTCHA-protected by default with an explicit isolated-environment bypass", () => {
+  assert.match(authAction, /const captchaRequired = isAuthCaptchaRequired\(\)/);
   assert.match(
     authAction,
-    /signInWithPassword\([\s\S]*options: \{ captchaToken: parsed\.data\.captchaToken \}/,
+    /signInWithPassword\([\s\S]*\.\.\.\(captchaRequired \? \{ options: captchaOptions \} : \{\}\)/,
   );
   assert.match(
     authAction,
-    /resetPasswordForEmail\([\s\S]*captchaToken: parsed\.data\.captchaToken/,
+    /resetPasswordForEmail\([\s\S]*\.\.\.captchaOptions/,
   );
   assert.match(
     authAction,
-    /signUp\([\s\S]*captchaToken: parsed\.data\.captchaToken/,
+    /signUp\([\s\S]*\.\.\.captchaOptions/,
   );
   assert.match(authAction, /authoritative boundary because direct Auth endpoints bypass this action/);
 });

@@ -2,6 +2,11 @@
 
 import { z } from "zod";
 
+import {
+  getSupabaseAuthCaptchaOptions,
+  isAuthCaptchaRequired,
+  isAuthCaptchaTokenAccepted,
+} from "@/lib/security/auth-captcha";
 import { SECURITY_LIMITS, SecurityGateError, enforceRateLimit } from "@/lib/security/limits";
 import { getClientIp } from "@/lib/security/request-context";
 import { createClient } from "@/lib/supabase/server";
@@ -22,12 +27,12 @@ const AuthRequestSchema = z.discriminatedUnion("mode", [
     mode: z.enum(["login", "signup"]),
     email: EmailSchema,
     password: z.string().min(8).max(256),
-    captchaToken: CaptchaTokenSchema,
+    captchaToken: CaptchaTokenSchema.optional(),
   }),
   z.object({
     mode: z.literal("recovery"),
     email: EmailSchema,
-    captchaToken: CaptchaTokenSchema,
+    captchaToken: CaptchaTokenSchema.optional(),
   }),
 ]);
 
@@ -39,18 +44,23 @@ export async function authenticateWithPassword(input: {
   mode: "login" | "signup" | "recovery";
   email: string;
   password?: string;
-  captchaToken: string;
+  captchaToken?: string;
 }): Promise<AuthenticateResult> {
+  const captchaRequired = isAuthCaptchaRequired();
   const parsed = AuthRequestSchema.safeParse(input);
-  if (!parsed.success) {
+  if (!parsed.success || !isAuthCaptchaTokenAccepted(captchaRequired, parsed.data.captchaToken)) {
     return {
       ok: false,
-      error: input.captchaToken
-        ? "Enter valid account details."
-        : "Complete the security challenge and try again.",
+      error: captchaRequired && !input.captchaToken
+        ? "Complete the security challenge and try again."
+        : "Enter valid account details.",
     };
   }
   const email = parsed.data.email.toLowerCase();
+  const captchaOptions = getSupabaseAuthCaptchaOptions(
+    captchaRequired,
+    parsed.data.captchaToken,
+  );
   try {
     const ip = await getClientIp();
     const rule = SECURITY_LIMITS[parsed.data.mode];
@@ -70,7 +80,7 @@ export async function authenticateWithPassword(input: {
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password: parsed.data.password,
-      options: { captchaToken: parsed.data.captchaToken },
+      ...(captchaRequired ? { options: captchaOptions } : {}),
     });
     if (error) {
       return {
@@ -88,7 +98,7 @@ export async function authenticateWithPassword(input: {
   const siteUrl = getSiteOrigin();
   if (parsed.data.mode === "recovery") {
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      captchaToken: parsed.data.captchaToken,
+      ...captchaOptions,
       ...(siteUrl ? { redirectTo: `${siteUrl}/auth/recovery` } : {}),
     });
     if (error) {
@@ -111,7 +121,7 @@ export async function authenticateWithPassword(input: {
     email,
     password: parsed.data.password,
     options: {
-      captchaToken: parsed.data.captchaToken,
+      ...captchaOptions,
       ...(siteUrl ? { emailRedirectTo: `${siteUrl}/auth/callback` } : {}),
     },
   });

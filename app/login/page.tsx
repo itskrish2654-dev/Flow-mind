@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { LoginForm } from "@/components/login-form";
+import { isAuthCaptchaRequired } from "@/lib/security/auth-captcha";
 
 export const metadata: Metadata = {
   title: "Log in",
@@ -19,6 +20,7 @@ export default async function LoginPage({
 }) {
   const params = await searchParams;
   const nextPath = safeNextPath(params.next);
+  const captchaRequired = isAuthCaptchaRequired();
 
   return (
     <main className="dashboard-theme relative flex min-h-dvh items-center justify-center overflow-y-auto bg-[#f7f4ee] px-5 py-10">
@@ -26,6 +28,7 @@ export default async function LoginPage({
       <div className="relative">
         <LoginForm
           nextPath={nextPath}
+          captchaRequired={captchaRequired}
           turnstileSiteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? null}
           initialMessage={Array.isArray(params.error) ? params.error[0] : params.error}
           notice={Array.isArray(params.notice) ? params.notice[0] : params.notice}
@@ -38,7 +41,11 @@ export default async function LoginPage({
           <a href="/data-use" className="hover:text-slate-900">Data use</a>
           <a href="/support" className="hover:text-slate-900">Support</a>
         </nav>
-        <p className="mt-2 text-center text-[10px] text-slate-400">Protected by Supabase Auth, Turnstile, and row-level security</p>
+        <p className="mt-2 text-center text-[10px] text-slate-400">
+          {captchaRequired
+            ? "Protected by Supabase Auth, Turnstile, and row-level security"
+            : "Protected by Supabase Auth and row-level security"}
+        </p>
       </div>
     </main>
   );

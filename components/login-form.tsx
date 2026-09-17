@@ -10,12 +10,14 @@ type AuthMode = "login" | "signup" | "recovery";
 
 export function LoginForm({
   nextPath,
+  captchaRequired,
   turnstileSiteKey,
   initialMessage,
   notice: initialNotice,
   initialMode = "login",
 }: {
   nextPath: string;
+  captchaRequired: boolean;
   turnstileSiteKey: string | null;
   initialMessage?: string;
   notice?: string;
@@ -55,7 +57,7 @@ export function LoginForm({
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (isSubmitting) return;
-    if (!captchaToken) {
+    if (captchaRequired && !captchaToken) {
       setError("Complete the security challenge and try again.");
       return;
     }
@@ -68,8 +70,17 @@ export function LoginForm({
     try {
       const result = await authenticateWithPassword(
         mode === "recovery"
-          ? { mode, email: email.trim(), captchaToken }
-          : { mode, email: email.trim(), password, captchaToken },
+          ? {
+              mode,
+              email: email.trim(),
+              ...(captchaRequired && captchaToken ? { captchaToken } : {}),
+            }
+          : {
+              mode,
+              email: email.trim(),
+              password,
+              ...(captchaRequired && captchaToken ? { captchaToken } : {}),
+            },
       );
       if (!result.ok) {
         setError(result.error);
@@ -166,16 +177,16 @@ export function LoginForm({
               </div>
             )}
 
-            {turnstileSiteKey ? (
+            {captchaRequired && turnstileSiteKey ? (
               <AuthTurnstile siteKey={turnstileSiteKey} resetSignal={challengeReset} onToken={setCaptchaToken} onError={setChallengeError} />
-            ) : (
+            ) : captchaRequired ? (
               <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-xs leading-5 text-rose-700">Secure sign-in is unavailable because bot protection is not configured.</p>
-            )}
-            {challengeError && <p role="alert" className="text-xs leading-5 text-rose-700">{challengeError}</p>}
+            ) : null}
+            {captchaRequired && challengeError && <p role="alert" className="text-xs leading-5 text-rose-700">{challengeError}</p>}
             {error && <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-xs leading-5 text-rose-700">{error}</p>}
             {notice && <p role="status" className="flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-xs leading-5 text-emerald-700"><CheckCircle2 className="mt-0.5 size-4 shrink-0" />{notice}</p>}
 
-            <button type="submit" disabled={!turnstileSiteKey || !captchaToken} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#dfbd4c] bg-[#f1c94b] text-sm font-semibold text-[#272536] shadow-[0_10px_28px_-18px_rgba(138,98,0,.65)] transition hover:bg-[#f4d66c] disabled:cursor-not-allowed disabled:opacity-50">
+            <button type="submit" disabled={captchaRequired && (!turnstileSiteKey || !captchaToken)} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#dfbd4c] bg-[#f1c94b] text-sm font-semibold text-[#272536] shadow-[0_10px_28px_-18px_rgba(138,98,0,.65)] transition hover:bg-[#f4d66c] disabled:cursor-not-allowed disabled:opacity-50">
               <ArrowRight className="size-4" />
               {mode === "login" ? "Log in securely" : mode === "signup" ? "Create account" : "Send recovery link"}
             </button>
