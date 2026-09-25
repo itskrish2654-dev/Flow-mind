@@ -4,6 +4,13 @@ import { createHash, randomBytes } from "node:crypto";
 
 import { getConnectorOnboarding } from "@/lib/capability-registry";
 import { getConnector } from "@/lib/connectors/registry";
+import {
+  GMAIL_LIVE_ACCEPTANCE_MARKER,
+  GMAIL_LIVE_ACCEPTANCE_OAUTH_SCOPES,
+  isGmailLiveAcceptanceOwner,
+  readGmailLiveAcceptancePolicy,
+  type GmailLiveAcceptanceEnvironment,
+} from "@/lib/operations/gmail-live-acceptance-policy";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { decryptCredential, encryptCredential } from "@/lib/security/credential-crypto";
 import { safeOAuthReturnPath } from "@/lib/connectors/oauth-return";
@@ -20,10 +27,9 @@ export function createPkcePair() {
 
 function stateHash(state: string) { return createHash("sha256").update(state).digest("hex"); }
 
-export async function createOAuthAuthorization(input: { userId: string; connectorId: string; scopes?: string[]; returnPath?: string; connectionId?: string; operationKey?: string }) {
+async function createOAuthAuthorizationState(input: { userId: string; connectorId: string; scopes?: readonly string[]; returnPath?: string; connectionId?: string; operationKey?: string }) {
   const registered = getConnector(input.connectorId);
   if (!registered || registered.manifest.auth.type !== "oauth2") throw new Error("OAuth is not available for this connector.");
-  if (!getConnectorOnboarding(input.connectorId)?.available) throw new Error("This connector is not available.");
   if (registered.manifest.status === "COMING_SOON" || (registered.manifest.status === "INTERNAL" && process.env.NODE_ENV === "production")) throw new Error("This connector is not available.");
   const state = randomBytes(32).toString("base64url");
   const pkce = createPkcePair();
@@ -42,6 +48,33 @@ export async function createOAuthAuthorization(input: { userId: string; connecto
   return { state, codeChallenge: pkce.challenge, scopes, returnPath };
 }
 
+export async function createOAuthAuthorization(input: { userId: string; connectorId: string; scopes?: string[]; returnPath?: string; connectionId?: string; operationKey?: string }) {
+  const registered = getConnector(input.connectorId);
+  if (!registered || registered.manifest.auth.type !== "oauth2") {
+    throw new Error("OAuth is not available for this connector.");
+  }
+  if (!getConnectorOnboarding(input.connectorId)?.available) throw new Error("This connector is not available.");
+  return createOAuthAuthorizationState(input);
+}
+
+export async function createGmailLiveAcceptanceOAuthAuthorization(input: {
+  userId: string;
+  environment?: GmailLiveAcceptanceEnvironment;
+}) {
+  const environment = input.environment ?? process.env;
+  const policy = readGmailLiveAcceptancePolicy(environment);
+  if (policy.status !== "enabled" || !isGmailLiveAcceptanceOwner(input.userId, environment)) {
+    throw new Error("Gmail live acceptance is unavailable.");
+  }
+  return createOAuthAuthorizationState({
+    userId: input.userId,
+    connectorId: "google_gmail",
+    scopes: GMAIL_LIVE_ACCEPTANCE_OAUTH_SCOPES,
+    returnPath: "/connections",
+    operationKey: GMAIL_LIVE_ACCEPTANCE_MARKER,
+  });
+}
+
 export async function consumeOAuthState(input: { userId: string; connectorId: string; state: string }) {
   const hash = stateHash(input.state);
   const admin = createAdminClient();
@@ -51,5 +84,5 @@ export async function consumeOAuthState(input: { userId: string; connectorId: st
   const { data: consumed, error: consumeError } = await admin.from("connector_oauth_states").update({ consumed_at: consumedAt }).eq("state_hash", hash).eq("user_id", input.userId).is("consumed_at", null).select("state_hash").maybeSingle();
   if (consumeError || !consumed) throw new Error("OAuth state was already used.");
   const verifier = decryptCredential({ ciphertext: data.pkce_ciphertext, nonce: data.pkce_nonce, authTag: data.pkce_auth_tag, algorithm: "aes-256-gcm", encryptionVersion: 1 }, { userId: input.userId, workflowId: `oauth:${hash}`, connectorId: input.connectorId, credentialKey: "pkce_verifier" });
-  return { verifier, scopes: data.requested_scopes, returnPath: safeOAuthReturnPath(data.return_path), providerFamily: data.provider_family, connectionId: data.intended_connection_id, operationKey: data.operation_key };
+  return { verifier, scopes: data.requested_scopes, returnPath: safeOAuthReturnPath(data.return_path), providerFamily: data.provider_family, connectionId: data.intended_connection_id, operationKey: data.operation_key, userId: data.user_id, connectorId: data.connector_id };
 }

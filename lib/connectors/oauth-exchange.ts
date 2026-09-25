@@ -9,6 +9,7 @@ export type OAuthTokenSet = {
   refreshToken?: string;
   expiresAt: string | null;
   scopes: string[];
+  scopesConfirmedByProvider?: boolean;
   externalAccountId: string;
   externalAccountLabel?: string;
   safeMetadata?: Record<string, string | number | boolean | null>;

@@ -87,7 +87,8 @@ export async function exchangeGoogleAuthorizationCode(input: { code: string; ver
     accessToken: token.access_token!,
     ...(token.refresh_token ? { refreshToken: token.refresh_token } : {}),
     expiresAt: new Date(Date.now() + Math.max(60, token.expires_in ?? 3600) * 1000).toISOString(),
-    scopes: Array.from(new Set((token.scope?.split(/\s+/).filter(Boolean) ?? input.requestedScopes))),
+    scopes: token.scope?.split(/\s+/).filter(Boolean) ?? input.requestedScopes,
+    scopesConfirmedByProvider: Boolean(token.scope?.trim()),
     externalAccountId: identity.sub,
     externalAccountLabel: identity.email,
   };

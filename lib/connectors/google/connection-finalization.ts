@@ -9,8 +9,10 @@ import {
 import {
   assertGoogleOAuthHasDurableRefresh,
   assertGoogleReconnectAccount,
+  resolveGoogleConnectionForFinalization,
   unionGoogleScopes,
   type ExistingGoogleConnection,
+  type GoogleConnectionResolution,
 } from "@/lib/connectors/google/oauth-finalization-core";
 import { GOOGLE_LEGACY_SHEETS_SCOPE } from "@/lib/connectors/google/scopes";
 import type { OAuthTokenSet } from "@/lib/connectors/oauth-exchange";
@@ -56,37 +58,50 @@ export async function finalizeGoogleOAuthConnection(input: {
   userId: string;
   oauthConnectorId: string;
   intendedConnectionId: string | null;
+  connectionResolution?: GoogleConnectionResolution;
   tokens: OAuthTokenSet;
 }) {
   const admin = createAdminClient();
   const select = "id,external_account_id,status,last_error_category,granted_scopes";
-  const { data: intended } = input.intendedConnectionId
-    ? await admin
+  if (input.connectionResolution && input.intendedConnectionId !== null) {
+    throw new Error("Google connection resolution is ambiguous.");
+  }
+  const resolution: GoogleConnectionResolution = input.connectionResolution
+    ?? (input.intendedConnectionId
+      ? { mode: "existing", connectionId: input.intendedConnectionId }
+      : { mode: "discover" });
+  const discovered = await resolveGoogleConnectionForFinalization(resolution, {
+    loadExistingById: async (connectionId) => {
+      const { data } = await admin
         .from("connector_connections")
         .select(select)
-        .eq("id", input.intendedConnectionId)
+        .eq("id", connectionId)
         .eq("user_id", input.userId)
         .eq("provider_family", "google")
-        .maybeSingle()
-    : { data: null };
-
-  if (input.intendedConnectionId && !intended) {
-    throw new Error("The selected Google connection is unavailable.");
-  }
-  assertGoogleReconnectAccount(
-    intended ? { externalAccountId: intended.external_account_id } : null,
-    input.tokens.externalAccountId,
-  );
-
-  const { data: discovered } = intended
-    ? { data: intended }
-    : await admin
+        .maybeSingle();
+      return data;
+    },
+    discoverByIdentity: async () => {
+      const { data } = await admin
         .from("connector_connections")
         .select(select)
         .eq("user_id", input.userId)
         .eq("connector_id", "google")
         .eq("external_account_id", input.tokens.externalAccountId)
         .maybeSingle();
+      return data;
+    },
+  });
+
+  if (resolution.mode === "existing" && !discovered) {
+    throw new Error("The selected Google connection is unavailable.");
+  }
+  assertGoogleReconnectAccount(
+    resolution.mode === "existing" && discovered
+      ? { externalAccountId: discovered.external_account_id }
+      : null,
+    input.tokens.externalAccountId,
+  );
 
   const hasRefreshCredential = discovered
     ? await hasOwnedRefreshCredential(input.userId, discovered.id)
