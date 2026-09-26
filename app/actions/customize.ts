@@ -152,6 +152,7 @@ async function getOwnedWorkflow(workflowId: string) {
     .select("compiled_steps")
     .eq("id", workflowId)
     .eq("user_id", auth.user.id)
+    .eq("workspace_id", auth.workspace.id)
     .maybeSingle();
   if (error) return null;
   const parsed = CompiledWorkflowSchema.safeParse(data?.compiled_steps);

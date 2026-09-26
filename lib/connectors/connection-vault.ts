@@ -2,6 +2,7 @@ import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { decryptCredential, encryptCredential, type CredentialContext } from "@/lib/security/credential-crypto";
+import { resolveTrustedWorkspaceMembership } from "@/lib/workspace-context";
 
 function context(userId: string, connectionId: string, connectorId: string, credentialKey: string): CredentialContext {
   return { userId, workflowId: `connection:${connectionId}`, connectorId, credentialKey };
@@ -48,7 +49,13 @@ export function prepareConnectionCredential(input: {
 
 async function assertOwnedConnection(userId: string, connectionId: string) {
   const admin = createAdminClient();
-  const { data, error } = await admin.from("connector_connections").select("id, connector_id, provider_family, status").eq("id", connectionId).eq("user_id", userId).maybeSingle();
+  const membership = await resolveTrustedWorkspaceMembership(userId);
+  const { data, error } = await admin.from("connector_connections")
+    .select("id, connector_id, provider_family, status, workspace_id")
+    .eq("id", connectionId)
+    .eq("user_id", userId)
+    .eq("workspace_id", membership.workspaceId)
+    .maybeSingle();
   if (error || !data || data.status === "revoked") throw new Error("Connection is unavailable.");
   return data;
 }
@@ -105,7 +112,7 @@ export async function revokeConnection(userId: string, connectionId: string) {
   }
   const { error: credentialError } = await admin.from("connector_connection_credentials").delete().eq("connection_id", connectionId).eq("user_id", userId);
   if (credentialError) throw new Error("Connection secrets could not be removed.");
-  const { error } = await admin.from("connector_connections").update({ status: "revoked", granted_scopes: [], token_expires_at: null, updated_at: new Date().toISOString() }).eq("id", connectionId).eq("user_id", userId);
+  const { error } = await admin.from("connector_connections").update({ status: "revoked", granted_scopes: [], token_expires_at: null, updated_at: new Date().toISOString() }).eq("id", connectionId).eq("user_id", userId).eq("workspace_id", connection.workspace_id);
   if (error) throw new Error("Connection could not be disconnected.");
   await admin.from("connector_subscriptions").update({ status: "revoked", updated_at: new Date().toISOString() }).eq("connection_id", connectionId).eq("user_id", userId);
 }

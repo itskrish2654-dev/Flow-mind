@@ -28,6 +28,7 @@ export async function GET() {
       .from("workflows")
       .select("id, name, prompt, compiled_steps, public_form_enabled, published_at, public_form_challenge_mode, created_at, updated_at, current_version_id, published_version_id, lifecycle_state, archived_at", { count: "exact" })
       .eq("user_id", auth.user.id)
+      .eq("workspace_id", auth.workspace.id)
       .order("created_at", { ascending: true })
       .limit(EXPORT_LIMITS.workflows + 1);
     if (workflowError || (workflowCount ?? 0) > EXPORT_LIMITS.workflows) throw new Error("export_too_large_workflows");
@@ -47,7 +48,10 @@ export async function GET() {
         .eq("user_id", auth.user.id).order("created_at", { ascending: true }).limit(EXPORT_LIMITS.credentials + 1),
       admin.from("connector_connections")
         .select("id, connector_id, provider_family, external_account_label, auth_type, status, granted_scopes, token_expires_at, last_refreshed_at, last_error_category, created_at, updated_at", { count: "exact" })
-        .eq("user_id", auth.user.id).order("created_at", { ascending: true }).limit(EXPORT_LIMITS.connections + 1),
+        .eq("user_id", auth.user.id)
+        .eq("workspace_id", auth.workspace.id)
+        .order("created_at", { ascending: true })
+        .limit(EXPORT_LIMITS.connections + 1),
       admin.from("usage_counters")
         .select("metric, period_started_at, used, updated_at")
         .eq("user_id", auth.user.id).order("period_started_at", { ascending: true }),
@@ -77,6 +81,11 @@ export async function GET() {
       version: 1,
       generatedAt: new Date().toISOString(),
       account: { email: auth.user.email ?? null, createdAt: auth.user.created_at },
+      workspace: {
+        id: auth.workspace.id,
+        role: auth.membership.role,
+        default: auth.membership.isDefault,
+      },
       exportLimits: EXPORT_LIMITS,
       data: {
         workflows: workflows ?? [],

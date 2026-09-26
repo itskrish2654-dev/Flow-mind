@@ -69,11 +69,13 @@ export async function loadMyDayData(): Promise<MyDayData | null> {
   if (!auth) return null;
 
   const userId = auth.user.id;
+  const workspaceId = auth.workspace.id;
   const [workflowResult, executionResult] = await Promise.all([
     auth.supabase
       .from("workflows")
       .select("id, user_id, name, lifecycle_state, current_version_id, updated_at")
       .eq("user_id", userId)
+      .eq("workspace_id", workspaceId)
       .neq("lifecycle_state", "archived")
       .order("updated_at", { ascending: false })
       .limit(MY_DAY_LIMITS.workflows),
@@ -125,6 +127,7 @@ export async function loadMyDayData(): Promise<MyDayData | null> {
         .from("connector_connections")
         .select("id, user_id, provider_family, status")
         .eq("user_id", userId)
+        .eq("workspace_id", workspaceId)
         .in("id", selectedConnectionIds)
         .limit(MY_DAY_LIMITS.selectedConnections)
     : Promise.resolve({ data: [], error: null });
@@ -133,6 +136,7 @@ export async function loadMyDayData(): Promise<MyDayData | null> {
       .from("connector_connections")
       .select("id, user_id, provider_family, status")
       .eq("user_id", userId)
+      .eq("workspace_id", workspaceId)
       .eq("provider_family", provider)
       .eq("status", "connected")
       .order("updated_at", { ascending: false })

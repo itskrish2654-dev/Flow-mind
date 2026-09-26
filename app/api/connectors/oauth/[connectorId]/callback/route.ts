@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { getAuthenticatedContext } from "@/lib/auth";
 import { getConnectorOnboarding } from "@/lib/capability-registry";
 import { storeConnectionSecret } from "@/lib/connectors/connection-vault";
 import { finalizeGoogleOAuthConnection } from "@/lib/connectors/google/connection-finalization";
@@ -14,7 +15,6 @@ import {
 } from "@/lib/operations/gmail-live-acceptance-oauth";
 import { captureOperationalEvent } from "@/lib/observability";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createClient } from "@/lib/supabase/server";
 import { getSiteOrigin, getSiteUrl } from "@/lib/site-origin";
 
 function privateRedirect(path: string, fallbackOrigin: string) {
@@ -29,11 +29,11 @@ export async function GET(
   { params }: { params: Promise<{ connectorId: string }> },
 ) {
   const { connectorId } = await params;
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
+  const auth = await getAuthenticatedContext();
+  if (!auth) {
     return privateRedirect("/login?next=/connections", new URL(request.url).origin);
   }
+  const { user } = auth;
 
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
@@ -106,6 +106,7 @@ export async function GET(
             .select("id,external_account_id,granted_scopes")
             .eq("id", oauth.connectionId)
             .eq("user_id", user.id)
+            .eq("workspace_id", auth.workspace.id)
             .eq("provider_family", connector.manifest.providerFamily)
             .maybeSingle()
         : { data: null };
@@ -118,6 +119,7 @@ export async function GET(
             .from("connector_connections")
             .select("id,granted_scopes")
             .eq("user_id", user.id)
+            .eq("workspace_id", auth.workspace.id)
             .eq("connector_id", canonicalConnectorId)
             .eq("external_account_id", tokens.externalAccountId)
             .maybeSingle();
@@ -129,6 +131,7 @@ export async function GET(
         .from("connector_connections")
         .upsert({
           user_id: user.id,
+          workspace_id: auth.workspace.id,
           connector_id: canonicalConnectorId,
           provider_family: connector.manifest.providerFamily,
           external_account_id: tokens.externalAccountId,
@@ -190,11 +193,7 @@ export async function GET(
       errorCategory: "oauth",
     });
     return privateRedirect(
-      withOAuthResult(
-        returnPath,
-        "connection_error",
-        oauthCancelled ? "oauth_cancelled" : "oauth_callback_failed",
-      ),
+      withOAuthResult(returnPath, "connection_error", oauthCancelled ? "oauth_cancelled" : "oauth_callback_failed"),
       url.origin,
     );
   }

@@ -9,10 +9,56 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      workspaces: {
+        Row: {
+          id: string;
+          name: string;
+          created_by: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          name?: string;
+          created_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          name?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      workspace_memberships: {
+        Row: {
+          workspace_id: string;
+          user_id: string;
+          role: "owner" | "admin" | "member";
+          is_default: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          workspace_id: string;
+          user_id: string;
+          role: "owner" | "admin" | "member";
+          is_default?: boolean;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          role?: "owner" | "admin" | "member";
+          is_default?: boolean;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       workflows: {
         Row: {
           id: string;
           user_id: string;
+          workspace_id: string;
           name: string;
           prompt: string;
           compiled_steps: Json | null;
@@ -29,6 +75,7 @@ export type Database = {
         Insert: {
           id?: string;
           user_id: string;
+          workspace_id?: string;
           name: string;
           prompt: string;
           compiled_steps?: Json | null;
@@ -45,6 +92,7 @@ export type Database = {
         Update: {
           id?: string;
           user_id?: string;
+          workspace_id?: string;
           name?: string;
           prompt?: string;
           compiled_steps?: Json | null;
@@ -130,9 +178,9 @@ export type Database = {
         Relationships: [];
       };
       connector_connections: {
-        Row: { id: string; user_id: string; connector_id: string; provider_family: string; external_account_id: string; external_account_label: string | null; auth_type: "none" | "api_key" | "oauth2"; status: "connected" | "expired" | "revoked" | "error"; granted_scopes: string[]; token_expires_at: string | null; last_refreshed_at: string | null; last_error_category: string | null; safe_metadata: Json; created_at: string; updated_at: string };
-        Insert: { id?: string; user_id: string; connector_id: string; provider_family: string; external_account_id: string; external_account_label?: string | null; auth_type: "none" | "api_key" | "oauth2"; status?: "connected" | "expired" | "revoked" | "error"; granted_scopes?: string[]; token_expires_at?: string | null; last_refreshed_at?: string | null; last_error_category?: string | null; safe_metadata?: Json; created_at?: string; updated_at?: string };
-        Update: { external_account_label?: string | null; status?: "connected" | "expired" | "revoked" | "error"; granted_scopes?: string[]; token_expires_at?: string | null; last_refreshed_at?: string | null; last_error_category?: string | null; safe_metadata?: Json; updated_at?: string };
+        Row: { id: string; user_id: string; workspace_id: string; connector_id: string; provider_family: string; external_account_id: string; external_account_label: string | null; auth_type: "none" | "api_key" | "oauth2"; status: "connected" | "expired" | "revoked" | "error"; granted_scopes: string[]; token_expires_at: string | null; last_refreshed_at: string | null; last_error_category: string | null; safe_metadata: Json; created_at: string; updated_at: string };
+        Insert: { id?: string; user_id: string; workspace_id?: string; connector_id: string; provider_family: string; external_account_id: string; external_account_label?: string | null; auth_type: "none" | "api_key" | "oauth2"; status?: "connected" | "expired" | "revoked" | "error"; granted_scopes?: string[]; token_expires_at?: string | null; last_refreshed_at?: string | null; last_error_category?: string | null; safe_metadata?: Json; created_at?: string; updated_at?: string };
+        Update: { workspace_id?: string; external_account_label?: string | null; status?: "connected" | "expired" | "revoked" | "error"; granted_scopes?: string[]; token_expires_at?: string | null; last_refreshed_at?: string | null; last_error_category?: string | null; safe_metadata?: Json; updated_at?: string };
         Relationships: [];
       };
       google_selected_spreadsheets: {
@@ -499,6 +547,13 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      ensure_default_workspace: {
+        Args: { p_user_id: string };
+        Returns: Array<{
+          workspace_id: string;
+          membership_role: "owner" | "admin" | "member";
+        }>;
+      };
       get_public_workflow: {
         Args: { p_workflow_id: string };
         Returns: Array<{

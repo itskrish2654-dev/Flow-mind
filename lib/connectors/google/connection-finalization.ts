@@ -18,6 +18,7 @@ import { GOOGLE_LEGACY_SHEETS_SCOPE } from "@/lib/connectors/google/scopes";
 import type { OAuthTokenSet } from "@/lib/connectors/oauth-exchange";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Json } from "@/lib/supabase/types";
+import { resolveTrustedWorkspaceMembership } from "@/lib/workspace-context";
 
 function asExistingConnection(
   row: {
@@ -62,6 +63,7 @@ export async function finalizeGoogleOAuthConnection(input: {
   tokens: OAuthTokenSet;
 }) {
   const admin = createAdminClient();
+  const membership = await resolveTrustedWorkspaceMembership(input.userId);
   const select = "id,external_account_id,status,last_error_category,granted_scopes";
   if (input.connectionResolution && input.intendedConnectionId !== null) {
     throw new Error("Google connection resolution is ambiguous.");
@@ -77,6 +79,7 @@ export async function finalizeGoogleOAuthConnection(input: {
         .select(select)
         .eq("id", connectionId)
         .eq("user_id", input.userId)
+        .eq("workspace_id", membership.workspaceId)
         .eq("provider_family", "google")
         .maybeSingle();
       return data;
@@ -86,6 +89,7 @@ export async function finalizeGoogleOAuthConnection(input: {
         .from("connector_connections")
         .select(select)
         .eq("user_id", input.userId)
+        .eq("workspace_id", membership.workspaceId)
         .eq("connector_id", "google")
         .eq("external_account_id", input.tokens.externalAccountId)
         .maybeSingle();

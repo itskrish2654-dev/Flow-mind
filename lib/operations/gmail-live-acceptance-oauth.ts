@@ -160,10 +160,13 @@ async function findExistingConnection(input: {
   externalAccountId: string;
 }): Promise<ExistingAcceptanceGoogleConnection | null> {
   const { createAdminClient } = await import("@/lib/supabase/admin");
+  const { resolveTrustedWorkspaceMembership } = await import("@/lib/workspace-context");
+  const membership = await resolveTrustedWorkspaceMembership(input.userId);
   const { data, error } = await createAdminClient()
     .from("connector_connections")
     .select("id,user_id,connector_id,provider_family,external_account_id,safe_metadata")
     .eq("user_id", input.userId)
+    .eq("workspace_id", membership.workspaceId)
     .eq("connector_id", "google")
     .eq("provider_family", "google")
     .eq("external_account_id", input.externalAccountId)

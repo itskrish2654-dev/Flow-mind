@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Json } from "@/lib/supabase/types";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { resolveTrustedWorkspaceMembership } from "@/lib/workspace-context";
 
 export type ConnectionProvider = "airtable" | "google" | "slack" | "notion" | "hubspot";
 
@@ -81,17 +82,20 @@ function collectConnectionIds(value: unknown, result: Set<string>): void {
 
 export async function listConnectionViews(userId: string): Promise<ConnectionView[]> {
   const admin = createAdminClient();
+  const membership = await resolveTrustedWorkspaceMembership(userId);
   const [{ data: rows, error }, { data: workflows }] = await Promise.all([
     admin
       .from("connector_connections")
       .select("id,provider_family,external_account_label,status,last_refreshed_at,updated_at")
       .eq("user_id", userId)
+      .eq("workspace_id", membership.workspaceId)
       .neq("status", "revoked")
       .order("created_at", { ascending: false }),
     admin
       .from("workflows")
       .select("id,current_version_id,published_version_id")
-      .eq("user_id", userId),
+      .eq("user_id", userId)
+      .eq("workspace_id", membership.workspaceId),
   ]);
 
   if (error) throw new Error("Connections could not be loaded.");

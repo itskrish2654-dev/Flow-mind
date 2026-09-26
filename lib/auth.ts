@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
+import { resolveTrustedWorkspaceMembership } from "@/lib/workspace-context";
 
 export async function getAuthenticatedContext() {
   try {
@@ -11,7 +12,13 @@ export async function getAuthenticatedContext() {
     } = await supabase.auth.getUser();
 
     if (error || !user) return null;
-    return { supabase, user };
+    const membership = await resolveTrustedWorkspaceMembership(user.id);
+    return {
+      supabase,
+      user,
+      workspace: { id: membership.workspaceId },
+      membership,
+    };
   } catch {
     return null;
   }

@@ -26,6 +26,7 @@ async function ownsWorkflow(userId: string, workflowId: string) {
     .select("id")
     .eq("id", workflowId)
     .eq("user_id", userId)
+    .eq("workspace_id", auth.workspace.id)
     .maybeSingle();
   return Boolean(data);
 }

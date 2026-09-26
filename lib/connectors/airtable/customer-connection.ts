@@ -49,10 +49,8 @@ export type AirtableCustomerConnectionDependencies = {
 
 const defaultDependencies: AirtableCustomerConnectionDependencies = {
   async getAuthenticatedUserId() {
-    const { createClient } = await import("@/lib/supabase/server");
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    return user?.id ?? null;
+    const { getAuthenticatedContext } = await import("@/lib/auth");
+    return (await getAuthenticatedContext())?.user.id ?? null;
   },
   async findActiveConnection(userId) {
     const { createAdminClient } = await import("@/lib/supabase/admin");

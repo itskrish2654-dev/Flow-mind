@@ -51,7 +51,10 @@ async function authorizeWorkflow(workflowId: string) {
   const auth = await getAuthenticatedContext();
   if (!auth) return null;
   const { data } = await auth.supabase.from("workflows").select("id")
-    .eq("id", workflowId).eq("user_id", auth.user.id).maybeSingle();
+    .eq("id", workflowId)
+    .eq("user_id", auth.user.id)
+    .eq("workspace_id", auth.workspace.id)
+    .maybeSingle();
   return data ? auth : null;
 }
 

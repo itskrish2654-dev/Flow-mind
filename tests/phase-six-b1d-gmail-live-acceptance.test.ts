@@ -423,8 +423,8 @@ test("6B.1D-2A-03 private route is authenticated, parameter-free, body-free, dyn
   assert.match(route, /export const runtime = "nodejs"/);
   assert.match(route, /export const dynamic = "force-dynamic"/);
   assert.match(route, /export const revalidate = 0/);
-  assert.match(route, /const supabase = await createClient\(\)/);
-  assert.match(route, /supabase\.auth\.getUser\(\)/);
+  assert.match(route, /const auth = await getAuthenticatedContext\(\)/);
+  assert.match(route, /if \(!auth\) return unavailable\(\)/);
   assert.doesNotMatch(route, /getSession\(/);
   assert.match(route, /if \(requestUrl\.search\) return unavailable\(\)/);
   assert.doesNotMatch(route, /searchParams\.get|request\.(?:json|text|formData|arrayBuffer)\s*\(/);

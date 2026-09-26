@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { getAuthenticatedContext } from "@/lib/auth";
 import { startGmailLiveAcceptanceOAuth } from "@/lib/operations/gmail-live-acceptance-oauth";
-import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,13 +23,12 @@ export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   if (requestUrl.search) return unavailable();
 
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return unavailable();
+  const auth = await getAuthenticatedContext();
+  if (!auth) return unavailable();
 
   try {
     const authorization = await startGmailLiveAcceptanceOAuth({
-      userId: user.id,
+      userId: auth.user.id,
       requestOrigin: requestUrl.origin,
     });
     return NextResponse.redirect(authorization.authorizationUrl, {

@@ -9,9 +9,9 @@ import {
 } from "lucide-react";
 
 import { ConnectionsList } from "@/components/connections-list";
+import { getAuthenticatedContext } from "@/lib/auth";
 import { listConnectionViews } from "@/lib/connectors/connection-view";
 import { oauthReturnWorkflowId, safeOAuthReturnPath } from "@/lib/connectors/oauth-return";
-import { createClient } from "@/lib/supabase/server";
 
 const builtInCapabilities = [
   { name: "Webhook", description: "Start a loop from a secure incoming request.", icon: Webhook },
@@ -32,18 +32,23 @@ export default async function ConnectionsPage({
     return?: string | string[];
   }>;
 }) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+  const auth = await getAuthenticatedContext();
+  if (!auth) return null;
 
   const params = await searchParams;
   const requestedReturnPath = safeOAuthReturnPath(typeof params.return === "string" ? params.return : null);
   const returnWorkflowId = oauthReturnWorkflowId(requestedReturnPath);
   const { data: ownedReturnWorkflow } = returnWorkflowId
-    ? await supabase.from("workflows").select("id").eq("id", returnWorkflowId).eq("user_id", user.id).maybeSingle()
+    ? await auth.supabase
+        .from("workflows")
+        .select("id")
+        .eq("id", returnWorkflowId)
+        .eq("user_id", auth.user.id)
+        .eq("workspace_id", auth.workspace.id)
+        .maybeSingle()
     : { data: null };
   const returnPath = returnWorkflowId && !ownedReturnWorkflow ? "/connections" : requestedReturnPath;
-  const connections = await listConnectionViews(user.id);
+  const connections = await listConnectionViews(auth.user.id);
   const connected = typeof params.connected === "string" ? params.connected : null;
   const error = typeof params.connection_error === "string"
     ? params.connection_error

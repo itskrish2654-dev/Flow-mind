@@ -312,7 +312,8 @@ export async function deleteWorkflow(
       updated_at: new Date().toISOString(),
     })
     .eq("id", parsedWorkflowId.data)
-    .eq("user_id", auth.user.id);
+    .eq("user_id", auth.user.id)
+    .eq("workspace_id", auth.workspace.id);
   if (error) {
     securityLog("Workflow deletion failed", {
       code: error.code,
@@ -345,6 +346,7 @@ export async function listWorkflows(cursor?: string | null): Promise<ListWorkflo
     .from("workflows")
     .select("id, name, prompt, compiled_steps, created_at, lifecycle_state, current_version_id")
     .eq("user_id", auth.user.id)
+    .eq("workspace_id", auth.workspace.id)
     .neq("lifecycle_state", "archived")
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
@@ -564,7 +566,10 @@ export async function compileWorkflow(
         scope: editIntent === "replace" ? "full_replacement" : "workflow_structure",
         summary: editIntent === "replace" ? "Explicit full workflow replacement." : "Modified workflow structure from a prompt.",
       });
-      const update = await admin.from("workflows").update({ prompt: normalizedPrompt }).eq("id", snapshot.workflowId).eq("user_id", auth.user.id);
+      const update = await admin.from("workflows").update({ prompt: normalizedPrompt })
+        .eq("id", snapshot.workflowId)
+        .eq("user_id", auth.user.id)
+        .eq("workspace_id", auth.workspace.id);
       data = { id: snapshot.workflowId };
       error = update.error;
     } catch (versionError) {
@@ -617,6 +622,7 @@ export async function compileWorkflow(
       .from("workflows")
       .select("id", { count: "exact", head: true })
       .eq("user_id", auth.user.id)
+      .eq("workspace_id", auth.workspace.id)
       .neq("lifecycle_state", "archived");
     workflowCount = count ?? 1;
   }

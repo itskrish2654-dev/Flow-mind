@@ -586,7 +586,8 @@ export async function retryWorkflowExecution(executionId: string): Promise<TestW
       })
     : [];
   const { data: identity } = await admin.from("workflows").select("name, lifecycle_state")
-    .eq("id", existing.workflow_id).eq("user_id", auth.user.id).maybeSingle();
+    .eq("id", existing.workflow_id).eq("user_id", auth.user.id)
+    .eq("workspace_id", auth.workspace.id).maybeSingle();
   if (!identity || identity.lifecycle_state === "archived") {
     return { ok: false, error: "Archived workflows cannot be retried." };
   }

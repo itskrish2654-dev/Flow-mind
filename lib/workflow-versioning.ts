@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { annotateWorkflowCapabilities } from "@/lib/capability-registry";
 import { CompiledWorkflowSchema, type CompiledWorkflow } from "@/lib/schemas/workflow";
 import type { Database, Json } from "@/lib/supabase/types";
+import { resolveTrustedWorkspaceMembership } from "@/lib/workspace-context";
 
 export type WorkflowChangeScope =
   | "presentation"
@@ -18,6 +19,7 @@ export type WorkflowChangeScope =
 
 export type WorkflowSnapshot = {
   workflowId: string;
+  workspaceId: string;
   versionId: string;
   versionNumber: number;
   name: string;
@@ -47,11 +49,13 @@ export async function loadWorkflowSnapshot(
   workflowId: string,
   userId: string,
 ): Promise<WorkflowSnapshot | null> {
+  const membership = await resolveTrustedWorkspaceMembership(userId);
   const { data: identity, error } = await admin
     .from("workflows")
-    .select("id, name, prompt, public_form_enabled, lifecycle_state, current_version_id, published_version_id")
+    .select("id, workspace_id, name, prompt, public_form_enabled, lifecycle_state, current_version_id, published_version_id")
     .eq("id", workflowId)
     .eq("user_id", userId)
+    .eq("workspace_id", membership.workspaceId)
     .maybeSingle();
   if (error || !identity?.current_version_id || identity.lifecycle_state === "archived") return null;
 
@@ -67,6 +71,7 @@ export async function loadWorkflowSnapshot(
   const setup = version.setup_config;
   return {
     workflowId: identity.id,
+    workspaceId: identity.workspace_id,
     versionId: version.id,
     versionNumber: version.version_number,
     name: identity.name,
@@ -98,6 +103,17 @@ export async function createImmutableWorkflowVersion(
     sourceVersionId?: string | null;
   },
 ): Promise<{ versionId: string; versionNumber: number }> {
+  const membership = await resolveTrustedWorkspaceMembership(input.userId);
+  const { data: root, error: rootError } = await admin
+    .from("workflows")
+    .select("id")
+    .eq("id", input.workflowId)
+    .eq("user_id", input.userId)
+    .eq("workspace_id", membership.workspaceId)
+    .maybeSingle();
+  if (rootError || !root) {
+    throw new Error("Workflow is unavailable in the trusted workspace.");
+  }
   const definition = annotateWorkflowCapabilities(CompiledWorkflowSchema.parse(input.workflow));
   const { data, error } = await admin.rpc("create_workflow_version", {
     p_workflow_id: input.workflowId,
