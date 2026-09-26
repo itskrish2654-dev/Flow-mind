@@ -9,6 +9,7 @@ import {
   type WorkflowConnectionReadiness,
 } from "@/lib/workflow-readiness";
 import { getStepInputs } from "@/lib/workflow-setup";
+import type { WorkItem } from "@/lib/work-items-core";
 
 export const MY_DAY_LIMITS = {
   workflows: 30,
@@ -20,6 +21,8 @@ export const MY_DAY_LIMITS = {
   today: 5,
   waitingOn: 5,
   recentActivity: 5,
+  durableWorkItems: 50,
+  handled: 5,
 } as const;
 
 export type MyDayItemKind = "attention" | "today" | "waiting" | "activity";
@@ -29,6 +32,7 @@ export type MyDayItemStatus =
   | "waiting"
   | "running"
   | "success"
+  | "handled"
   | "failed"
   | "cancelled";
 
@@ -45,6 +49,14 @@ export type MyDayItem = {
     label: string;
     href: string;
   };
+  workItem?: {
+    id: string;
+    status: "needs_you" | "waiting" | "handled";
+    priority: WorkItem["priority"];
+    dueAt: string | null;
+    whyItMatters: string | null;
+    suggestedAction: string | null;
+  };
 };
 
 export type MyDayData = {
@@ -60,6 +72,9 @@ export type MyDayData = {
   today: MyDayItem[];
   waitingOn: MyDayItem[];
   recentActivity: MyDayItem[];
+  handledByCrazyLoops: MyDayItem[];
+  workItemsUnavailable: boolean;
+  workflowDataUnavailable: boolean;
 };
 
 export type MyDayWorkflowCandidate = {
@@ -101,9 +116,13 @@ export type MyDayCredentialMetadataCandidate = {
 
 export type BuildMyDayInput = {
   userId: string;
+  workspaceId?: string;
   workflows: readonly MyDayWorkflowCandidate[];
   executions: readonly MyDayExecutionCandidate[];
   connections: readonly MyDayConnectionCandidate[];
+  workItems?: readonly WorkItem[];
+  workItemsUnavailable?: boolean;
+  workflowDataUnavailable?: boolean;
 };
 
 const USER_ACTION_FAILURES = new Set([
@@ -275,7 +294,46 @@ function plural(count: number, singular: string, pluralForm = `${singular}s`): s
   return `${count} ${count === 1 ? singular : pluralForm}`;
 }
 
+function durableSource(item: WorkItem): string {
+  if (item.source_label) return safeText(item.source_label, "CrazyLoops", 120);
+  switch (item.source_type) {
+    case "workflow": return "Workflow";
+    case "workflow_execution": return "Workflow run";
+    case "connector_event": return "Connected app";
+    default: return "CrazyLoops";
+  }
+}
+
+function durableMyDayItem(item: WorkItem): MyDayItem {
+  const status = item.status === "needs_you" ? "action_required" : item.status === "waiting" ? "waiting" : "handled";
+  return {
+    id: `work-item:${item.id}`,
+    kind: item.status === "needs_you" ? "attention" : item.status === "waiting" ? "waiting" : "activity",
+    priority: item.priority === "high" ? 0 : item.priority === "normal" ? 4 : 7,
+    title: safeText(item.title, "Work item", 180),
+    description: item.summary ? safeText(item.summary, "Work needs review.", 2000) : "Work needs review.",
+    source: durableSource(item),
+    timestamp: item.created_at,
+    status,
+    cta: { label: "Review item", href: `/my-day#work-item-${item.id}` },
+    workItem: {
+      id: item.id,
+      status: item.status as "needs_you" | "waiting" | "handled",
+      priority: item.priority,
+      dueAt: item.due_at,
+      whyItMatters: item.why_it_matters ? safeText(item.why_it_matters, "", 1000) : null,
+      suggestedAction: item.suggested_action ? safeText(item.suggested_action, "", 500) : null,
+    },
+  };
+}
+
 export function buildMyDayData(input: BuildMyDayInput): MyDayData {
+  const durable = (input.workItems ?? [])
+    .filter((item) => item.assignee_user_id === input.userId
+      && (!input.workspaceId || item.workspace_id === input.workspaceId)
+      && item.status !== "done")
+    .slice(0, MY_DAY_LIMITS.durableWorkItems * 3)
+    .map(durableMyDayItem);
   const workflows = input.workflows
     .filter((workflow) => workflow.userId === input.userId && workflow.lifecycleState !== "archived")
     .slice(0, MY_DAY_LIMITS.workflows);
@@ -368,7 +426,7 @@ export function buildMyDayData(input: BuildMyDayInput): MyDayData {
     }];
   });
 
-  const allNeedsYou = [...readinessAttention, ...executionAttention].sort(attentionSort);
+  const allNeedsYou = [...durable.filter((item) => item.workItem?.status === "needs_you"), ...readinessAttention, ...executionAttention].sort(attentionSort);
   const needsYou = allNeedsYou.slice(0, MY_DAY_LIMITS.needsYou);
 
   const readyToday = evaluated
@@ -409,7 +467,7 @@ export function buildMyDayData(input: BuildMyDayInput): MyDayData {
     .sort((left, right) => left.priority - right.priority || newestFirst(left, right))
     .slice(0, MY_DAY_LIMITS.today);
 
-  const waitingOn = executions
+  const queuedWaiting = executions
     .filter((execution) => execution.status === "queued")
     .slice(0, MY_DAY_LIMITS.waitingOn)
     .map<MyDayItem>((execution) => ({
@@ -423,6 +481,11 @@ export function buildMyDayData(input: BuildMyDayInput): MyDayData {
       status: "waiting",
       cta: { label: "Open workflow", href: `/dashboard/projects/${execution.workflowId}` },
     }));
+  const waitingOn = [...durable.filter((item) => item.workItem?.status === "waiting"), ...queuedWaiting]
+    .sort(attentionSort)
+    .slice(0, MY_DAY_LIMITS.waitingOn);
+  const handledByCrazyLoops = durable.filter((item) => item.workItem?.status === "handled")
+    .slice(0, MY_DAY_LIMITS.handled);
 
   const recentActivity = executions
     .slice(0, MY_DAY_LIMITS.recentActivity)
@@ -462,5 +525,8 @@ export function buildMyDayData(input: BuildMyDayInput): MyDayData {
     today,
     waitingOn,
     recentActivity,
+    handledByCrazyLoops,
+    workItemsUnavailable: input.workItemsUnavailable ?? false,
+    workflowDataUnavailable: input.workflowDataUnavailable ?? false,
   };
 }

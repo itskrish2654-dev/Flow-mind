@@ -54,6 +54,52 @@ export type Database = {
         };
         Relationships: [];
       };
+      work_items: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          assignee_user_id: string;
+          title: string;
+          summary: string | null;
+          why_it_matters: string | null;
+          suggested_action: string | null;
+          status: "needs_you" | "waiting" | "handled" | "done";
+          priority: "low" | "normal" | "high";
+          due_at: string | null;
+          source_type: "workflow" | "workflow_execution" | "connector_event" | "system" | "internal";
+          source_id: string | null;
+          source_label: string | null;
+          dedupe_key: string | null;
+          created_at: string;
+          updated_at: string;
+          resolved_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          assignee_user_id: string;
+          title: string;
+          summary?: string | null;
+          why_it_matters?: string | null;
+          suggested_action?: string | null;
+          status?: "needs_you" | "waiting" | "handled" | "done";
+          priority?: "low" | "normal" | "high";
+          due_at?: string | null;
+          source_type: "workflow" | "workflow_execution" | "connector_event" | "system" | "internal";
+          source_id?: string | null;
+          source_label?: string | null;
+          dedupe_key?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          resolved_at?: string | null;
+        };
+        Update: {
+          status?: "needs_you" | "waiting" | "handled" | "done";
+          updated_at?: string;
+          resolved_at?: string | null;
+        };
+        Relationships: [];
+      };
       workflows: {
         Row: {
           id: string;

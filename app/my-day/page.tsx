@@ -3,8 +3,9 @@ import { redirect } from "next/navigation";
 import { MyDayView } from "@/components/my-day/my-day-view";
 import { loadMyDayData } from "@/lib/my-day";
 
-export default async function MyDayPage() {
+export default async function MyDayPage({ searchParams }: { searchParams: Promise<{ work_item_error?: string }> }) {
   const data = await loadMyDayData();
   if (!data) redirect("/login?next=/my-day");
-  return <MyDayView data={data} />;
+  const { work_item_error: workItemError } = await searchParams;
+  return <MyDayView data={data} actionError={workItemError === "update_failed"} />;
 }

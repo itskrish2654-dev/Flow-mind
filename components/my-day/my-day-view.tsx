@@ -10,6 +10,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 
+import { updateMyWorkItem } from "@/app/actions/work-items";
 import { StartMyDay } from "@/components/my-day/start-my-day";
 import type { MyDayData, MyDayItem, MyDayItemStatus } from "@/lib/my-day-model";
 
@@ -31,6 +32,7 @@ const statusStyles: Record<MyDayItemStatus, string> = {
   waiting: "border-sky-200 bg-sky-50 text-sky-700",
   running: "border-blue-200 bg-blue-50 text-blue-700",
   success: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  handled: "border-emerald-200 bg-emerald-50 text-emerald-700",
   failed: "border-rose-200 bg-rose-50 text-rose-700",
   cancelled: "border-slate-200 bg-slate-100 text-slate-600",
 };
@@ -41,31 +43,48 @@ const statusLabels: Record<MyDayItemStatus, string> = {
   waiting: "Waiting",
   running: "Running",
   success: "Success",
+  handled: "Handled",
   failed: "Failed",
   cancelled: "Cancelled",
 };
 
 function MyDayItemCard({ item }: { item: MyDayItem }) {
   const shownTime = displayTime(item.timestamp);
+  const dueTime = displayTime(item.workItem?.dueAt ?? null);
   return (
-    <article className="rounded-2xl border border-[#e4ddd2] bg-[#fffdfa] p-4 transition hover:border-[#d6c9af] sm:p-5">
+    <article id={item.workItem ? `work-item-${item.workItem.id}` : undefined} className="rounded-2xl border border-[#e4ddd2] bg-[#fffdfa] p-4 transition hover:border-[#d6c9af] sm:p-5">
       <div className="flex flex-wrap items-center gap-2">
         <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.11em] ${statusStyles[item.status]}`}>
           {statusLabels[item.status]}
         </span>
         {shownTime && <time dateTime={item.timestamp ?? undefined} className="text-[11px] text-slate-500">{shownTime}</time>}
+        {item.workItem && <span className="text-[11px] font-medium text-slate-500">{item.workItem.priority} priority</span>}
+        {dueTime && <span className="text-[11px] text-slate-600">Due <time dateTime={item.workItem?.dueAt ?? undefined}>{dueTime}</time></span>}
       </div>
       <h3 className="mt-3 text-[15px] font-semibold tracking-[-0.015em] text-slate-950">{item.title}</h3>
       <p className="mt-1.5 text-sm leading-6 text-slate-600">{item.description}</p>
+      {item.workItem?.whyItMatters && <p className="mt-2 text-xs leading-5 text-slate-600"><span className="font-semibold text-slate-800">Why it matters:</span> {item.workItem.whyItMatters}</p>}
+      {item.workItem?.suggestedAction && <p className="mt-1 text-xs leading-5 text-slate-600"><span className="font-semibold text-slate-800">Suggested next step:</span> {item.workItem.suggestedAction}</p>}
       <div className="mt-4 flex flex-col gap-3 border-t border-[#eee8de] pt-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="min-w-0 truncate text-xs font-medium text-slate-500">{item.source}</p>
-        <Link
+        <p className="min-w-0 break-words text-xs font-medium text-slate-500">{item.source}</p>
+        {!item.workItem && <Link
           href={item.cta.href}
           className="inline-flex min-h-11 shrink-0 items-center gap-1.5 self-start rounded-lg px-1 text-xs font-semibold text-[#725300] hover:text-[#493500] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9b7309] focus-visible:ring-offset-2 sm:min-h-0 sm:self-auto"
         >
           {item.cta.label}<ArrowRight className="size-3.5" aria-hidden="true" />
-        </Link>
+        </Link>}
       </div>
+      {item.workItem && item.workItem.status !== "handled" && (
+        <form action={updateMyWorkItem} className="mt-3 flex flex-wrap gap-2">
+          <input type="hidden" name="id" value={item.workItem.id} />
+          {item.workItem.status === "needs_you" ? (
+            <button name="to" value="waiting" className="min-h-10 rounded-lg border border-[#ded6ca] px-3 text-xs font-semibold text-slate-700 hover:bg-[#faf8f4] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9b7309]">Move to waiting</button>
+          ) : (
+            <button name="to" value="needs_you" className="min-h-10 rounded-lg border border-[#ded6ca] px-3 text-xs font-semibold text-slate-700 hover:bg-[#faf8f4] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9b7309]">Return to Needs You</button>
+          )}
+          <button name="to" value="done" className="min-h-10 rounded-lg border border-[#ded6ca] px-3 text-xs font-semibold text-slate-700 hover:bg-[#faf8f4] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9b7309]">Mark done</button>
+        </form>
+      )}
     </article>
   );
 }
@@ -136,7 +155,7 @@ function MyDaySection({
   );
 }
 
-export function MyDayView({ data }: { data: MyDayData }) {
+export function MyDayView({ data, actionError = false }: { data: MyDayData; actionError?: boolean }) {
   return (
     <div className="h-dvh overflow-y-auto bg-[#f7f4ee] text-[#34313d]">
       <main className="mx-auto w-full max-w-6xl px-4 pb-16 pt-20 sm:px-6 sm:pb-20 lg:px-8 lg:pt-10">
@@ -149,6 +168,14 @@ export function MyDayView({ data }: { data: MyDayData }) {
             <StartMyDay summary={data.summary.sentence} startWith={data.startWith} />
           </div>
         </header>
+
+        {(data.workItemsUnavailable || data.workflowDataUnavailable || actionError) && (
+          <div role="alert" className="mt-5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            {actionError ? "That work item could not be updated. Refresh and try again."
+              : data.workflowDataUnavailable ? "Workflow information is temporarily unavailable. Your saved work items are still shown below."
+                : "Work items are temporarily unavailable. Your workflow information is still shown below."}
+          </div>
+        )}
 
         <div className="mt-6 grid items-start gap-6 lg:grid-cols-12">
           <div className="lg:col-span-7">
@@ -186,6 +213,16 @@ export function MyDayView({ data }: { data: MyDayData }) {
             />
           </div>
           <div className="lg:col-span-7">
+            <MyDaySection
+              id="handled-by-crazyloops-title"
+              title="Handled by CrazyLoops"
+              description="Work confirmed complete by a real execution."
+              icon={CircleCheck}
+              items={data.handledByCrazyLoops}
+              empty="No work has been handled automatically yet."
+            />
+          </div>
+          <div className="lg:col-span-12">
             <MyDaySection
               id="recent-activity-title"
               title="Recent Activity"
