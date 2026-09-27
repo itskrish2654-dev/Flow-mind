@@ -3,6 +3,7 @@ import "server-only";
 import { getAuthenticatedContext } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listCurrentUserWorkItems } from "@/lib/work-items";
+import { listCurrentUserPendingApprovals } from "@/lib/approvals";
 import {
   buildMyDayData,
   indexCredentialMetadata,
@@ -72,6 +73,9 @@ export async function loadMyDayData(): Promise<MyDayData | null> {
   const userId = auth.user.id;
   const workspaceId = auth.workspace.id;
   const workItemsPromise = listCurrentUserWorkItems()
+    .then((items) => ({ items, unavailable: false }))
+    .catch(() => ({ items: [], unavailable: true }));
+  const approvalsPromise = listCurrentUserPendingApprovals()
     .then((items) => ({ items, unavailable: false }))
     .catch(() => ({ items: [], unavailable: true }));
   try {
@@ -196,18 +200,22 @@ export async function loadMyDayData(): Promise<MyDayData | null> {
     status: connection.status,
   }));
 
-  const workItems = await workItemsPromise;
+  const [workItems, approvals] = await Promise.all([workItemsPromise, approvalsPromise]);
   return buildMyDayData({
     userId, workspaceId, workflows, executions, connections,
     workItems: workItems.items,
     workItemsUnavailable: workItems.unavailable,
+    approvals: approvals.items,
+    approvalsUnavailable: approvals.unavailable,
   });
   } catch {
-    const workItems = await workItemsPromise;
+    const [workItems, approvals] = await Promise.all([workItemsPromise, approvalsPromise]);
     if (workItems.unavailable) throw new Error("My Day could not be loaded safely.");
     return buildMyDayData({
       userId, workspaceId, workflows: [], executions: [], connections: [],
       workItems: workItems.items,
+      approvals: approvals.items,
+      approvalsUnavailable: approvals.unavailable,
       workflowDataUnavailable: true,
     });
   }

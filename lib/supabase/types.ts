@@ -100,6 +100,58 @@ export type Database = {
         };
         Relationships: [];
       };
+      approval_requests: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          work_item_id: string;
+          approver_user_id: string;
+          requested_by_user_id: string | null;
+          origin_type: "workflow" | "workflow_execution" | "connector_event" | "system" | "internal";
+          source_id: string | null;
+          request_key: string;
+          action_title: string;
+          action_summary: string;
+          approval_reason: string;
+          capability_id: string;
+          action_snapshot: Json;
+          status: "pending" | "approved" | "rejected" | "cancelled";
+          decided_by_user_id: string | null;
+          decided_at: string | null;
+          rejection_reason: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          work_item_id: string;
+          approver_user_id: string;
+          requested_by_user_id?: string | null;
+          origin_type: "workflow" | "workflow_execution" | "connector_event" | "system" | "internal";
+          source_id?: string | null;
+          request_key: string;
+          action_title: string;
+          action_summary: string;
+          approval_reason: string;
+          capability_id: string;
+          action_snapshot: Json;
+          status?: "pending" | "approved" | "rejected" | "cancelled";
+          decided_by_user_id?: string | null;
+          decided_at?: string | null;
+          rejection_reason?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          status?: "approved" | "rejected" | "cancelled";
+          decided_by_user_id?: string;
+          decided_at?: string;
+          rejection_reason?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       workflows: {
         Row: {
           id: string;
@@ -593,6 +645,31 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      create_approval_request: {
+        Args: {
+          p_actor_user_id: string;
+          p_work_item_id: string;
+          p_approver_user_id: string;
+          p_origin_type: string;
+          p_source_id: string | null;
+          p_request_key: string;
+          p_action_title: string;
+          p_action_summary: string;
+          p_approval_reason: string;
+          p_capability_id: string;
+          p_action_snapshot: Json;
+        };
+        Returns: Database["public"]["Tables"]["approval_requests"]["Row"][];
+      };
+      decide_approval_request: {
+        Args: {
+          p_approval_id: string;
+          p_actor_user_id: string;
+          p_decision: "approved" | "rejected" | "cancelled";
+          p_rejection_reason?: string | null;
+        };
+        Returns: Database["public"]["Tables"]["approval_requests"]["Row"][];
+      };
       ensure_default_workspace: {
         Args: { p_user_id: string };
         Returns: Array<{

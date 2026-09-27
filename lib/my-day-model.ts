@@ -10,6 +10,7 @@ import {
 } from "@/lib/workflow-readiness";
 import { getStepInputs } from "@/lib/workflow-setup";
 import type { WorkItem } from "@/lib/work-items-core";
+import { ApprovalActionSnapshotSchema, type ApprovalRequest } from "@/lib/approvals-core";
 
 export const MY_DAY_LIMITS = {
   workflows: 30,
@@ -23,6 +24,7 @@ export const MY_DAY_LIMITS = {
   recentActivity: 5,
   durableWorkItems: 50,
   handled: 5,
+  approvals: 50,
 } as const;
 
 export type MyDayItemKind = "attention" | "today" | "waiting" | "activity";
@@ -73,8 +75,22 @@ export type MyDayData = {
   waitingOn: MyDayItem[];
   recentActivity: MyDayItem[];
   handledByCrazyLoops: MyDayItem[];
+  approvals: MyDayApproval[];
+  approvalsUnavailable: boolean;
   workItemsUnavailable: boolean;
   workflowDataUnavailable: boolean;
+};
+
+export type MyDayApproval = {
+  id: string;
+  workItemId: string;
+  title: string;
+  summary: string;
+  reason: string;
+  source: string;
+  target: string;
+  parameters: Array<{ label: string; value: string }>;
+  createdAt: string;
 };
 
 export type MyDayWorkflowCandidate = {
@@ -121,6 +137,8 @@ export type BuildMyDayInput = {
   executions: readonly MyDayExecutionCandidate[];
   connections: readonly MyDayConnectionCandidate[];
   workItems?: readonly WorkItem[];
+  approvals?: readonly ApprovalRequest[];
+  approvalsUnavailable?: boolean;
   workItemsUnavailable?: boolean;
   workflowDataUnavailable?: boolean;
 };
@@ -328,10 +346,33 @@ function durableMyDayItem(item: WorkItem): MyDayItem {
 }
 
 export function buildMyDayData(input: BuildMyDayInput): MyDayData {
+  const approvalRows = (input.approvals ?? [])
+    .filter((approval) => approval.status === "pending"
+      && approval.approver_user_id === input.userId
+      && (!input.workspaceId || approval.workspace_id === input.workspaceId))
+    .slice(0, MY_DAY_LIMITS.approvals);
+  const approvals = approvalRows.flatMap<MyDayApproval>((approval) => {
+    const snapshot = ApprovalActionSnapshotSchema.safeParse(approval.action_snapshot);
+    if (!snapshot.success || snapshot.data.operationKey !== approval.capability_id) return [];
+    return [{
+      id: approval.id,
+      workItemId: approval.work_item_id,
+      title: safeText(approval.action_title, "Approval", 180),
+      summary: safeText(approval.action_summary, "Review this proposed action.", 2000),
+      reason: safeText(approval.approval_reason, "Your decision is required.", 1000),
+      source: safeText(approval.origin_type.replaceAll("_", " "), "CrazyLoops", 120),
+      target: safeText(snapshot.data.target.label, "Proposed target", 180),
+      parameters: snapshot.data.parameters.map((parameter) => ({ label: parameter.label, value: parameter.value })),
+      createdAt: approval.created_at,
+    }];
+  });
+  const approvalsUnavailable = (input.approvalsUnavailable ?? false) || approvals.length !== approvalRows.length;
+  const linkedPendingWorkItems = new Set(approvals.map((approval) => approval.workItemId));
   const durable = (input.workItems ?? [])
     .filter((item) => item.assignee_user_id === input.userId
       && (!input.workspaceId || item.workspace_id === input.workspaceId)
       && item.status !== "done")
+    .filter((item) => !linkedPendingWorkItems.has(item.id))
     .slice(0, MY_DAY_LIMITS.durableWorkItems * 3)
     .map(durableMyDayItem);
   const workflows = input.workflows
@@ -508,6 +549,7 @@ export function buildMyDayData(input: BuildMyDayInput): MyDayData {
   const readyToTestCount = evaluated.filter(({ readiness }) => readiness.testReady).length;
   const sentence = [
     `${plural(allNeedsYou.length, "thing")} need${allNeedsYou.length === 1 ? "s" : ""} you.`,
+    `${plural(approvals.length, "approval")} await${approvals.length === 1 ? "s" : ""} your decision.`,
     `${plural(readyToTestCount, "workflow")} ${readyToTestCount === 1 ? "is" : "are"} ready to test.`,
     `${plural(recentCompletedCount, "run")} completed recently.`,
   ].join(" ");
@@ -526,6 +568,8 @@ export function buildMyDayData(input: BuildMyDayInput): MyDayData {
     waitingOn,
     recentActivity,
     handledByCrazyLoops,
+    approvals,
+    approvalsUnavailable,
     workItemsUnavailable: input.workItemsUnavailable ?? false,
     workflowDataUnavailable: input.workflowDataUnavailable ?? false,
   };

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import {
   Activity,
+  BadgeCheck,
   ArrowRight,
   CircleCheck,
   Clock3,
@@ -11,8 +12,9 @@ import {
 } from "lucide-react";
 
 import { updateMyWorkItem } from "@/app/actions/work-items";
+import { decideMyApproval } from "@/app/actions/approvals";
 import { StartMyDay } from "@/components/my-day/start-my-day";
-import type { MyDayData, MyDayItem, MyDayItemStatus } from "@/lib/my-day-model";
+import type { MyDayApproval, MyDayData, MyDayItem, MyDayItemStatus } from "@/lib/my-day-model";
 
 function displayTime(value: string | null): string | null {
   if (!value) return null;
@@ -155,7 +157,38 @@ function MyDaySection({
   );
 }
 
-export function MyDayView({ data, actionError = false }: { data: MyDayData; actionError?: boolean }) {
+function ApprovalCard({ approval }: { approval: MyDayApproval }) {
+  return (
+    <article className="min-w-0 rounded-2xl border border-[#e4ddd2] bg-[#fffdfa] p-4 sm:p-5">
+      <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+        <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 font-bold uppercase tracking-[0.1em] text-amber-800">Decision needed</span>
+        <time dateTime={approval.createdAt}>{displayTime(approval.createdAt)}</time>
+        <span>{approval.source}</span>
+      </div>
+      <h3 className="mt-3 text-[15px] font-semibold text-slate-950">{approval.title}</h3>
+      <p className="mt-1.5 break-words text-sm leading-6 text-slate-600">{approval.summary}</p>
+      <p className="mt-2 break-words text-xs leading-5 text-slate-700"><span className="font-semibold">Why your approval is needed:</span> {approval.reason}</p>
+      <div className="mt-3 rounded-xl border border-[#eee8de] bg-[#faf8f4] p-3 text-xs leading-5 text-slate-700">
+        <p className="break-words"><span className="font-semibold">Target:</span> {approval.target}</p>
+        {approval.parameters.map((parameter, index) => (
+          <p key={`${parameter.label}-${index}`} className="mt-1 break-words"><span className="font-semibold">{parameter.label}:</span> {parameter.value}</p>
+        ))}
+      </div>
+      <form action={decideMyApproval} className="mt-4 flex flex-wrap items-end gap-2">
+        <input type="hidden" name="id" value={approval.id} />
+        <label className="min-w-0 grow text-xs font-medium text-slate-700">
+          Reason for rejecting (optional)
+          <input name="rejectionReason" maxLength={500} className="mt-1 block min-h-10 w-full min-w-0 rounded-lg border border-[#ded6ca] bg-white px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9b7309]" />
+        </label>
+        <button name="decision" value="approved" className="min-h-10 rounded-lg border border-[#a58a3e] bg-[#fff8df] px-3 text-xs font-semibold text-[#5f4709] hover:bg-[#fff1c5] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9b7309]">Approve</button>
+        <button name="decision" value="rejected" className="min-h-10 rounded-lg border border-[#ded6ca] px-3 text-xs font-semibold text-slate-700 hover:bg-[#faf8f4] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9b7309]">Reject</button>
+      </form>
+      <p className="mt-2 text-[11px] text-slate-500">Approval records your decision. It does not send or change anything in another app yet.</p>
+    </article>
+  );
+}
+
+export function MyDayView({ data, actionError = false, approvalActionError = false }: { data: MyDayData; actionError?: boolean; approvalActionError?: boolean }) {
   return (
     <div className="h-dvh overflow-y-auto bg-[#f7f4ee] text-[#34313d]">
       <main className="mx-auto w-full max-w-6xl px-4 pb-16 pt-20 sm:px-6 sm:pb-20 lg:px-8 lg:pt-10">
@@ -169,15 +202,25 @@ export function MyDayView({ data, actionError = false }: { data: MyDayData; acti
           </div>
         </header>
 
-        {(data.workItemsUnavailable || data.workflowDataUnavailable || actionError) && (
+        {(data.workItemsUnavailable || data.approvalsUnavailable || data.workflowDataUnavailable || actionError || approvalActionError) && (
           <div role="alert" className="mt-5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-            {actionError ? "That work item could not be updated. Refresh and try again."
+            {approvalActionError ? "That approval could not be decided. Refresh and review its current status."
+              : actionError ? "That work item could not be updated. Refresh and try again."
+              : data.approvalsUnavailable ? "Approvals are temporarily unavailable. Other work is still shown below."
               : data.workflowDataUnavailable ? "Workflow information is temporarily unavailable. Your saved work items are still shown below."
                 : "Work items are temporarily unavailable. Your workflow information is still shown below."}
           </div>
         )}
 
         <div className="mt-6 grid items-start gap-6 lg:grid-cols-12">
+          <section aria-labelledby="approvals-title" className="rounded-3xl border border-[#ded6ca] bg-white/65 p-4 shadow-[0_18px_60px_rgba(44,39,31,0.035)] sm:p-6 lg:col-span-12">
+            <SectionHeader id="approvals-title" title="Approvals" description="Review exactly what is proposed before deciding. A decision does not perform the action." icon={BadgeCheck} count={data.approvals.length} />
+            {data.approvals.length > 0 ? (
+              <div className="mt-5 grid gap-3 md:grid-cols-2">{data.approvals.map((approval) => <ApprovalCard key={approval.id} approval={approval} />)}</div>
+            ) : (
+              <p className="mt-5 rounded-2xl border border-dashed border-[#ddd3c2] bg-[#faf8f4] px-5 py-6 text-center text-sm text-slate-600">No approvals are waiting for you.</p>
+            )}
+          </section>
           <div className="lg:col-span-7">
             <MyDaySection
               id="needs-you-title"
