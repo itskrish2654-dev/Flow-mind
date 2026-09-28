@@ -9,6 +9,7 @@ import {
   LoaderCircle,
   LogOut,
   Menu,
+  MessageCircle,
   Plus,
   Gauge,
   LifeBuoy,
@@ -220,8 +221,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="border-b border-[#e4ddd2] px-4 pb-4">
             <p className="text-lg font-bold text-[#272536]">CrazyLoops</p>
             <button type="button" onClick={newAutomation} className="mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#d7aa2f] bg-[#fff7dc] px-4 text-sm font-semibold text-[#272536]"><Plus className="size-4" />Create workflow</button>
-            <div className="mt-3 grid grid-cols-3 gap-1">
+            <div className="mt-3 grid grid-cols-2 gap-1">
               <Link href="/my-day" onClick={() => setMobileNavOpen(false)} aria-current={pathname === "/my-day" ? "page" : undefined} className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl text-xs font-semibold ${pathname === "/my-day" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-700 hover:bg-[#f8f4ec]"}`}><SunMedium className="size-4" />My Day</Link>
+              <Link href="/ask" onClick={() => setMobileNavOpen(false)} aria-current={pathname === "/ask" ? "page" : undefined} className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl text-xs font-semibold ${pathname === "/ask" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-700 hover:bg-[#f8f4ec]"}`}><MessageCircle className="size-4" />Ask</Link>
               <Link href="/dashboard" onClick={() => setMobileNavOpen(false)} aria-current={pathname === "/dashboard" ? "page" : undefined} className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl text-xs font-semibold ${pathname === "/dashboard" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-700 hover:bg-[#f8f4ec]"}`}><LayoutDashboard className="size-4" />Workflows</Link>
               <Link href="/connections" onClick={() => setMobileNavOpen(false)} aria-current={pathname === "/connections" ? "page" : undefined} className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl text-xs font-semibold ${pathname === "/connections" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-700 hover:bg-[#f8f4ec]"}`}><PlugZap className="size-4" />Connections</Link>
             </div>
@@ -254,9 +256,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <button type="button" onClick={newAutomation} className="group flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-[#dcd4c8] bg-transparent text-[13px] font-semibold text-[#272536] transition hover:border-[#d7aa2f] hover:bg-[#fff8e3]">
             <span className="flex size-5 items-center justify-center rounded-md bg-[#fff0b9] text-[#8a6200] transition group-hover:bg-[#f1c94b] group-hover:text-[#272536]"><Plus className="size-3.5" /></span> New Automation
           </button>
-          <nav aria-label="Workspace" className="mt-3 grid grid-cols-3 gap-1">
+          <nav aria-label="Workspace" className="mt-3 grid grid-cols-2 gap-1">
             <Link href="/my-day" aria-current={pathname === "/my-day" ? "page" : undefined} className={`flex h-9 items-center justify-center gap-1 rounded-lg text-[9px] font-semibold transition ${pathname === "/my-day" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-500 hover:bg-[#f8f4ec] hover:text-slate-800"}`}>
               <SunMedium className="size-3.5" />My Day
+            </Link>
+            <Link href="/ask" aria-current={pathname === "/ask" ? "page" : undefined} className={`flex h-9 items-center justify-center gap-1 rounded-lg text-[9px] font-semibold transition ${pathname === "/ask" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-500 hover:bg-[#f8f4ec] hover:text-slate-800"}`}>
+              <MessageCircle className="size-3.5" />Ask
             </Link>
             <Link href="/dashboard" aria-current={pathname === "/dashboard" ? "page" : undefined} className={`flex h-9 items-center justify-center gap-1 rounded-lg text-[9px] font-semibold transition ${pathname === "/dashboard" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-500 hover:bg-[#f8f4ec] hover:text-slate-800"}`}>
               <LayoutDashboard className="size-3.5" />Workflows

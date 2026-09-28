@@ -15,6 +15,8 @@ const EXPORT_LIMITS = {
   connections: 500,
   workItems: 5_000,
   approvals: 5_000,
+  askThreads: 500,
+  askMessages: 10_000,
 } as const;
 
 function attachmentName() {
@@ -35,7 +37,7 @@ export async function GET() {
       .limit(EXPORT_LIMITS.workflows + 1);
     if (workflowError || (workflowCount ?? 0) > EXPORT_LIMITS.workflows) throw new Error("export_too_large_workflows");
 
-    const [versionResult, executionResult, documentResult, credentialResult, connectionResult, usageResult, workItemResult, approvalResult] = await Promise.all([
+    const [versionResult, executionResult, documentResult, credentialResult, connectionResult, usageResult, workItemResult, approvalResult, askThreadResult, askMessageResult] = await Promise.all([
       admin.from("workflow_versions")
         .select("id, workflow_id, version_number, compiled_workflow, setup_config, change_scope, change_summary, source_version_id, created_at", { count: "exact" })
         .eq("user_id", auth.user.id).order("created_at", { ascending: true }).limit(EXPORT_LIMITS.versions + 1),
@@ -69,8 +71,20 @@ export async function GET() {
         .eq("approver_user_id", auth.user.id)
         .order("created_at", { ascending: true })
         .limit(EXPORT_LIMITS.approvals + 1),
+      admin.from("ask_threads")
+        .select("id, title, created_at, updated_at", { count: "exact" })
+        .eq("workspace_id", auth.workspace.id)
+        .eq("user_id", auth.user.id)
+        .order("created_at", { ascending: true })
+        .limit(EXPORT_LIMITS.askThreads + 1),
+      admin.from("ask_messages")
+        .select("id, thread_id, role, content, response_metadata, created_at", { count: "exact" })
+        .eq("workspace_id", auth.workspace.id)
+        .eq("user_id", auth.user.id)
+        .order("created_at", { ascending: true })
+        .limit(EXPORT_LIMITS.askMessages + 1),
     ]);
-    const results = [versionResult, executionResult, documentResult, credentialResult, connectionResult, usageResult, workItemResult, approvalResult];
+    const results = [versionResult, executionResult, documentResult, credentialResult, connectionResult, usageResult, workItemResult, approvalResult, askThreadResult, askMessageResult];
     if (results.some((result) => result.error)) throw new Error("export_query_failed");
     if ((versionResult.count ?? 0) > EXPORT_LIMITS.versions) throw new Error("export_too_large_versions");
     if ((executionResult.count ?? 0) > EXPORT_LIMITS.executions) throw new Error("export_too_large_executions");
@@ -79,6 +93,8 @@ export async function GET() {
     if ((connectionResult.count ?? 0) > EXPORT_LIMITS.connections) throw new Error("export_too_large_connections");
     if ((workItemResult.count ?? 0) > EXPORT_LIMITS.workItems) throw new Error("export_too_large_work_items");
     if ((approvalResult.count ?? 0) > EXPORT_LIMITS.approvals) throw new Error("export_too_large_approvals");
+    if ((askThreadResult.count ?? 0) > EXPORT_LIMITS.askThreads) throw new Error("export_too_large_ask_threads");
+    if ((askMessageResult.count ?? 0) > EXPORT_LIMITS.askMessages) throw new Error("export_too_large_ask_messages");
 
     const executionIds = (executionResult.data ?? []).map((execution) => execution.id);
     const executionSteps: Array<Record<string, unknown>> = [];
@@ -114,8 +130,10 @@ export async function GET() {
         usage: usageResult.data ?? [],
         workItems: workItemResult.data ?? [],
         approvals: approvalResult.data ?? [],
+        askThreads: askThreadResult.data ?? [],
+        askMessages: askMessageResult.data ?? [],
       },
-      excluded: ["credential plaintext", "encryption material", "authentication tokens", "service secrets", "document storage paths"],
+      excluded: ["credential plaintext", "encryption material", "authentication tokens", "service secrets", "document storage paths", "model system instructions", "hidden model reasoning"],
     };
     return new NextResponse(JSON.stringify(archive, null, 2), {
       headers: {

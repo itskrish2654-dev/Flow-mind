@@ -9,6 +9,53 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      ask_threads: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          user_id: string;
+          title: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          user_id: string;
+          title: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          title?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      ask_messages: {
+        Row: {
+          id: string;
+          thread_id: string;
+          workspace_id: string;
+          user_id: string;
+          role: "user" | "assistant";
+          content: string;
+          response_metadata: Json | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          thread_id: string;
+          workspace_id: string;
+          user_id: string;
+          role: "user" | "assistant";
+          content: string;
+          response_metadata?: Json | null;
+          created_at?: string;
+        };
+        Update: Record<string, never>;
+        Relationships: [];
+      };
       workspaces: {
         Row: {
           id: string;
