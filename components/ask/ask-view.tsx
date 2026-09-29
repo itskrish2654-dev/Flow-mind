@@ -2,11 +2,21 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { ArrowRight, Bot, LoaderCircle, MessageCircle, Plus, Send, Sparkles } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowRight, Bot, LoaderCircle, MessageCircle, Plus, RefreshCw, Send, Sparkles } from "lucide-react";
 
-import { submitAskMessage } from "@/app/actions/ask";
-import type { AskPageData } from "@/lib/ask";
+import {
+  checkAskMessageStatus,
+  retryAskMessageAction,
+  submitAskMessage,
+} from "@/app/actions/ask";
+import {
+  createAskClientSubmission,
+  performAskClientSubmission,
+  shouldApplyAskResult,
+  type AskClientSubmission,
+} from "@/lib/ask-client-submission";
+import type { AskPageData, SendAskResult } from "@/lib/ask";
 
 const STARTERS = [
   "What do I need to do today?",
@@ -25,33 +35,181 @@ function sourceLabel(kind: string): string {
   }
 }
 
+function pendingFromPage(data: AskPageData): AskClientSubmission | null {
+  if (!data.pendingSubmission) {
+    return data.requestedSubmissionId
+      ? { requestId: data.requestedSubmissionId, question: "", threadId: data.selectedThread?.id ?? null }
+      : null;
+  }
+  if (data.pendingSubmission.state === "completed") return null;
+  return {
+    requestId: data.pendingSubmission.request_id,
+    question: "",
+    threadId: data.pendingSubmission.thread_id,
+  };
+}
+
+function pendingFeedback(data: AskPageData): SendAskResult | null {
+  const turn = data.pendingSubmission;
+  if (!turn) {
+    return data.requestedSubmissionId ? {
+      ok: false, requestId: data.requestedSubmissionId, threadId: data.selectedThread?.id ?? null,
+      outcome: "uncertain", messageSaved: null, replayed: false, retryable: false,
+      error: "CrazyLoops has not confirmed this request yet. Check the saved status before submitting it again.",
+    } : null;
+  }
+  if (turn.state === "completed") return null;
+  if (turn.state === "processing") {
+    return {
+      ok: false, requestId: turn.request_id, threadId: turn.thread_id,
+      outcome: "processing", messageSaved: true, replayed: true, retryable: false,
+      error: "Your question is still processing. Check its status again shortly.",
+    };
+  }
+  return {
+    ok: false, requestId: turn.request_id, threadId: turn.thread_id,
+    outcome: "failed", messageSaved: true, replayed: true, retryable: true,
+    error: turn.failure_category === "interrupted"
+      ? "Your question was saved, but the attempt was interrupted. You can retry it safely."
+      : "Your question was saved, but CrazyLoops could not generate an answer. You can retry it safely.",
+  };
+}
+
 export function AskView({ data }: { data: AskPageData }) {
   const router = useRouter();
   const [message, setMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<SendAskResult | null>(() => pendingFeedback(data));
+  const [pending, setPending] = useState<AskClientSubmission | null>(() => pendingFromPage(data));
+  const submittingRef = useRef(false);
+  const activeThreadRef = useRef<string | null>(data.selectedThread?.id ?? null);
+  useEffect(() => {
+    activeThreadRef.current = data.selectedThread?.id ?? null;
+  }, [data.selectedThread?.id]);
 
-  async function send(value = message) {
-    const question = value.trim();
-    if (!question || isSending) return;
-    setIsSending(true);
-    setError(null);
-    const result = await submitAskMessage({
-      ...(data.selectedThread ? { threadId: data.selectedThread.id } : {}),
-      message: question,
-    });
-    setIsSending(false);
-    if (!result.ok) {
-      setError(result.error);
-      if (result.threadId && !data.selectedThread) {
-        router.replace(`/ask?thread=${encodeURIComponent(result.threadId)}`);
-      }
+  function requestUrl(submission: AskClientSubmission, resolvedThreadId?: string | null): string {
+    const params = new URLSearchParams();
+    const threadId = resolvedThreadId ?? submission.threadId;
+    if (threadId) params.set("thread", threadId);
+    params.set("request", submission.requestId);
+    return `/ask?${params.toString()}`;
+  }
+
+  function rememberInUrl(submission: AskClientSubmission, resolvedThreadId?: string | null) {
+    window.history.replaceState(window.history.state, "", requestUrl(submission, resolvedThreadId));
+  }
+
+  function currentUrlThread(): string | null {
+    return new URLSearchParams(window.location.search).get("thread");
+  }
+
+  function applyResult(submission: AskClientSubmission, result: SendAskResult) {
+    if (!shouldApplyAskResult(submission, currentUrlThread(), result)) return;
+    setFeedback(result);
+    if (result.messageSaved === true) setMessage((current) => current === submission.question ? "" : current);
+
+    if (result.outcome === "completed") {
+      setPending(null);
+      router.replace(result.threadId ? `/ask?thread=${encodeURIComponent(result.threadId)}` : "/ask");
       router.refresh();
       return;
     }
-    setMessage("");
-    router.replace(`/ask?thread=${encodeURIComponent(result.threadId)}`);
-    router.refresh();
+    if (result.outcome === "processing" || result.outcome === "failed" || result.outcome === "uncertain") {
+      const retained = { ...submission, threadId: result.threadId ?? submission.threadId };
+      setPending(retained);
+      rememberInUrl(retained, result.threadId);
+      router.refresh();
+      return;
+    }
+    if (result.outcome === "busy" || result.outcome === "rejected") {
+      setPending(null);
+      const threadId = submission.threadId ?? activeThreadRef.current;
+      window.history.replaceState(window.history.state, "", threadId ? `/ask?thread=${encodeURIComponent(threadId)}` : "/ask");
+    }
+  }
+
+  async function send(value = message) {
+    const question = value.trim();
+    if (!question || submittingRef.current
+      || (pending && (feedback?.outcome === "processing" || feedback?.outcome === "uncertain"))) return;
+    submittingRef.current = true;
+    setIsSending(true);
+    setFeedback(null);
+    const submission = createAskClientSubmission(question, activeThreadRef.current);
+    setPending(submission);
+    rememberInUrl(submission);
+    try {
+      const attempt = await performAskClientSubmission(submission, submitAskMessage);
+      if (attempt.kind === "network_error") {
+        if (currentUrlThread() === submission.threadId) {
+          setPending(submission);
+          setFeedback({
+            ok: false,
+            requestId: submission.requestId,
+            threadId: submission.threadId,
+            outcome: "uncertain",
+            messageSaved: null,
+            replayed: false,
+            retryable: false,
+            error: "The network response was interrupted. Your draft is preserved; check the saved status before submitting again.",
+          });
+        }
+        return;
+      }
+      applyResult(submission, attempt.result);
+    } finally {
+      submittingRef.current = false;
+      setIsSending(false);
+    }
+  }
+
+  async function reconcilePending() {
+    if (!pending || submittingRef.current) return;
+    submittingRef.current = true;
+    setIsSending(true);
+    try {
+      const result = await checkAskMessageStatus({
+        requestId: pending.requestId,
+        ...(pending.threadId ? { threadId: pending.threadId } : {}),
+      });
+      applyResult(pending, result);
+    } catch {
+      if (currentUrlThread() === pending.threadId) {
+        setFeedback({
+          ok: false, requestId: pending.requestId, threadId: pending.threadId,
+          outcome: "uncertain", messageSaved: null, replayed: false, retryable: false,
+          error: "CrazyLoops still could not confirm the saved status. Your draft and request identifier are preserved.",
+        });
+      }
+    } finally {
+      submittingRef.current = false;
+      setIsSending(false);
+    }
+  }
+
+  async function retryPending() {
+    if (!pending || submittingRef.current) return;
+    submittingRef.current = true;
+    setIsSending(true);
+    setFeedback(null);
+    try {
+      const result = await retryAskMessageAction({
+        requestId: pending.requestId,
+        ...(pending.threadId ? { threadId: pending.threadId } : {}),
+      });
+      applyResult(pending, result);
+    } catch {
+      if (currentUrlThread() === pending.threadId) {
+        setFeedback({
+          ok: false, requestId: pending.requestId, threadId: pending.threadId,
+          outcome: "uncertain", messageSaved: true, replayed: false, retryable: false,
+          error: "The retry response was interrupted. Check the stored status before retrying again.",
+        });
+      }
+    } finally {
+      submittingRef.current = false;
+      setIsSending(false);
+    }
   }
 
   return (
@@ -99,7 +257,7 @@ export function AskView({ data }: { data: AskPageData }) {
                   <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-600">Ask about the Work Items, approvals, workflows, and activity already stored in your private CrazyLoops workspace.</p>
                   <div className="mx-auto mt-7 grid max-w-2xl gap-2 sm:grid-cols-2">
                     {STARTERS.map((starter) => (
-                      <button key={starter} type="button" onClick={() => { setMessage(starter); void send(starter); }} disabled={isSending} className="group flex min-h-12 items-center justify-between rounded-xl border border-[#ddd3c3] bg-[#fffdfa] px-4 text-left text-sm text-slate-700 transition hover:border-[#d7aa2f] hover:bg-[#fff8e3] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#8a6200] disabled:opacity-60">
+                      <button key={starter} type="button" onClick={() => { setMessage(starter); void send(starter); }} disabled={isSending || Boolean(pending)} className="group flex min-h-12 items-center justify-between rounded-xl border border-[#ddd3c3] bg-[#fffdfa] px-4 text-left text-sm text-slate-700 transition hover:border-[#d7aa2f] hover:bg-[#fff8e3] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#8a6200] disabled:opacity-60">
                         <span>{starter}</span><ArrowRight className="size-4 shrink-0 text-[#9a7007] transition group-hover:translate-x-0.5" />
                       </button>
                     ))}
@@ -132,11 +290,25 @@ export function AskView({ data }: { data: AskPageData }) {
 
           <div className="border-t border-[#e4ddd2] bg-[#fffdfa] p-3 sm:p-4">
             <form className="mx-auto max-w-3xl" onSubmit={(event) => { event.preventDefault(); void send(); }}>
-              {error && <p role="alert" className="mb-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+              {feedback?.error && (
+                <div role={feedback.outcome === "processing" ? "status" : "alert"} className={`mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2 text-xs ${feedback.outcome === "failed" ? "bg-rose-50 text-rose-800" : "bg-amber-50 text-amber-900"}`}>
+                  <span>{feedback.error}</span>
+                  {pending && (
+                    <span className="flex gap-2">
+                      {(feedback.outcome === "processing" || feedback.outcome === "uncertain") && (
+                        <button type="button" onClick={() => void reconcilePending()} disabled={isSending} className="inline-flex min-h-8 items-center gap-1 rounded-lg border border-current/20 px-2 font-semibold disabled:opacity-50"><RefreshCw className="size-3.5" />Check status</button>
+                      )}
+                      {feedback.outcome === "failed" && feedback.retryable && (
+                        <button type="button" onClick={() => void retryPending()} disabled={isSending} className="inline-flex min-h-8 items-center gap-1 rounded-lg border border-current/20 px-2 font-semibold disabled:opacity-50"><RefreshCw className="size-3.5" />Retry answer</button>
+                      )}
+                    </span>
+                  )}
+                </div>
+              )}
               <div className="flex items-end gap-2 rounded-2xl border border-[#d9cfbf] bg-white p-2 shadow-sm focus-within:border-[#b58a13] focus-within:ring-2 focus-within:ring-[#efd77f]/40">
                 <label htmlFor="ask-message" className="sr-only">Ask CrazyLoops</label>
                 <textarea id="ask-message" value={message} onChange={(event) => setMessage(event.target.value)} maxLength={2_000} rows={2} disabled={isSending} placeholder="Ask about your work, approvals, workflows, or recent activity…" className="max-h-36 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 disabled:opacity-60" />
-                <button type="submit" disabled={isSending || !message.trim()} aria-label="Send message" className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-[#f1c94b] text-[#272536] transition hover:bg-[#e5bb3a] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#8a6200] disabled:cursor-not-allowed disabled:opacity-50">
+                <button type="submit" disabled={isSending || !message.trim() || Boolean(pending && (feedback?.outcome === "processing" || feedback?.outcome === "uncertain"))} aria-label="Send message" className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-[#f1c94b] text-[#272536] transition hover:bg-[#e5bb3a] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#8a6200] disabled:cursor-not-allowed disabled:opacity-50">
                   {isSending ? <LoaderCircle className="size-4 animate-spin" /> : <Send className="size-4" />}
                 </button>
               </div>

@@ -20,6 +20,7 @@ import {
 
 const workItemId = "00000000-0000-4000-8000-000000000030";
 const workflowId = "00000000-0000-4000-8000-000000000040";
+const requestId = "00000000-0000-4000-8000-000000000050";
 
 function workItemResult(title = "Review the proposal"): AskToolResult {
   return {
@@ -34,9 +35,10 @@ function workItemResult(title = "Review the proposal"): AskToolResult {
 }
 
 test("Ask input, response, links, metadata, and tool names are strict and bounded", () => {
-  assert.equal(AskInputSchema.safeParse({ message: "What needs me?" }).success, true);
-  assert.equal(AskInputSchema.safeParse({ message: "x".repeat(ASK_LIMITS.questionCharacters + 1) }).success, false);
-  assert.equal(AskInputSchema.safeParse({ message: "Hello", workspaceId: workflowId }).success, false);
+  assert.equal(AskInputSchema.safeParse({ requestId, message: "What needs me?" }).success, true);
+  assert.equal(AskInputSchema.safeParse({ requestId, message: "x".repeat(ASK_LIMITS.questionCharacters + 1) }).success, false);
+  assert.equal(AskInputSchema.safeParse({ requestId, message: "Hello", workspaceId: workflowId }).success, false);
+  assert.equal(AskInputSchema.safeParse({ message: "Missing logical request identity" }).success, false);
   assert.equal(AskToolIdSchema.safeParse("work_items").success, true);
   assert.equal(AskToolIdSchema.safeParse("sql.query").success, false);
   assert.equal(AskToolIdSchema.safeParse("gmail.send").success, false);
@@ -178,14 +180,13 @@ test("Ask persistence schema is private, bounded, relational, and service-write-
   assert.doesNotMatch(sql, /security definer/i);
 });
 
-test("server orchestrator derives tenancy, rechecks service-role writes, and persists user text before tools/model", async () => {
+test("server orchestrator derives tenancy and delegates atomic persistence to the reliable turn store", async () => {
   const source = await readFile("lib/ask.ts", "utf8");
   assert.match(source, /import "server-only"/);
   assert.match(source, /getAuthenticatedContext/);
-  assert.match(source, /workspaceId: auth\.workspace\.id/);
-  assert.match(source, /\.eq\("workspace_id", input\.workspaceId\)\.eq\("user_id", input\.userId\)/);
-  assert.match(source, /Persist the employee's message before tools or the provider can fail/);
-  assert.ok(source.indexOf("role: \"user\"") < source.indexOf("runGroundedAsk({"));
+  assert.match(source, /p_actor_user_id: auth\.user\.id/);
+  assert.match(source, /claim_ask_turn/);
+  assert.match(source, /runReliableAskSubmission/);
   assert.match(source, /LIKELY_SECRET\.test/);
   assert.match(source, /enforceRateLimit\("ask-user"/);
   assert.match(source, /enforceUsageQuota\(auth\.user\.id, "ai_generations"\)/);
@@ -232,6 +233,7 @@ test("UI, export, and account cleanup boundaries expose only owned durable conve
   assert.match(navigation, /href="\/ask"/);
   assert.match(exportRoute, /from\("ask_threads"\)[\s\S]*\.eq\("workspace_id", auth\.workspace\.id\)[\s\S]*\.eq\("user_id", auth\.user\.id\)/);
   assert.match(exportRoute, /from\("ask_messages"\)[\s\S]*\.eq\("workspace_id", auth\.workspace\.id\)[\s\S]*\.eq\("user_id", auth\.user\.id\)/);
+  assert.match(exportRoute, /from\("ask_turns"\)[\s\S]*\.eq\("workspace_id", auth\.workspace\.id\)[\s\S]*\.eq\("user_id", auth\.user\.id\)/);
   assert.match(workspaceMigration, /delete from public\.workspace_memberships where user_id = p_user_id/);
 });
 

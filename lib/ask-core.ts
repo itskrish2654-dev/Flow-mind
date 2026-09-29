@@ -16,8 +16,14 @@ export const ASK_LIMITS = {
 } as const;
 
 export const AskInputSchema = z.object({
+  requestId: z.uuid(),
   threadId: z.uuid().optional(),
   message: z.string().trim().min(1).max(ASK_LIMITS.questionCharacters),
+}).strict();
+
+export const AskRequestReferenceSchema = z.object({
+  requestId: z.uuid(),
+  threadId: z.uuid().optional(),
 }).strict();
 
 export const AskToolIdSchema = z.enum([

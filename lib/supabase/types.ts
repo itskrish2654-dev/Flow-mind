@@ -41,6 +41,9 @@ export type Database = {
           role: "user" | "assistant";
           content: string;
           response_metadata: Json | null;
+          turn_id: string | null;
+          turn_position: number | null;
+          sequence_no: number | null;
           created_at: string;
         };
         Insert: {
@@ -51,9 +54,61 @@ export type Database = {
           role: "user" | "assistant";
           content: string;
           response_metadata?: Json | null;
+          turn_id?: string | null;
+          turn_position?: number | null;
+          sequence_no?: number | null;
           created_at?: string;
         };
         Update: Record<string, never>;
+        Relationships: [];
+      };
+      ask_turns: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          thread_id: string;
+          user_id: string;
+          request_id: string;
+          question: string;
+          state: "processing" | "completed" | "failed";
+          turn_sequence: number;
+          attempt_generation: number;
+          attempt_token: string | null;
+          lease_until: string | null;
+          failure_category: string | null;
+          created_at: string;
+          updated_at: string;
+          completed_at: string | null;
+          failed_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          thread_id: string;
+          user_id: string;
+          request_id: string;
+          question: string;
+          state?: "processing" | "completed" | "failed";
+          turn_sequence: number;
+          attempt_generation?: number;
+          attempt_token?: string | null;
+          lease_until?: string | null;
+          failure_category?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          completed_at?: string | null;
+          failed_at?: string | null;
+        };
+        Update: {
+          state?: "processing" | "completed" | "failed";
+          attempt_generation?: number;
+          attempt_token?: string | null;
+          lease_until?: string | null;
+          failure_category?: string | null;
+          updated_at?: string;
+          completed_at?: string | null;
+          failed_at?: string | null;
+        };
         Relationships: [];
       };
       workspaces: {
@@ -692,6 +747,60 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      claim_ask_turn: {
+        Args: {
+          p_actor_user_id: string;
+          p_request_id: string;
+          p_thread_id: string | null;
+          p_question: string;
+          p_thread_title: string;
+          p_lease_seconds?: number;
+        };
+        Returns: Array<{
+          disposition: string;
+          turn_id: string | null;
+          resolved_thread_id: string;
+          logical_request_id: string;
+          submitted_question: string;
+          turn_sequence: number | null;
+          user_sequence_no: number | null;
+          attempt_token: string | null;
+          attempt_generation: number | null;
+          turn_state: string | null;
+          failure_category: string | null;
+          assistant_content: string | null;
+          assistant_metadata: Json | null;
+        }>;
+      };
+      get_ask_turn_status: {
+        Args: { p_actor_user_id: string; p_request_id: string; p_thread_id?: string | null };
+        Returns: Database["public"]["Functions"]["claim_ask_turn"]["Returns"];
+      };
+      retry_ask_turn: {
+        Args: { p_actor_user_id: string; p_request_id: string; p_thread_id: string | null; p_lease_seconds?: number };
+        Returns: Database["public"]["Functions"]["claim_ask_turn"]["Returns"];
+      };
+      complete_ask_turn: {
+        Args: {
+          p_actor_user_id: string;
+          p_request_id: string;
+          p_attempt_token: string;
+          p_attempt_generation: number;
+          p_answer: string;
+          p_response_metadata: Json;
+        };
+        Returns: boolean;
+      };
+      fail_ask_turn: {
+        Args: {
+          p_actor_user_id: string;
+          p_request_id: string;
+          p_attempt_token: string;
+          p_attempt_generation: number;
+          p_failure_category: string;
+        };
+        Returns: boolean;
+      };
       create_approval_request: {
         Args: {
           p_actor_user_id: string;
