@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { decideCurrentUserApproval } from "@/lib/approvals";
+import { decideAndExecuteCurrentUserAction } from "@/lib/action-executions";
 
 const ApprovalActionSchema = z.object({
   id: z.uuid(),
@@ -20,11 +21,18 @@ export async function decideMyApproval(formData: FormData): Promise<void> {
   });
   if (!parsed.success) redirect("/my-day?approval_error=decision_failed");
   try {
-    await decideCurrentUserApproval({
-      id: parsed.data.id,
+    const action = await decideAndExecuteCurrentUserAction({
+      approvalId: parsed.data.id,
       decision: parsed.data.decision,
       rejectionReason: parsed.data.decision === "rejected" ? parsed.data.rejectionReason || null : null,
     });
+    if (!action) {
+      await decideCurrentUserApproval({
+        id: parsed.data.id,
+        decision: parsed.data.decision,
+        rejectionReason: parsed.data.decision === "rejected" ? parsed.data.rejectionReason || null : null,
+      });
+    }
   } catch {
     redirect("/my-day?approval_error=decision_failed");
   }

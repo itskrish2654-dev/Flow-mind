@@ -183,7 +183,7 @@ function ApprovalCard({ approval }: { approval: MyDayApproval }) {
         <button name="decision" value="approved" className="min-h-10 rounded-lg border border-[#a58a3e] bg-[#fff8df] px-3 text-xs font-semibold text-[#5f4709] hover:bg-[#fff1c5] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9b7309]">Approve</button>
         <button name="decision" value="rejected" className="min-h-10 rounded-lg border border-[#ded6ca] px-3 text-xs font-semibold text-slate-700 hover:bg-[#faf8f4] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9b7309]">Reject</button>
       </form>
-      <p className="mt-2 text-[11px] text-slate-500">Approval records your decision. It does not send or change anything in another app yet.</p>
+      <p className="mt-2 text-[11px] text-slate-500">Approval authorizes only the exact action shown. CrazyLoops records execution success separately and never treats approval as delivery.</p>
     </article>
   );
 }
@@ -214,7 +214,7 @@ export function MyDayView({ data, actionError = false, approvalActionError = fal
 
         <div className="mt-6 grid items-start gap-6 lg:grid-cols-12">
           <section aria-labelledby="approvals-title" className="rounded-3xl border border-[#ded6ca] bg-white/65 p-4 shadow-[0_18px_60px_rgba(44,39,31,0.035)] sm:p-6 lg:col-span-12">
-            <SectionHeader id="approvals-title" title="Approvals" description="Review exactly what is proposed before deciding. A decision does not perform the action." icon={BadgeCheck} count={data.approvals.length} />
+            <SectionHeader id="approvals-title" title="Approvals" description="Review exactly what is proposed. Approving authorizes that frozen action; provider success is recorded separately." icon={BadgeCheck} count={data.approvals.length} />
             {data.approvals.length > 0 ? (
               <div className="mt-5 grid gap-3 md:grid-cols-2">{data.approvals.map((approval) => <ApprovalCard key={approval.id} approval={approval} />)}</div>
             ) : (

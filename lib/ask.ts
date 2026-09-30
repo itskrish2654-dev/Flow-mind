@@ -15,6 +15,7 @@ import {
   type AskResponseMetadata,
 } from "@/lib/ask-core";
 import { callAskModel } from "@/lib/ask-model";
+import { planAskAction } from "@/lib/ask-action-planner";
 import {
   AskReliabilityError,
   readReliableAskStatus,
@@ -295,6 +296,12 @@ function createAskTurnStore(auth: AuthContext): AskTurnStore {
 }
 
 async function generateResponse(auth: AuthContext, question: string, history: AskHistoryMessage[]): Promise<AskGroundedResponse> {
+  const action = await planAskAction({
+    userId: auth.user.id,
+    workspaceId: auth.workspace.id,
+    supabase: auth.supabase,
+  }, question);
+  if (action) return action;
   const externalCapabilityId = requestedExternalCapability(question);
   if (externalCapabilityId) {
     const capability = getCapability(externalCapabilityId);

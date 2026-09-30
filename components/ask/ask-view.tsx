@@ -10,6 +10,7 @@ import {
   retryAskMessageAction,
   submitAskMessage,
 } from "@/app/actions/ask";
+import { requestAskActionApproval } from "@/app/actions/action-executions";
 import {
   createAskClientSubmission,
   performAskClientSubmission,
@@ -31,6 +32,7 @@ function sourceLabel(kind: string): string {
     case "approval": return "Approval";
     case "workflow": return "Workflow";
     case "execution": return "Execution";
+    case "action_execution": return "Action result";
     default: return "CrazyLoops";
   }
 }
@@ -269,6 +271,26 @@ export function AskView({ data }: { data: AskPageData }) {
                   {item.role === "assistant" && <span aria-hidden="true" className="mt-1 flex size-8 shrink-0 items-center justify-center rounded-xl bg-[#fff2bd] text-[#805b00]"><Bot className="size-4" /></span>}
                   <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-6 sm:max-w-[75%] ${item.role === "user" ? "bg-[#34313d] text-white" : "border border-[#e4ddd2] bg-[#fffdfa] text-slate-800"}`}>
                     <p className="whitespace-pre-wrap break-words">{item.content}</p>
+                    {item.metadata?.actionPreview && (
+                      <section aria-label="Action preview" className="mt-3 rounded-xl border border-[#e0c35d] bg-[#fff9df] p-3 text-slate-800">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#805b00]">Action preview</p>
+                        <h3 className="mt-1 font-semibold">{item.metadata.actionPreview.actionTitle}</h3>
+                        <p className="mt-1 text-xs leading-5 text-slate-600">{item.metadata.actionPreview.actionSummary}</p>
+                        <dl className="mt-3 space-y-2 text-xs">
+                          <div><dt className="font-semibold text-slate-500">Target</dt><dd className="break-words">{item.metadata.actionPreview.target.label}</dd></div>
+                          {item.metadata.actionPreview.parameters.map((parameter) => (
+                            <div key={parameter.name}><dt className="font-semibold text-slate-500">{parameter.label}</dt><dd className="whitespace-pre-wrap break-words">{parameter.value}</dd></div>
+                          ))}
+                        </dl>
+                        <p className="mt-3 text-xs font-semibold text-[#765600]">Nothing has been sent or changed yet.</p>
+                        <form action={requestAskActionApproval} className="mt-3">
+                          <input type="hidden" name="messageId" value={item.id} />
+                          <button type="submit" className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-[#34313d] px-4 text-xs font-semibold text-white transition hover:bg-[#211f2a] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#8a6200]">
+                            Review and request approval <ArrowRight className="size-3.5" />
+                          </button>
+                        </form>
+                      </section>
+                    )}
                     {item.metadata && item.metadata.references.length > 0 && (
                       <div aria-label="Sources" className="mt-3 flex flex-wrap gap-2 border-t border-[#e8e1d6] pt-3">
                         {item.metadata.references.map((reference) => (
@@ -312,7 +334,7 @@ export function AskView({ data }: { data: AskPageData }) {
                   {isSending ? <LoaderCircle className="size-4 animate-spin" /> : <Send className="size-4" />}
                 </button>
               </div>
-              <p className="mt-2 px-2 text-[11px] text-slate-500">Ask reads only your scoped CrazyLoops data. External app actions are not enabled here.</p>
+              <p className="mt-2 px-2 text-[11px] text-slate-500">Ask uses only scoped CrazyLoops data. Supported external actions always show an exact preview and require approval before execution.</p>
             </form>
           </div>
         </section>

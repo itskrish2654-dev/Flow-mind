@@ -7,6 +7,8 @@ test.use({ trace: "off", video: "off", screenshot: "off" });
 test.describe.configure({ mode: "serial" });
 
 const ACCEPTANCE_REF = "gamdxwtgccluifatcrrs";
+const ACCEPTANCE_MARKER = "company-workspace-v1";
+const ACCEPTANCE_EMAIL = /^company-(?:owner|admin|member|outsider|removable|expired|concurrent)-[0-9a-f]{16}@example\.com$/;
 type User = { id: string; email: string; password: string; personalWorkspaceId: string };
 let browserIdentity = 0;
 
@@ -62,11 +64,44 @@ async function clientFor(url: string, key: string, user: User) {
 
 async function provision(admin: SupabaseClient, label: string): Promise<User> {
   const login = credentials(label);
-  const { data, error } = await admin.auth.admin.createUser({ email: login.email, password: login.password, email_confirm: true, user_metadata: { acceptance_run: "company-workspace-v1" } });
+  const { data, error } = await admin.auth.admin.createUser({ email: login.email, password: login.password, email_confirm: true, user_metadata: { acceptance_run: ACCEPTANCE_MARKER } });
   if (error || !data.user) throw new Error(`Could not create ${label}.`);
   const { data: rows, error: workspaceError } = await admin.rpc("ensure_default_workspace", { p_user_id: data.user.id });
   if (workspaceError || !rows?.[0]?.workspace_id) throw new Error(`Could not bootstrap ${label}.`);
   return { id: data.user.id, ...login, personalWorkspaceId: rows[0].workspace_id };
+}
+
+async function cleanupCompanyAcceptanceFixtures(admin: SupabaseClient) {
+  const marked = [];
+  for (let page = 1; ; page += 1) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 100 });
+    if (error) throw new Error("Could not enumerate acceptance identities for cleanup.");
+    marked.push(...data.users.filter((user) => user.user_metadata?.acceptance_run === ACCEPTANCE_MARKER));
+    if (data.users.length < 100) break;
+  }
+  if (marked.some((user) => !user.email || !ACCEPTANCE_EMAIL.test(user.email))) {
+    throw new Error("Acceptance cleanup marker belongs to an unexpected identity.");
+  }
+  if (marked.length === 0) return;
+  const ids = marked.map((user) => user.id);
+  const { data: workspaces, error: workspaceError } = await admin.from("workspaces").select("id,created_by").in("created_by", ids);
+  if (workspaceError || workspaces.some((workspace) => !workspace.created_by || !ids.includes(workspace.created_by))) {
+    throw new Error("Acceptance workspace ownership could not be proven.");
+  }
+  const workspaceIds = workspaces.map((workspace) => workspace.id);
+  if (workspaceIds.length) {
+    const { data: memberships, error: membershipError } = await admin.from("workspace_memberships")
+      .select("workspace_id,user_id").in("workspace_id", workspaceIds);
+    if (membershipError || memberships.some((membership) => !ids.includes(membership.user_id))) {
+      throw new Error("Acceptance membership ownership could not be proven.");
+    }
+    const { error } = await admin.from("workspaces").delete().in("id", workspaceIds);
+    if (error) throw new Error("Acceptance workspaces could not be cleaned up.");
+  }
+  for (const user of marked) {
+    const { error } = await admin.auth.admin.deleteUser(user.id);
+    if (error) throw new Error("Acceptance user could not be cleaned up.");
+  }
 }
 
 async function pageFor(browser: Browser, user: User, next = "/settings/company") {
@@ -84,9 +119,10 @@ test("company onboarding, permissions, invitation lifecycle, switching, and isol
   const secret = requiredEnv("SUPABASE_SECRET_KEY");
   if (new URL(url).hostname.split(".")[0] !== ACCEPTANCE_REF) throw new Error("Wrong Supabase target.");
   const admin = createClient(url, secret, { auth: { autoRefreshToken: false, detectSessionInUrl: false, persistSession: false } });
+  // Recover safely from a prior interrupted run before taking the baseline.
+  await cleanupCompanyAcceptanceFixtures(admin);
   const users: User[] = [];
   const contexts: BrowserContext[] = [];
-  const workspaceIds = new Set<string>();
   const tables = ["workspaces", "workspace_memberships", "workspace_invitations", "work_items", "approval_requests", "ask_threads", "ask_turns", "ask_messages"] as const;
   const count = async (table: typeof tables[number]) => {
     const { count: value, error } = await admin.from(table).select("*", { count: "exact", head: true });
@@ -98,7 +134,6 @@ test("company onboarding, permissions, invitation lifecycle, switching, and isol
     for (const label of ["owner", "admin", "member", "outsider", "removable", "expired", "concurrent"]) {
       const user = await provision(admin, label);
       users.push(user);
-      workspaceIds.add(user.personalWorkspaceId);
     }
     const [owner, adminUser, member, outsider, removable, expiredUser, concurrentUser] = users;
     const ownerBrowser = await pageFor(browser, owner);
@@ -117,7 +152,6 @@ test("company onboarding, permissions, invitation lifecycle, switching, and isol
     const { data: storedMemberInvite, error: storedInviteError } = await admin.from("workspace_invitations")
       .select("id,workspace_id,status,token_hash,intended_role").eq("normalized_email", member.email).single();
     if (storedInviteError || !storedMemberInvite) throw new Error("Member invitation was not persisted.");
-    workspaceIds.add(storedMemberInvite.workspace_id);
     expect(storedMemberInvite.status).toBe("pending");
     expect(storedMemberInvite.intended_role).toBe("member");
     expect(storedMemberInvite.token_hash).not.toBe(memberToken);
@@ -247,8 +281,7 @@ test("company onboarding, permissions, invitation lifecycle, switching, and isol
     await expect(mobilePage.locator("body")).not.toContainText(storedMemberInvite.token_hash);
   } finally {
     await Promise.allSettled(contexts.map((context) => context.close()));
-    for (const workspaceId of workspaceIds) await admin.from("workspaces").delete().eq("id", workspaceId);
-    for (const user of users) await admin.auth.admin.deleteUser(user.id);
+    await cleanupCompanyAcceptanceFixtures(admin);
     for (const table of tables) expect(await count(table), `${table} cleanup`).toBe(baseline[table]);
   }
 });

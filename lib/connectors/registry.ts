@@ -345,14 +345,27 @@ const httpPostHandler: ConnectorActionHandler = async (input, context) => {
 const httpRequestHandler: ConnectorActionHandler = async (input, context) =>
   (await import("@/lib/http-request-runtime")).executeHttpConnectorRequest(input, context);
 
-const internalActionHandler: ConnectorActionHandler = async (input, context) => ({
-  status: "succeeded",
-  acknowledged: true,
-  externallyDelivered: true,
-  providerReferenceId: `test:${createHash("sha256").update(context.idempotencyKey).digest("hex").slice(0, 16)}`,
-  output: { accepted: true, message: String(input.message ?? "") },
-  metadata: { internal: true },
-});
+const internalActionHandler: ConnectorActionHandler = async (input, context) => {
+  const message = String(input.message ?? "");
+  if (message === "__acceptance_fail__") return {
+    status: "failed", acknowledged: false, externallyDelivered: false,
+    output: {}, metadata: { internal: true },
+    error: { category: "provider_unavailable", code: "ACCEPTANCE_REJECTION", message: "The acceptance provider rejected the action.", retryable: false },
+  };
+  if (message === "__acceptance_ambiguous__") return {
+    status: "ambiguous", acknowledged: false, externallyDelivered: false,
+    output: {}, metadata: { internal: true },
+    error: { category: "ambiguous_acknowledgement", code: "ACCEPTANCE_AMBIGUOUS", message: "The acceptance provider outcome is unknown.", retryable: false },
+  };
+  return {
+    status: "succeeded",
+    acknowledged: true,
+    externallyDelivered: true,
+    providerReferenceId: `test:${createHash("sha256").update(context.idempotencyKey).digest("hex").slice(0, 16)}`,
+    output: { accepted: true, message },
+    metadata: { internal: true },
+  };
+};
 
 const connectors: RegisteredConnector[] = [
   {

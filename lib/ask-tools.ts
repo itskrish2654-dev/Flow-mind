@@ -14,6 +14,7 @@ import {
 import { loadMyDayData } from "@/lib/my-day";
 import { listCurrentUserPendingApprovals } from "@/lib/approvals";
 import { listCurrentUserWorkItems } from "@/lib/work-items";
+import { listCurrentUserActionExecutions } from "@/lib/action-executions";
 
 export type AskTrustedScope = { userId: string; workspaceId: string };
 
@@ -193,6 +194,34 @@ async function loadRecentActivity(scope: AskTrustedScope): Promise<AskToolResult
   };
 }
 
+async function loadActionActivity(scope: AskTrustedScope): Promise<AskToolResult> {
+  await assertTrustedScope(scope);
+  const actions = await listCurrentUserActionExecutions(ASK_LIMITS.recordsPerTool);
+  return {
+    tool: "action_activity",
+    summary: `${actions.length} approval-backed action result${actions.length === 1 ? "" : "s"} belong to this employee.`,
+    records: actions.map((action, index) => safeRecord({
+      key: `action_execution:${index}`,
+      kind: "action_execution",
+      id: action.id,
+      label: action.capability_id,
+      href: `/my-day#work-item-${action.work_item_id}`,
+      facts: {
+        capability: action.capability_id,
+        status: action.status.replaceAll("_", " "),
+        acknowledged: action.acknowledged ? "yes" : "no",
+        externallyDelivered: action.externally_delivered ? "yes" : "no",
+        result: action.result_summary,
+        failureCategory: action.failure_category,
+        failureMessage: action.failure_message,
+        providerReference: action.provider_reference_id,
+        createdAt: action.created_at,
+        completedAt: action.completed_at,
+      },
+    })),
+  };
+}
+
 /** Strict registry: callers cannot invent a tool name or provide query text. */
 export async function executeAskTool(tool: AskToolId, scope: AskTrustedScope): Promise<AskToolResult> {
   switch (AskToolIdSchema.parse(tool)) {
@@ -201,5 +230,6 @@ export async function executeAskTool(tool: AskToolId, scope: AskTrustedScope): P
     case "pending_approvals": return loadApprovals(scope);
     case "workflow_status": return loadWorkflowStatus(scope);
     case "recent_activity": return loadRecentActivity(scope);
+    case "action_activity": return loadActionActivity(scope);
   }
 }

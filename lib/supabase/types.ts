@@ -299,6 +299,77 @@ export type Database = {
         };
         Relationships: [];
       };
+      action_executions: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          requester_user_id: string;
+          approval_request_id: string;
+          work_item_id: string;
+          source_message_id: string | null;
+          connection_id: string | null;
+          capability_id: string;
+          connector_id: string;
+          operation_key: string;
+          operation_version: number;
+          idempotency_key: string;
+          status: "pending_approval" | "queued" | "executing" | "succeeded" | "failed" | "ambiguous" | "rejected" | "cancelled";
+          claim_token: string | null;
+          claimed_at: string | null;
+          attempt_count: number;
+          acknowledged: boolean;
+          externally_delivered: boolean;
+          provider_reference_id: string | null;
+          result_summary: string | null;
+          failure_category: string | null;
+          failure_message: string | null;
+          created_at: string;
+          updated_at: string;
+          completed_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          requester_user_id: string;
+          approval_request_id: string;
+          work_item_id: string;
+          source_message_id?: string | null;
+          connection_id?: string | null;
+          capability_id: string;
+          connector_id: string;
+          operation_key: string;
+          operation_version: number;
+          idempotency_key: string;
+          status?: "pending_approval" | "queued" | "executing" | "succeeded" | "failed" | "ambiguous" | "rejected" | "cancelled";
+          claim_token?: string | null;
+          claimed_at?: string | null;
+          attempt_count?: number;
+          acknowledged?: boolean;
+          externally_delivered?: boolean;
+          provider_reference_id?: string | null;
+          result_summary?: string | null;
+          failure_category?: string | null;
+          failure_message?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          completed_at?: string | null;
+        };
+        Update: {
+          status?: "pending_approval" | "queued" | "executing" | "succeeded" | "failed" | "ambiguous" | "rejected" | "cancelled";
+          claim_token?: string | null;
+          claimed_at?: string | null;
+          attempt_count?: number;
+          acknowledged?: boolean;
+          externally_delivered?: boolean;
+          provider_reference_id?: string | null;
+          result_summary?: string | null;
+          failure_category?: string | null;
+          failure_message?: string | null;
+          updated_at?: string;
+          completed_at?: string | null;
+        };
+        Relationships: [];
+      };
       workflows: {
         Row: {
           id: string;
@@ -870,6 +941,50 @@ export type Database = {
           p_rejection_reason?: string | null;
         };
         Returns: Database["public"]["Tables"]["approval_requests"]["Row"][];
+      };
+      create_action_approval: {
+        Args: {
+          p_actor_user_id: string;
+          p_source_message_id: string;
+          p_request_key: string;
+          p_action_title: string;
+          p_action_summary: string;
+          p_approval_reason: string;
+          p_capability_id: string;
+          p_connector_id: string;
+          p_operation_key: string;
+          p_operation_version: number;
+          p_connection_id: string | null;
+          p_action_snapshot: Json;
+        };
+        Returns: Database["public"]["Tables"]["action_executions"]["Row"][];
+      };
+      decide_action_execution: {
+        Args: {
+          p_approval_id: string;
+          p_actor_user_id: string;
+          p_decision: "approved" | "rejected" | "cancelled";
+          p_rejection_reason?: string | null;
+        };
+        Returns: Database["public"]["Tables"]["action_executions"]["Row"][];
+      };
+      claim_action_execution: {
+        Args: { p_execution_id: string; p_actor_user_id: string };
+        Returns: Database["public"]["Tables"]["action_executions"]["Row"][];
+      };
+      complete_action_execution: {
+        Args: {
+          p_execution_id: string;
+          p_claim_token: string;
+          p_status: "succeeded" | "failed" | "ambiguous";
+          p_acknowledged: boolean;
+          p_externally_delivered: boolean;
+          p_provider_reference_id: string | null;
+          p_result_summary: string | null;
+          p_failure_category: string | null;
+          p_failure_message: string | null;
+        };
+        Returns: Database["public"]["Tables"]["action_executions"]["Row"][];
       };
       ensure_default_workspace: {
         Args: { p_user_id: string };

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { ActionPreviewSchema } from "@/lib/action-execution-core";
+
 export const ASK_LIMITS = {
   questionCharacters: 2_000,
   storedAnswerCharacters: 8_000,
@@ -32,6 +34,7 @@ export const AskToolIdSchema = z.enum([
   "pending_approvals",
   "workflow_status",
   "recent_activity",
+  "action_activity",
 ]);
 export type AskToolId = z.infer<typeof AskToolIdSchema>;
 
@@ -40,6 +43,7 @@ export const AskReferenceKindSchema = z.enum([
   "approval",
   "workflow",
   "execution",
+  "action_execution",
 ]);
 export type AskReferenceKind = z.infer<typeof AskReferenceKindSchema>;
 
@@ -78,13 +82,14 @@ export const AskResponseMetadataSchema = z.object({
   references: z.array(AskReferenceSchema).max(12),
   suggestedAction: AskSuggestedActionSchema.optional(),
   unsupportedReason: z.string().trim().min(1).max(500).optional(),
+  actionPreview: ActionPreviewSchema.optional(),
 }).strict();
 export type AskResponseMetadata = z.infer<typeof AskResponseMetadataSchema>;
 
 export const AskModelOutputSchema = z.object({
   responseType: z.enum(ASK_MODEL_RESPONSE_TYPES),
   answer: z.string().trim().min(1).max(ASK_LIMITS.modelAnswerCharacters),
-  referenceKeys: z.array(z.string().regex(/^(?:work_item|approval|workflow|execution):\d+$/)).max(12),
+  referenceKeys: z.array(z.string().regex(/^(?:work_item|approval|workflow|execution|action_execution):\d+$/)).max(12),
   clarificationRequired: z.boolean(),
   suggestedAction: AskSuggestedActionSchema.optional(),
 }).strict();
@@ -183,6 +188,7 @@ export function selectAskTools(question: string): AskToolId[] {
   if (generalAttention) tools.push("my_day", "pending_approvals");
   if (explicitWorkflow || /failed|failure|problem|broken/.test(text)) tools.push("workflow_status");
   if (/activity|recent|what happened|completed|run/.test(text)) tools.push("recent_activity");
+  if (/\b(?:did|has|have|was|were)\b[^?.!]{0,100}\b(?:perform|send|post|create|execute|action)\b|\baction (?:status|outcome|result)\b/.test(text)) tools.push("action_activity");
   if (/today|current work|my work|summari[sz]e|what do i need|what is happening/.test(text)) tools.push("my_day");
   const selected: AskToolId[] = tools.length ? tools : ["my_day"];
   return unique(selected).slice(0, ASK_LIMITS.toolFanOut);

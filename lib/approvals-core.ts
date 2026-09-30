@@ -9,20 +9,24 @@ export type ApprovalDecision = "approved" | "rejected" | "cancelled";
 const sensitiveName = /(?:secret|password|passwd|token|credential|api[_-]?key|authorization|cookie|private[_-]?key)/i;
 const sensitiveValue = /(?:\bBearer\s+\S+|sb_secret_[A-Za-z0-9_-]+|sk-[A-Za-z0-9_-]{12,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/i;
 
+export const ApprovalActionTargetSchema = z.object({
+  kind: z.enum(["internal_record", "external_resource", "workflow_step"]),
+  label: z.string().trim().min(1).max(180),
+  // Stable resource reference only; no URL query, header, or credential blob.
+  reference: z.string().trim().regex(/^[A-Za-z0-9._:/@-]{1,300}$/),
+}).strict();
+
+export const ApprovalActionParameterSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  label: z.string().trim().min(1).max(100),
+  value: z.string().max(500),
+}).strict();
+
 export const ApprovalActionSnapshotSchema = z.object({
   version: z.literal(1),
   operationKey: z.string().regex(/^[a-z][a-z0-9_.-]{0,119}$/),
-  target: z.object({
-    kind: z.enum(["internal_record", "external_resource", "workflow_step"]),
-    label: z.string().trim().min(1).max(180),
-    // Stable resource reference only; no URL query, header, or credential blob.
-    reference: z.string().trim().regex(/^[A-Za-z0-9._:/@-]{1,300}$/),
-  }).strict(),
-  parameters: z.array(z.object({
-    name: z.string().trim().min(1).max(80),
-    label: z.string().trim().min(1).max(100),
-    value: z.string().max(500),
-  }).strict()).max(12),
+  target: ApprovalActionTargetSchema,
+  parameters: z.array(ApprovalActionParameterSchema).max(12),
 }).strict().superRefine((value, context) => {
   const serialized = JSON.stringify(value);
   if (new TextEncoder().encode(serialized).length > 8192) {
