@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getAuthenticatedContext } from "@/lib/auth";
+import { buildAskMyDayToolResult } from "@/lib/ask-my-day";
 import {
   ASK_LIMITS,
   AskToolIdSchema,
@@ -106,37 +107,12 @@ function uuidFromCompositeId(value: string): string | null {
 
 async function loadMyDay(scope: AskTrustedScope): Promise<AskToolResult> {
   await assertTrustedScope(scope);
-  const data = await loadMyDayData();
+  const [data, currentWorkItems] = await Promise.all([
+    loadMyDayData(),
+    listCurrentUserWorkItems(),
+  ]);
   if (!data) throw new Error("Ask data is unavailable.");
-  const items = [
-    ...data.needsYou,
-    ...data.waitingOn,
-    ...data.handledByCrazyLoops,
-    ...data.recentActivity,
-  ].slice(0, ASK_LIMITS.recordsPerTool);
-  const records = items.flatMap((item, index) => {
-    const id = item.workItem?.id ?? uuidFromCompositeId(item.id);
-    if (!id) return [];
-    const kind: AskReferenceKind = item.id.startsWith("execution:") ? "execution"
-      : item.id.startsWith("workflow:") ? "workflow" : "work_item";
-    return [safeRecord({
-      key: `${kind}:${index}`,
-      kind,
-      id,
-      label: item.title,
-      href: item.cta.href,
-      facts: {
-        title: item.title,
-        description: item.description,
-        source: item.source,
-        status: item.status.replaceAll("_", " "),
-        timestamp: item.timestamp,
-        whyItMatters: item.workItem?.whyItMatters,
-        suggestedAction: item.workItem?.suggestedAction,
-      },
-    })];
-  });
-  return { tool: "my_day", summary: data.summary.sentence, records };
+  return buildAskMyDayToolResult({ data, currentWorkItems, ...scope });
 }
 
 async function loadWorkflowStatus(scope: AskTrustedScope): Promise<AskToolResult> {

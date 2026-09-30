@@ -226,8 +226,8 @@ export function AskView({ data }: { data: AskPageData }) {
         </Link>
       </header>
 
-      <div className="grid min-h-0 flex-1 lg:grid-cols-[260px_minmax(0,1fr)]">
-        <aside aria-label="Recent Ask conversations" className="border-b border-[#e4ddd2] bg-[#fbf9f5] p-3 lg:overflow-y-auto lg:border-b-0 lg:border-r">
+      <div className="grid min-h-0 min-w-0 flex-1 lg:grid-cols-[260px_minmax(0,1fr)]">
+        <aside aria-label="Recent Ask conversations" className="min-w-0 border-b border-[#e4ddd2] bg-[#fbf9f5] p-3 lg:overflow-y-auto lg:border-b-0 lg:border-r">
           <p className="px-2 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Recent conversations</p>
           <div className="flex gap-2 overflow-x-auto pb-1 lg:block lg:space-y-1 lg:overflow-visible">
             {data.threads.length === 0 ? (

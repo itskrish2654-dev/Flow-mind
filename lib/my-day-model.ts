@@ -322,7 +322,7 @@ function durableSource(item: WorkItem): string {
   }
 }
 
-function durableMyDayItem(item: WorkItem): MyDayItem {
+export function durableMyDayItem(item: WorkItem): MyDayItem {
   const status = item.status === "needs_you" ? "action_required" : item.status === "waiting" ? "waiting" : "handled";
   return {
     id: `work-item:${item.id}`,

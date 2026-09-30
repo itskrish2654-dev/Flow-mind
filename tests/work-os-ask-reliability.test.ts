@@ -58,6 +58,7 @@ class MemoryAskStore implements AskTurnStore {
   commitThenThrow = false;
   throwBeforeCommit = false;
   forcedAttemptToken: string | null = null;
+  historyError = false;
   readonly completedWithTokens: string[] = [];
   readonly failedWithTokens: string[] = [];
 
@@ -162,7 +163,10 @@ class MemoryAskStore implements AskTurnStore {
     return this.claimView(turn);
   }
 
-  async loadHistory() { return []; }
+  async loadHistory() {
+    if (this.historyError) throw new Error("retrieval unavailable");
+    return [];
+  }
 
   async complete(input: { requestId: string; attemptToken: string; attemptGeneration: number; response: AskGroundedResponse }) {
     this.owned();
@@ -293,6 +297,38 @@ test("generation failure preserves one question and explicit retry reuses it", a
   assert.equal(store.userMessages.length, 1);
   assert.equal(store.userMessages[0].question, "What needs me?");
   assert.equal(store.assistantMessages.length, 1);
+});
+
+test("provider and retrieval failures both persist an observable terminal failure", async () => {
+  const provider = new MemoryAskStore();
+  const providerResult = await execute(provider, { requestId: requestA, threadId: threadA }, async () => {
+    throw new Error("provider unavailable");
+  });
+  const providerTurn = provider.turns.get(requestA);
+  assert.equal(providerResult.outcome, "failed");
+  assert.equal(providerResult.retryable, true);
+  assert.equal(providerTurn?.state, "failed");
+  assert.equal(providerTurn?.failure, "generation_failed");
+  assert.equal(providerTurn?.token, null);
+  assert.equal(providerTurn?.leaseUntil, null);
+  assert.equal(provider.assistantMessages.length, 0);
+
+  const retrieval = new MemoryAskStore();
+  retrieval.historyError = true;
+  let providerCalls = 0;
+  const retrievalResult = await execute(retrieval, { requestId: requestB, threadId: threadB }, async () => {
+    providerCalls += 1;
+    return answer();
+  });
+  const retrievalTurn = retrieval.turns.get(requestB);
+  assert.equal(retrievalResult.outcome, "failed");
+  assert.equal(retrievalResult.retryable, true);
+  assert.equal(retrievalTurn?.state, "failed");
+  assert.equal(retrievalTurn?.failure, "generation_failed");
+  assert.equal(retrievalTurn?.token, null);
+  assert.equal(retrievalTurn?.leaseUntil, null);
+  assert.equal(retrieval.assistantMessages.length, 0);
+  assert.equal(providerCalls, 0);
 });
 
 test("concurrent explicit retries have one winning generation", async () => {
