@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
 import { SettingsShell } from "@/components/settings-shell";
+import { listCurrentUserWorkspaces } from "@/lib/company";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = {
@@ -13,5 +14,6 @@ export default async function SettingsLayout({ children }: { children: React.Rea
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login?next=/settings");
-  return <SettingsShell>{children}</SettingsShell>;
+  const workspaces = await listCurrentUserWorkspaces();
+  return <SettingsShell workspaces={workspaces}>{children}</SettingsShell>;
 }

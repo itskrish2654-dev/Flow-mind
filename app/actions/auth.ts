@@ -12,6 +12,7 @@ import { getClientIp } from "@/lib/security/request-context";
 import { createClient } from "@/lib/supabase/server";
 import { trackProductEvent } from "@/lib/observability";
 import { getSiteOrigin } from "@/lib/site-origin";
+import { safeAuthReturnPath } from "@/lib/auth-return-path";
 
 const EmailSchema = z.string().trim().email().max(320);
 const CaptchaTokenSchema = z.string().min(1).max(4_096);
@@ -28,11 +29,13 @@ const AuthRequestSchema = z.discriminatedUnion("mode", [
     email: EmailSchema,
     password: z.string().min(8).max(256),
     captchaToken: CaptchaTokenSchema.optional(),
+    nextPath: z.string().max(2048).optional(),
   }),
   z.object({
     mode: z.literal("recovery"),
     email: EmailSchema,
     captchaToken: CaptchaTokenSchema.optional(),
+    nextPath: z.string().max(2048).optional(),
   }),
 ]);
 
@@ -45,6 +48,7 @@ export async function authenticateWithPassword(input: {
   email: string;
   password?: string;
   captchaToken?: string;
+  nextPath?: string;
 }): Promise<AuthenticateResult> {
   const captchaRequired = isAuthCaptchaRequired();
   const parsed = AuthRequestSchema.safeParse(input);
@@ -122,7 +126,7 @@ export async function authenticateWithPassword(input: {
     password: parsed.data.password,
     options: {
       ...captchaOptions,
-      ...(siteUrl ? { emailRedirectTo: `${siteUrl}/auth/callback` } : {}),
+      ...(siteUrl ? { emailRedirectTo: `${siteUrl}/auth/callback?next=${encodeURIComponent(safeAuthReturnPath(parsed.data.nextPath))}` } : {}),
     },
   });
   if (error) {

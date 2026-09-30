@@ -73,12 +73,14 @@ export function LoginForm({
           ? {
               mode,
               email: email.trim(),
+              nextPath,
               ...(captchaRequired && captchaToken ? { captchaToken } : {}),
             }
           : {
               mode,
               email: email.trim(),
               password,
+              nextPath,
               ...(captchaRequired && captchaToken ? { captchaToken } : {}),
             },
       );

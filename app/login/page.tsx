@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { LoginForm } from "@/components/login-form";
+import { safeAuthReturnPath } from "@/lib/auth-return-path";
 import { isAuthCaptchaRequired } from "@/lib/security/auth-captcha";
 
 export const metadata: Metadata = {
@@ -8,18 +9,13 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-function safeNextPath(value: string | string[] | undefined) {
-  const candidate = Array.isArray(value) ? value[0] : value;
-  return candidate?.startsWith("/dashboard") || candidate?.startsWith("/settings") ? candidate : "/dashboard";
-}
-
 export default async function LoginPage({
   searchParams,
 }: {
   searchParams: Promise<{ next?: string | string[]; error?: string | string[]; notice?: string | string[]; recover?: string | string[]; mode?: string | string[] }>;
 }) {
   const params = await searchParams;
-  const nextPath = safeNextPath(params.next);
+  const nextPath = safeAuthReturnPath(params.next);
   const captchaRequired = isAuthCaptchaRequired();
 
   return (

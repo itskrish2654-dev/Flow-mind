@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Gauge, KeyRound, Mail, ShieldCheck } from "lucide-react";
+import { Building2, Gauge, KeyRound, Mail, ShieldCheck } from "lucide-react";
 import { redirect } from "next/navigation";
 
 import { AccountControls } from "@/components/account-controls";
@@ -28,6 +28,7 @@ export default async function SettingsPage() {
           <AccountControls turnstileSiteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? null} />
         </div>
         <aside className="space-y-3">
+          <Link href="/settings/company" className="flex items-start gap-3 rounded-2xl border border-[#e4ddd2] bg-[#fffdfa] p-4 hover:border-[#d7aa2f]"><Building2 className="mt-0.5 size-5 text-[#8a6200]" /><span><span className="block text-sm font-semibold text-slate-950">Company workspace</span><span className="mt-1 block text-xs leading-5 text-slate-500">Name your company and invite teammates.</span></span></Link>
           <Link href="/settings/usage" className="flex items-start gap-3 rounded-2xl border border-[#e4ddd2] bg-[#fffdfa] p-4 hover:border-[#d7aa2f]"><Gauge className="mt-0.5 size-5 text-[#8a6200]" /><span><span className="block text-sm font-semibold text-slate-950">Usage and limits</span><span className="mt-1 block text-xs leading-5 text-slate-500">See current monthly usage.</span></span></Link>
           <Link href="/settings#session" className="flex items-start gap-3 rounded-2xl border border-[#e4ddd2] bg-[#fffdfa] p-4 hover:border-[#d7aa2f]"><KeyRound className="mt-0.5 size-5 text-[#8a6200]" /><span><span className="block text-sm font-semibold text-slate-950">Password and session</span><span className="mt-1 block text-xs leading-5 text-slate-500">Open recovery or log out.</span></span></Link>
         </aside>

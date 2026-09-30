@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { safeAuthReturnPath } from "@/lib/auth-return-path";
 import { createClient } from "@/lib/supabase/server";
 import { getSiteOrigin, getSiteUrl } from "@/lib/site-origin";
 
@@ -9,11 +10,7 @@ export async function GET(request: Request) {
   const code = requestUrl.searchParams.get("code");
   const requestedNext = requestUrl.searchParams.get("next");
   const recovery = requestUrl.searchParams.get("type") === "recovery" || requestedNext === "/reset-password";
-  const nextPath = recovery
-    ? "/reset-password"
-    : requestedNext?.startsWith("/dashboard")
-      ? requestedNext
-      : "/dashboard";
+  const nextPath = recovery ? "/reset-password" : safeAuthReturnPath(requestedNext);
 
   if (code) {
     const supabase = await createClient();

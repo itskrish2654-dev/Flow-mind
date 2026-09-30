@@ -156,6 +156,51 @@ export type Database = {
         };
         Relationships: [];
       };
+      workspace_invitations: {
+        Row: {
+          id: string;
+          workspace_id: string;
+          invited_email: string;
+          normalized_email: string;
+          intended_role: "admin" | "member";
+          status: "pending" | "accepted" | "revoked" | "expired";
+          token_hash: string;
+          created_by: string | null;
+          accepted_by: string | null;
+          revoked_by: string | null;
+          created_at: string;
+          updated_at: string;
+          expires_at: string;
+          accepted_at: string | null;
+          revoked_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          workspace_id: string;
+          invited_email: string;
+          normalized_email: string;
+          intended_role: "admin" | "member";
+          status?: "pending" | "accepted" | "revoked" | "expired";
+          token_hash: string;
+          created_by?: string | null;
+          accepted_by?: string | null;
+          revoked_by?: string | null;
+          created_at?: string;
+          updated_at?: string;
+          expires_at: string;
+          accepted_at?: string | null;
+          revoked_at?: string | null;
+        };
+        Update: {
+          status?: "pending" | "accepted" | "revoked" | "expired";
+          accepted_by?: string | null;
+          revoked_by?: string | null;
+          updated_at?: string;
+          accepted_at?: string | null;
+          revoked_at?: string | null;
+        };
+        Relationships: [];
+      };
       work_items: {
         Row: {
           id: string;
@@ -832,6 +877,30 @@ export type Database = {
           workspace_id: string;
           membership_role: "owner" | "admin" | "member";
         }>;
+      };
+      switch_active_workspace: {
+        Args: { p_actor_user_id: string; p_workspace_id: string };
+        Returns: Array<{ workspace_id: string; membership_role: "owner" | "admin" | "member" }>;
+      };
+      rename_company_workspace: {
+        Args: { p_workspace_id: string; p_actor_user_id: string; p_name: string };
+        Returns: Array<{ workspace_id: string; workspace_name: string }>;
+      };
+      create_workspace_invitation: {
+        Args: { p_workspace_id: string; p_actor_user_id: string; p_invited_email: string; p_intended_role: "admin" | "member"; p_token_hash: string; p_expires_at: string };
+        Returns: Database["public"]["Tables"]["workspace_invitations"]["Row"][];
+      };
+      revoke_workspace_invitation: {
+        Args: { p_invitation_id: string; p_actor_user_id: string };
+        Returns: Database["public"]["Tables"]["workspace_invitations"]["Row"][];
+      };
+      accept_workspace_invitation: {
+        Args: { p_token_hash: string; p_actor_user_id: string; p_actor_email: string };
+        Returns: Array<{ workspace_id: string; membership_role: "owner" | "admin" | "member"; acceptance_outcome: "accepted" | "already_accepted" | "expired" }>;
+      };
+      administer_workspace_member: {
+        Args: { p_workspace_id: string; p_actor_user_id: string; p_target_user_id: string; p_action: "change_role" | "remove"; p_role?: "admin" | "member" | null };
+        Returns: Array<{ workspace_id: string; user_id: string; membership_role: "owner" | "admin" | "member"; outcome: "role_changed" | "removed" }>;
       };
       get_public_workflow: {
         Args: { p_workflow_id: string };

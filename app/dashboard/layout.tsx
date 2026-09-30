@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Building2,
   CheckCircle2,
   Clock3,
   LoaderCircle,
@@ -237,6 +238,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="border-t border-[#e4ddd2] p-3">
             {account && <p className="mb-2 truncate px-2 text-sm font-semibold text-slate-800">{account.displayName}<span className="block truncate text-xs font-normal text-slate-600">{account.email}</span></p>}
             <Link href="/settings" onClick={() => setMobileNavOpen(false)} className="flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold text-slate-700 hover:bg-[#f8f4ec]"><Settings className="size-4" />Settings</Link>
+            <Link href="/settings/company" onClick={() => setMobileNavOpen(false)} className="flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold text-slate-700 hover:bg-[#f8f4ec]"><Building2 className="size-4" />Company</Link>
             <Link href="/settings/usage" onClick={() => setMobileNavOpen(false)} className="flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold text-slate-700 hover:bg-[#f8f4ec]"><Gauge className="size-4" />Usage</Link>
             <Link href="/support" onClick={() => setMobileNavOpen(false)} className="flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold text-slate-700 hover:bg-[#f8f4ec]"><LifeBuoy className="size-4" />Support &amp; legal</Link>
             <button type="button" onClick={() => void logOut()} disabled={isSigningOut} className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-semibold text-slate-700 hover:bg-[#f8f4ec] disabled:opacity-60"><LogOut className="size-4" />{isSigningOut ? "Logging out…" : "Log out"}</button>
@@ -330,6 +332,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             {account && <p className="mt-2 text-[8px] text-slate-400">{account.memberSince}</p>}
             {accountError && <p role="alert" className="mt-2 text-[9px] leading-4 text-rose-600">{accountError}</p>}
             <Link href="/settings" className="mt-3 flex h-8 w-full items-center justify-center gap-2 rounded-lg border border-[#ded6ca] bg-[#fffdfa] text-[10px] font-semibold text-slate-600 transition hover:border-[#c9b98f] hover:bg-[#fff8e3] hover:text-slate-900"><Settings className="size-3.5" />Settings</Link>
+            <Link href="/settings/company" className="mt-2 flex h-8 w-full items-center justify-center gap-2 rounded-lg border border-[#ded6ca] bg-[#fffdfa] text-[10px] font-semibold text-slate-600 transition hover:border-[#c9b98f] hover:bg-[#fff8e3] hover:text-slate-900"><Building2 className="size-3.5" />Company</Link>
             <button
               type="button"
               onClick={() => void logOut()}
