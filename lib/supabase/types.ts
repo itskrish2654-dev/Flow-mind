@@ -530,9 +530,9 @@ export type Database = {
         Relationships: [];
       };
       gmail_ingestion_states: {
-        Row: { connection_id: string; user_id: string; processed_history_id: string; observed_history_id: string; status: "idle" | "pending" | "processing" | "resync_required" | "reconnect_required"; lease_token: string | null; lease_until: string | null; next_attempt_at: string; attempt_count: number; last_error_category: string | null; created_at: string; updated_at: string };
-        Insert: { connection_id: string; user_id: string; processed_history_id: string; observed_history_id: string; status?: "idle" | "pending" | "processing" | "resync_required" | "reconnect_required"; lease_token?: string | null; lease_until?: string | null; next_attempt_at?: string; attempt_count?: number; last_error_category?: string | null; created_at?: string; updated_at?: string };
-        Update: { processed_history_id?: string; observed_history_id?: string; status?: "idle" | "pending" | "processing" | "resync_required" | "reconnect_required"; lease_token?: string | null; lease_until?: string | null; next_attempt_at?: string; attempt_count?: number; last_error_category?: string | null; updated_at?: string };
+        Row: { connection_id: string; user_id: string; processed_history_id: string; observed_history_id: string; status: "idle" | "pending" | "processing" | "resync_required" | "reconnect_required"; lease_token: string | null; lease_until: string | null; next_attempt_at: string; attempt_count: number; last_error_category: string | null; next_poll_at: string; last_polled_at: string | null; poll_lease_token: string | null; poll_lease_until: string | null; poll_error_category: string | null; created_at: string; updated_at: string };
+        Insert: { connection_id: string; user_id: string; processed_history_id: string; observed_history_id: string; status?: "idle" | "pending" | "processing" | "resync_required" | "reconnect_required"; lease_token?: string | null; lease_until?: string | null; next_attempt_at?: string; attempt_count?: number; last_error_category?: string | null; next_poll_at?: string; last_polled_at?: string | null; poll_lease_token?: string | null; poll_lease_until?: string | null; poll_error_category?: string | null; created_at?: string; updated_at?: string };
+        Update: { processed_history_id?: string; observed_history_id?: string; status?: "idle" | "pending" | "processing" | "resync_required" | "reconnect_required"; lease_token?: string | null; lease_until?: string | null; next_attempt_at?: string; attempt_count?: number; last_error_category?: string | null; next_poll_at?: string; last_polled_at?: string | null; poll_lease_token?: string | null; poll_lease_until?: string | null; poll_error_category?: string | null; updated_at?: string };
         Relationships: [];
       };
       gmail_push_receipts: {
@@ -1121,6 +1121,7 @@ export type Database = {
         Args: { p_secret: string };
         Returns: undefined;
       };
+      configure_gmail_work_sync: { Args: Record<PropertyKey, never>; Returns: undefined };
       fail_stale_executions: {
         Args: { p_older_than: string };
         Returns: number;
@@ -1203,6 +1204,22 @@ export type Database = {
       claim_gmail_ingestion: {
         Args: { p_lease_seconds?: number };
         Returns: Array<{ connection_id: string; user_id: string; processed_history_id: string; observed_history_id: string; lease_token: string }>;
+      };
+      claim_gmail_work_poll: {
+        Args: { p_lease_seconds?: number };
+        Returns: Array<{ connection_id: string; user_id: string; lease_token: string }>;
+      };
+      list_uninitialized_gmail_work_connections: {
+        Args: { p_limit?: number };
+        Returns: Array<{ connection_id: string; user_id: string }>;
+      };
+      complete_gmail_work_poll: {
+        Args: { p_connection_id: string; p_user_id: string; p_lease_token: string; p_history_id: string };
+        Returns: boolean;
+      };
+      defer_gmail_work_poll: {
+        Args: { p_connection_id: string; p_user_id: string; p_lease_token: string; p_error_category: string };
+        Returns: boolean;
       };
       complete_gmail_ingestion: {
         Args: { p_connection_id: string; p_user_id: string; p_lease_token: string; p_expected_processed_history_id: string; p_completed_history_id: string };

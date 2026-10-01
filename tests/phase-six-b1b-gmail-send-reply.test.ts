@@ -383,11 +383,11 @@ test("6B.1B-17 the real Google helper marks dispatch only after token and serial
   assert.match(execution, /result\.error\?\.retryable \?\? false,[\s\S]*result\.metadata/);
 });
 
-test("6B.1B-18 Gmail remains REVIEWED with onboarding, TEST, and LIVE disabled", () => {
+test("6B.1B-18 Gmail send and reply are registry-backed production actions", () => {
   for (const capabilityId of ["gmail_send_email", "gmail_reply_to_email"] as const) {
-    assert.equal(CAPABILITY_REGISTRY[capabilityId].maturity, "REVIEWED");
-    assert.equal(CAPABILITY_REGISTRY[capabilityId].onboarding.available, false);
-    assert.equal(assessCapability(capabilityId, "test").available, false);
-    assert.equal(assessCapability(capabilityId, "production").available, false);
+    assert.equal(CAPABILITY_REGISTRY[capabilityId].maturity, "AVAILABLE");
+    assert.equal(CAPABILITY_REGISTRY[capabilityId].onboarding.available, true);
+    assert.equal(assessCapability(capabilityId, "test").available, true);
+    assert.equal(assessCapability(capabilityId, "production").available, true);
   }
 });

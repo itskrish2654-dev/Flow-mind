@@ -8,6 +8,7 @@ import {
   AskRequestReferenceSchema,
   AskResponseMetadataSchema,
   deterministicThreadTitle,
+  isAskActionOutcomeQuestion,
   runGroundedAsk,
   unsupportedAskResponse,
   type AskGroundedResponse,
@@ -166,6 +167,9 @@ export async function loadAskPageData(threadId?: string, requestId?: string): Pr
 }
 
 function requestedExternalCapability(question: string): string | null {
+  // A question about an already attempted action is a read of durable outcome,
+  // not a fresh instruction to use an external connector.
+  if (isAskActionOutcomeQuestion(question)) return null;
   const text = question.toLowerCase();
   const asksForExternalUse = /\b(send|reply|email|post|message|notify|update|change|write|add|create|read|show|find|search|fetch|check)\b/.test(text);
   if (!asksForExternalUse) return null;
@@ -305,12 +309,19 @@ async function generateResponse(auth: AuthContext, question: string, history: As
   const externalCapabilityId = requestedExternalCapability(question);
   if (externalCapabilityId) {
     const capability = getCapability(externalCapabilityId);
-    return unsupportedAskResponse(capability?.displayName ?? "that external capability");
+    if (!capability?.supported || !capability.availableInProduction) {
+      return unsupportedAskResponse(capability?.displayName ?? "that external capability");
+    }
+    // Only the deterministic action planner can construct an executable Ask
+    // preview. A supported workflow action is not automatically an Ask action.
+    if (externalCapabilityId === "gmail_send_email") {
+      return unsupportedAskResponse("this Gmail send/reply request through Ask");
+    }
   }
   return runGroundedAsk({
     question,
     history,
-    loadTool: (tool) => executeAskTool(tool, { userId: auth.user.id, workspaceId: auth.workspace.id }),
+    loadTool: (tool) => executeAskTool(tool, { userId: auth.user.id, workspaceId: auth.workspace.id }, question),
     callModel: async (context) => withConcurrencyLease(
       "user-ask",
       [auth.user.id],

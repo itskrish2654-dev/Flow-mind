@@ -12,6 +12,7 @@ import { AskResponseMetadataSchema } from "@/lib/ask-core";
 import { getAuthenticatedContext } from "@/lib/auth";
 import { getCapability } from "@/lib/capability-registry";
 import { getConnectorOperation } from "@/lib/connectors/registry";
+import { connectorConnectionIds } from "@/lib/connectors/connection-matching";
 import type { ConnectorActionHandler } from "@/lib/connectors/types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Database, Json } from "@/lib/supabase/types";
@@ -64,12 +65,15 @@ async function assertUsableConnection(execution: ActionExecution) {
     parameters: [],
   })) throw new Error("This action capability is no longer available.");
   const admin = createAdminClient();
+  const registered = getConnectorOperation(execution.connector_id, "action", execution.operation_key, execution.operation_version);
+  if (!registered) throw new Error("The approved connector action is unavailable.");
   const { data, error } = await admin.from("connector_connections")
     .select("id,user_id,workspace_id,connector_id,status,granted_scopes")
     .eq("id", execution.connection_id)
     .eq("user_id", execution.requester_user_id)
     .eq("workspace_id", execution.workspace_id)
-    .eq("connector_id", execution.connector_id)
+    .eq("provider_family", registered.connector.manifest.providerFamily)
+    .in("connector_id", connectorConnectionIds(registered.connector.manifest))
     .eq("status", "connected")
     .maybeSingle();
   if (error || !data || capability.requiredScopes.some((scope) => !data.granted_scopes.includes(scope))) {

@@ -61,6 +61,10 @@ export default async function ConnectionsPage({
     process.env.FLOWMIND_CONNECTOR_NOTION_CLIENT_ID
     && process.env.FLOWMIND_CONNECTOR_NOTION_CLIENT_SECRET,
   );
+  const googleAvailable = Boolean(
+    process.env.GOOGLE_OAUTH_CLIENT_ID
+    && process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+  );
 
   return (
     <div className="pb-6">
@@ -83,7 +87,7 @@ export default async function ConnectionsPage({
         connections={connections}
         successConnector={connected}
         errorCode={error}
-        providerAvailability={{ slack: slackAvailable, notion: notionAvailable }}
+        providerAvailability={{ slack: slackAvailable, notion: notionAvailable, google: googleAvailable }}
         returnPath={returnPath}
       />
 

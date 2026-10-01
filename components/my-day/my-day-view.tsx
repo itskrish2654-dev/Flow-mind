@@ -202,12 +202,13 @@ export function MyDayView({ data, actionError = false, approvalActionError = fal
           </div>
         </header>
 
-        {(data.workItemsUnavailable || data.approvalsUnavailable || data.workflowDataUnavailable || actionError || approvalActionError) && (
+        {(data.workItemsUnavailable || data.approvalsUnavailable || data.workflowDataUnavailable || data.actionActivityUnavailable || actionError || approvalActionError) && (
           <div role="alert" className="mt-5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
             {approvalActionError ? "That approval could not be decided. Refresh and review its current status."
               : actionError ? "That work item could not be updated. Refresh and try again."
               : data.approvalsUnavailable ? "Approvals are temporarily unavailable. Other work is still shown below."
               : data.workflowDataUnavailable ? "Workflow information is temporarily unavailable. Your saved work items are still shown below."
+              : data.actionActivityUnavailable ? "Approved-action activity is temporarily unavailable. Other work is still shown below."
                 : "Work items are temporarily unavailable. Your workflow information is still shown below."}
           </div>
         )}
@@ -269,10 +270,10 @@ export function MyDayView({ data, actionError = false, approvalActionError = fal
             <MyDaySection
               id="recent-activity-title"
               title="Recent Activity"
-              description="A small, safe view of your latest workflow runs."
+              description="A small, safe view of your latest workflow runs and approved actions."
               icon={Activity}
               items={data.recentActivity}
-              empty="Your workflow runs will appear here."
+              empty="Your workflow runs and approved actions will appear here."
             />
           </div>
         </div>

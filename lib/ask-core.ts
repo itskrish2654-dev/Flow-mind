@@ -35,6 +35,7 @@ export const AskToolIdSchema = z.enum([
   "workflow_status",
   "recent_activity",
   "action_activity",
+  "gmail_search",
 ]);
 export type AskToolId = z.infer<typeof AskToolIdSchema>;
 
@@ -44,6 +45,7 @@ export const AskReferenceKindSchema = z.enum([
   "workflow",
   "execution",
   "action_execution",
+  "gmail_message",
 ]);
 export type AskReferenceKind = z.infer<typeof AskReferenceKindSchema>;
 
@@ -89,7 +91,7 @@ export type AskResponseMetadata = z.infer<typeof AskResponseMetadataSchema>;
 export const AskModelOutputSchema = z.object({
   responseType: z.enum(ASK_MODEL_RESPONSE_TYPES),
   answer: z.string().trim().min(1).max(ASK_LIMITS.modelAnswerCharacters),
-  referenceKeys: z.array(z.string().regex(/^(?:work_item|approval|workflow|execution|action_execution):\d+$/)).max(12),
+  referenceKeys: z.array(z.string().regex(/^(?:work_item|approval|workflow|execution|action_execution|gmail_message):\d+$/)).max(12),
   clarificationRequired: z.boolean(),
   suggestedAction: AskSuggestedActionSchema.optional(),
 }).strict();
@@ -134,6 +136,7 @@ export type AskToolResult = {
   tool: AskToolId;
   summary: string;
   records: AskToolRecord[];
+  availability?: "ok" | "connection_required" | "reconnect_required" | "account_selection_required";
 };
 
 export type AskGroundedResponse = {
@@ -175,6 +178,11 @@ function hasHistoricalApprovalFactIntent(text: string): boolean {
 }
 
 /** Deterministic routing keeps the model away from tool names and database access. */
+export function isAskActionOutcomeQuestion(question: string): boolean {
+  const text = question.toLowerCase();
+  return /\b(?:did|has|have|was|were)\b[^?.!]{0,100}\b(?:perform|performed|send|sent|post|posted|create|created|execute|executed|action)\b|\baction (?:status|outcome|result)\b/.test(text);
+}
+
 export function selectAskTools(question: string): AskToolId[] {
   const text = question.toLowerCase();
   const tools: AskToolId[] = [];
@@ -182,13 +190,18 @@ export function selectAskTools(question: string): AskToolId[] {
   const explicitWorkflow = /workflow|automation/.test(text);
   const employeeApprovalAction = hasEmployeeApprovalActionIntent(text);
   const historicalApprovalFact = hasHistoricalApprovalFactIntent(text);
+  const directEmailSend = /^\s*(?:(?:using|from)\s+[^\s,;]+@[^\s,;]+\s*,\s*)?(?:please\s+)?(?:send\s+(?:an?\s+)?email\s+to|email)\s+[^\s,;]+@[^\s,;]+\s+(?:that|saying|with)\b/.test(text);
+  if (/\b(?:gmail|inbox|email|emails|mail|sender|thread)\b/.test(text)
+    && !directEmailSend) tools.push("gmail_search");
   if (employeeApprovalAction) tools.push("pending_approvals");
   if (historicalApprovalFact) tools.push("work_items");
   if (/waiting|handled|task|work item|needs you/.test(text)) tools.push("work_items");
   if (generalAttention) tools.push("my_day", "pending_approvals");
   if (explicitWorkflow || /failed|failure|problem|broken/.test(text)) tools.push("workflow_status");
-  if (/activity|recent|what happened|completed|run/.test(text)) tools.push("recent_activity");
-  if (/\b(?:did|has|have|was|were)\b[^?.!]{0,100}\b(?:perform|send|post|create|execute|action)\b|\baction (?:status|outcome|result)\b/.test(text)) tools.push("action_activity");
+  if (/activity|what happened|completed|run|\brecent(?:ly)?\b/.test(text)) tools.push("recent_activity");
+  const actionOutcome = isAskActionOutcomeQuestion(question);
+  if (actionOutcome && (!tools.includes("gmail_search")
+    || /\b(?:crazyloops|you)\b|\baction (?:status|outcome|result)\b/.test(text))) tools.push("action_activity");
   if (/today|current work|my work|summari[sz]e|what do i need|what is happening/.test(text)) tools.push("my_day");
   const selected: AskToolId[] = tools.length ? tools : ["my_day"];
   return unique(selected).slice(0, ASK_LIMITS.toolFanOut);
@@ -340,6 +353,7 @@ export function resolveGroundedResponse(
 }
 
 function emptyAnswer(tools: readonly AskToolId[]): string {
+  if (tools.includes("gmail_search")) return "I found no matching Gmail messages in the bounded recent mailbox search.";
   if (tools.includes("my_day")) return "There is nothing in CrazyLoops that needs your attention right now.";
   if (tools.includes("pending_approvals")) return "You have no pending approvals in CrazyLoops right now.";
   if (tools.includes("workflow_status")) return "I found no current workflow problems in your CrazyLoops workspace.";
@@ -356,6 +370,33 @@ export async function runGroundedAsk(input: {
 }): Promise<AskGroundedResponse> {
   const tools = selectAskTools(input.question);
   const toolResults = await Promise.all(tools.map((tool) => input.loadTool(AskToolIdSchema.parse(tool))));
+  const unavailable = toolResults.find((result) => result.availability && result.availability !== "ok");
+  const hasDurableActionOutcome = isAskActionOutcomeQuestion(input.question)
+    && toolResults.some((result) => result.tool === "action_activity"
+      && result.records.some((record) => record.facts.capability === "gmail_send_email"));
+  if (unavailable?.tool === "gmail_search" && !hasDurableActionOutcome) {
+    if (unavailable.availability === "account_selection_required") {
+      return {
+        answer: "Which connected Gmail account should I search? Include that account's email address in your question. No mailbox was searched.",
+        metadata: { version: 1, responseType: "clarification", clarificationRequired: true, references: [] },
+      };
+    }
+    const reconnect = unavailable.availability === "reconnect_required";
+    const answer = reconnect
+      ? "Reconnect Gmail before CrazyLoops can search your mailbox."
+      : "Connect Gmail before CrazyLoops can search your mailbox.";
+    return {
+      answer,
+      metadata: {
+        version: 1,
+        responseType: "unsupported",
+        clarificationRequired: false,
+        references: [],
+        unsupportedReason: answer,
+        suggestedAction: { label: reconnect ? "Reconnect Gmail" : "Connect Gmail", href: "/dashboard/connections" },
+      },
+    };
+  }
   if (toolResults.every((result) => result.records.length === 0)) {
     return {
       answer: emptyAnswer(tools),

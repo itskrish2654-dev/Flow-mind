@@ -12,6 +12,8 @@ import {
   type GmailHistoryPage,
 } from "@/lib/connectors/google/gmail-ingestion-core";
 import { normalizeGmailMessage } from "@/lib/connectors/google/gmail-message";
+import { readBoundedGmailMessagePayload } from "@/lib/connectors/google/gmail-read-core";
+import { createGmailWorkItem } from "@/lib/connectors/google/gmail-work-items";
 import { GOOGLE_SCOPES } from "@/lib/connectors/google/scopes";
 import { captureOperationalEvent } from "@/lib/observability";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -126,6 +128,126 @@ export async function activateGmailWatch(input: {
   }
   await captureOperationalEvent({ level: "info", event: "gmail_watch_created", userId: input.userId, status: "active" });
   return { historyId, expiresAt: expiresAt.toISOString(), renewAfter };
+}
+
+/** Establishes a durable mailbox cursor for Work OS intake without inventing a workflow subscription. */
+export async function initializeGmailWorkIntake(input: { userId: string; connectionId: string }) {
+  const admin = createAdminClient();
+  const { data: connection, error: connectionError } = await admin.from("connector_connections")
+    .select("id,workspace_id,granted_scopes").eq("id", input.connectionId).eq("user_id", input.userId)
+    .eq("provider_family", "google").eq("status", "connected").maybeSingle();
+  if (connectionError || !connection || !connection.granted_scopes.includes(GOOGLE_SCOPES.gmailReadonly)) {
+    throw new Error("Gmail intake requires an owned, readable Google connection.");
+  }
+  const { data: member, error: memberError } = await admin.from("workspace_memberships")
+    .select("user_id").eq("workspace_id", connection.workspace_id).eq("user_id", input.userId).maybeSingle();
+  if (memberError || !member) throw new Error("Gmail intake requires current workspace membership.");
+  const { data: existing, error: existingError } = await admin.from("gmail_ingestion_states")
+    .select("connection_id").eq("connection_id", input.connectionId).eq("user_id", input.userId).maybeSingle();
+  if (existingError) throw new Error("Gmail intake state could not be checked.");
+  if (existing) {
+    await admin.from("connector_connections")
+      .update({ last_error_category: null, updated_at: new Date().toISOString() })
+      .eq("id", input.connectionId).eq("user_id", input.userId).eq("last_error_category", "gmail_intake_setup");
+    return { configured: true as const, existing: true as const };
+  }
+
+  let historyId: string;
+  if (process.env.GOOGLE_GMAIL_PUBSUB_TOPIC) {
+    historyId = (await activateGmailWatch({ ...input, persistActiveSubscriptions: false })).historyId;
+  } else {
+    const profile = await googleApiFetch({
+      userId: input.userId, connectionId: input.connectionId,
+      requiredScopes: [GOOGLE_SCOPES.gmailReadonly],
+      url: "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+    });
+    const data = await profile.json() as { historyId?: string };
+    historyId = normalizeWatchHistoryId(data.historyId);
+  }
+  const { error } = await admin.from("gmail_ingestion_states").insert({
+    connection_id: input.connectionId,
+    user_id: input.userId,
+    processed_history_id: historyId,
+    observed_history_id: historyId,
+    status: "idle",
+    next_attempt_at: new Date().toISOString(),
+    lease_token: null,
+    lease_until: null,
+    attempt_count: 0,
+    last_error_category: null,
+    updated_at: new Date().toISOString(),
+  });
+  if (error && error.code !== "23505") throw new Error("Gmail Work OS cursor could not be stored.");
+  await admin.from("connector_connections")
+    .update({ last_error_category: null, updated_at: new Date().toISOString() })
+    .eq("id", input.connectionId).eq("user_id", input.userId).eq("last_error_category", "gmail_intake_setup");
+  return { configured: true as const, existing: error?.code === "23505" };
+}
+
+/** Observe a durable history high-watermark; the separate ingestion claim does all message work. */
+export async function pollGmailWorkIntake(limit = 3) {
+  const admin = createAdminClient();
+  let claimed = 0;
+  let succeeded = 0;
+  let failed = 0;
+  for (let index = 0; index < Math.max(1, Math.min(limit, 5)); index += 1) {
+    const { data, error } = await admin.rpc("claim_gmail_work_poll", { p_lease_seconds: 90 });
+    if (error) throw new Error("Gmail work poll could not be claimed.");
+    const claim = data?.[0];
+    if (!claim) break;
+    claimed += 1;
+    try {
+      const response = await googleApiFetch({
+        userId: claim.user_id, connectionId: claim.connection_id,
+        requiredScopes: [GOOGLE_SCOPES.gmailReadonly],
+        url: "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+      });
+      const profile = await response.json() as { historyId?: string };
+      const historyId = normalizeWatchHistoryId(profile.historyId);
+      const completion = await admin.rpc("complete_gmail_work_poll", {
+        p_connection_id: claim.connection_id, p_user_id: claim.user_id,
+        p_lease_token: claim.lease_token, p_history_id: historyId,
+      });
+      if (completion.error || completion.data !== true) throw new Error("Gmail work poll could not be committed.");
+      succeeded += 1;
+    } catch (caught) {
+      failed += 1;
+      const category = caught instanceof ConnectorError
+        && ["authentication", "authorization"].includes(caught.details.category)
+        ? caught.details.category : "transient";
+      await admin.rpc("defer_gmail_work_poll", {
+        p_connection_id: claim.connection_id, p_user_id: claim.user_id,
+        p_lease_token: claim.lease_token, p_error_category: category,
+      });
+      await captureOperationalEvent({ level: "warn", event: "gmail_work_poll_failed",
+        userId: claim.user_id, status: "failed", errorCategory: category });
+    }
+  }
+  return { claimed, succeeded, failed };
+}
+
+/** Safely adds a cursor for pre-existing Gmail connections, without resetting a live cursor. */
+export async function initializeExistingGmailWorkIntake(limit = 2) {
+  const { data, error } = await createAdminClient().rpc("list_uninitialized_gmail_work_connections", {
+    p_limit: Math.max(1, Math.min(limit, 5)),
+  });
+  if (error) throw new Error("Gmail connections awaiting intake could not be listed.");
+  let initialized = 0;
+  let failed = 0;
+  for (const connection of data ?? []) {
+    try {
+      await initializeGmailWorkIntake({ userId: connection.user_id, connectionId: connection.connection_id });
+      initialized += 1;
+    } catch {
+      failed += 1;
+      await createAdminClient().from("connector_connections")
+        .update({ last_error_category: "gmail_intake_setup", updated_at: new Date().toISOString() })
+        .eq("id", connection.connection_id).eq("user_id", connection.user_id);
+      await captureOperationalEvent({ level: "warn", event: "gmail_intake_initialization_failed",
+        userId: connection.user_id, status: "failed", errorCategory: "provider_unavailable" });
+    }
+  }
+  return { inspected: data?.length ?? 0, initialized, failed };
 }
 
 function normalizeWatchHistoryId(value: unknown) {
@@ -269,16 +391,26 @@ function failureCategory(error: unknown): "transient" | "authentication" | "resy
   return "transient";
 }
 
-async function processClaim(claim: GmailIngestionClaim) {
+async function processClaim(claim: GmailIngestionClaim, maxMessages: number) {
   const admin = createAdminClient();
   try {
     const subscriptions = await loadSubscriptions(claim);
-    if (subscriptions.length === 0) throw new Error("No active Gmail subscriptions remain.");
+    const { data: owner, error: ownerError } = await admin.from("connector_connections")
+      .select("workspace_id,user_id,status,provider_family")
+      .eq("id", claim.connection_id).eq("user_id", claim.user_id).maybeSingle();
+    const { data: membership, error: membershipError } = owner
+      ? await admin.from("workspace_memberships").select("user_id")
+          .eq("workspace_id", owner.workspace_id).eq("user_id", claim.user_id).maybeSingle()
+      : { data: null, error: null };
+    if (ownerError || membershipError || !owner || !membership
+      || owner.status !== "connected" || owner.provider_family !== "google") {
+      throw new Error("Gmail Work OS ownership is no longer valid.");
+    }
     const maxUniqueMessages = Math.max(
       1,
       Math.min(
-        GMAIL_PUSH_LIMITS.messageFetches,
-        Math.floor(GMAIL_PUSH_LIMITS.executionFanout / subscriptions.length),
+        Math.min(GMAIL_PUSH_LIMITS.messageFetches, maxMessages),
+        Math.floor(GMAIL_PUSH_LIMITS.executionFanout / Math.max(1, subscriptions.length)),
       ),
     );
     const history = await readBoundedGmailHistory({
@@ -303,23 +435,34 @@ async function processClaim(claim: GmailIngestionClaim) {
     for (const search of searches) allowedBySearch.set(search, await searchMatches(claim, search));
 
     const normalizedById = new Map<string, ReturnType<typeof normalizeGmailMessage>>();
-    for (const messageId of new Set(history.entries.map((entry) => entry.messageId))) {
-      if (normalizedById.size >= GMAIL_PUSH_LIMITS.messageFetches) throw new Error("Gmail message fetch limit was exceeded.");
-      const response = await googleApiFetch({
+    const messageIds = [...new Set(history.entries.map((entry) => entry.messageId))];
+    for (let offset = 0; offset < messageIds.length; offset += 5) {
+      const batch = await Promise.all(messageIds.slice(offset, offset + 5).map(async (messageId) => {
+        const response = await googleApiFetch({
         userId: claim.user_id,
         connectionId: claim.connection_id,
         requiredScopes: [GOOGLE_SCOPES.gmailReadonly],
         url: `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}?format=full`,
-      });
-      const message = await response.json() as Record<string, unknown>;
-      normalizedById.set(messageId, normalizeGmailMessage(message));
+        });
+        const message = await readBoundedGmailMessagePayload(response);
+        return { messageId, normalized: normalizeGmailMessage(message) };
+      }));
+      for (const item of batch) normalizedById.set(item.messageId, item.normalized);
     }
 
     let fanout = 0;
+    let workItemsCreated = 0;
     const seen = new Set<string>();
     for (const entry of history.entries) {
       const normalized = normalizedById.get(entry.messageId);
       if (!normalized || !normalized.message.labels.includes("INBOX")) continue;
+      const workItem = await createGmailWorkItem({
+        userId: claim.user_id,
+        workspaceId: owner.workspace_id,
+        connectionId: claim.connection_id,
+        message: normalized.message,
+      });
+      if (workItem.created) workItemsCreated += 1;
       for (const subscription of subscriptions) {
         if (!subscription.cursor_value || compareHistoryIds(entry.historyId, subscription.cursor_value) <= 0) continue;
         if (subscription.operation_key === "new_email_matching_search") {
@@ -362,9 +505,9 @@ async function processClaim(claim: GmailIngestionClaim) {
       event: "gmail_event_received",
       userId: claim.user_id,
       status: history.targetCompleted ? "accepted" : "pending",
-      metadata: { receiptCount: fanout, pagesRead: history.pagesRead, recordsRead: history.recordsRead },
+      metadata: { receiptCount: fanout, workItemsCreated, pagesRead: history.pagesRead, recordsRead: history.recordsRead },
     });
-    return { receiptCount: fanout, targetCompleted: history.targetCompleted };
+    return { receiptCount: fanout, workItemsCreated, targetCompleted: history.targetCompleted };
   } catch (error) {
     const category = failureCategory(error);
     await deferClaim(claim, category);
@@ -379,7 +522,7 @@ async function processClaim(claim: GmailIngestionClaim) {
   }
 }
 
-export async function drainGmailIngestion(limit = 2) {
+export async function drainGmailIngestion(limit = 2, maxMessages: number = GMAIL_PUSH_LIMITS.messageFetches) {
   const boundedLimit = Math.max(1, Math.min(limit, 5));
   let claimed = 0;
   let failed = 0;
@@ -392,7 +535,7 @@ export async function drainGmailIngestion(limit = 2) {
     const claim = data?.[0] as GmailIngestionClaim | undefined;
     if (!claim) break;
     claimed += 1;
-    const result = await processClaim(claim);
+    const result = await processClaim(claim, Math.max(1, Math.min(maxMessages, GMAIL_PUSH_LIMITS.messageFetches)));
     receipts += result.receiptCount;
     if ("errorCategory" in result) failed += 1;
   }

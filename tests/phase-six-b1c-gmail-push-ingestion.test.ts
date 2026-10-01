@@ -185,7 +185,8 @@ test("6B.1C-20 unique message bound stops before an unaccounted history record",
 
 test("6B.1C-21 runtime message GET count has an explicit hard bound", async () => {
   const { push } = await sources();
-  assert.match(push, /normalizedById\.size >= GMAIL_PUSH_LIMITS\.messageFetches/);
+  assert.match(push, /Math\.min\(GMAIL_PUSH_LIMITS\.messageFetches, maxMessages\)/);
+  assert.match(push, /Math\.max\(1, Math\.min\(maxMessages, GMAIL_PUSH_LIMITS\.messageFetches\)\)/);
   assert.equal(GMAIL_PUSH_LIMITS.messageFetches, 100);
 });
 
@@ -344,13 +345,13 @@ test("6B.1C-43 Gmail watch renewal does not overwrite the processed cursor", asy
   assert.doesNotMatch(renewalUpdate, /cursor_value/);
 });
 
-test("6B.1C-44 Gmail maturity and product gates remain frozen", () => {
+test("6B.1C-44 Gmail capabilities expose the accepted durable runtime", () => {
   for (const id of ["gmail_new_email", "gmail_new_email_matching_search", "gmail_send_email", "gmail_reply_to_email"] as const) {
-    assert.equal(CAPABILITY_REGISTRY[id].maturity, "REVIEWED");
-    assert.equal(CAPABILITY_REGISTRY[id].onboarding.available, false);
-    assert.equal(CAPABILITY_REGISTRY[id].availableInTest, false);
-    assert.equal(CAPABILITY_REGISTRY[id].availableInProduction, false);
-    assert.equal(assessCapability(id, "production").available, false);
+    assert.equal(CAPABILITY_REGISTRY[id].maturity, "AVAILABLE");
+    assert.equal(CAPABILITY_REGISTRY[id].onboarding.available, true);
+    assert.equal(CAPABILITY_REGISTRY[id].availableInTest, true);
+    assert.equal(CAPABILITY_REGISTRY[id].availableInProduction, true);
+    assert.equal(assessCapability(id, "production").available, true);
   }
 });
 

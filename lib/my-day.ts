@@ -78,6 +78,13 @@ export async function loadMyDayData(): Promise<MyDayData | null> {
   const approvalsPromise = listCurrentUserPendingApprovals()
     .then((items) => ({ items, unavailable: false }))
     .catch(() => ({ items: [], unavailable: true }));
+  const actionsPromise = (async () => {
+    const { data, error } = await auth.supabase.from("action_executions")
+      .select("id,workspace_id,requester_user_id,work_item_id,capability_id,status,acknowledged,externally_delivered,result_summary,created_at,completed_at")
+      .eq("workspace_id", workspaceId).eq("requester_user_id", userId)
+      .order("created_at", { ascending: false }).limit(MY_DAY_LIMITS.recentActivity);
+    return { items: error ? [] : data, unavailable: Boolean(error) };
+  })().catch(() => ({ items: [], unavailable: true }));
   try {
   const [workflowResult, executionResult] = await Promise.all([
     auth.supabase
@@ -200,19 +207,35 @@ export async function loadMyDayData(): Promise<MyDayData | null> {
     status: connection.status,
   }));
 
-  const [workItems, approvals] = await Promise.all([workItemsPromise, approvalsPromise]);
+  const [workItems, approvals, actions] = await Promise.all([workItemsPromise, approvalsPromise, actionsPromise]);
   return buildMyDayData({
     userId, workspaceId, workflows, executions, connections,
+    actions: actions.items.map((action) => ({
+      id: action.id, userId: action.requester_user_id, workspaceId: action.workspace_id,
+      workItemId: action.work_item_id, capabilityId: action.capability_id,
+      status: action.status, acknowledged: action.acknowledged,
+      externallyDelivered: action.externally_delivered, resultSummary: action.result_summary,
+      createdAt: action.created_at, completedAt: action.completed_at,
+    })),
+    actionActivityUnavailable: actions.unavailable,
     workItems: workItems.items,
     workItemsUnavailable: workItems.unavailable,
     approvals: approvals.items,
     approvalsUnavailable: approvals.unavailable,
   });
   } catch {
-    const [workItems, approvals] = await Promise.all([workItemsPromise, approvalsPromise]);
+    const [workItems, approvals, actions] = await Promise.all([workItemsPromise, approvalsPromise, actionsPromise]);
     if (workItems.unavailable) throw new Error("My Day could not be loaded safely.");
     return buildMyDayData({
       userId, workspaceId, workflows: [], executions: [], connections: [],
+      actions: actions.items.map((action) => ({
+        id: action.id, userId: action.requester_user_id, workspaceId: action.workspace_id,
+        workItemId: action.work_item_id, capabilityId: action.capability_id,
+        status: action.status, acknowledged: action.acknowledged,
+        externallyDelivered: action.externally_delivered, resultSummary: action.result_summary,
+        createdAt: action.created_at, completedAt: action.completed_at,
+      })),
+      actionActivityUnavailable: actions.unavailable,
       workItems: workItems.items,
       approvals: approvals.items,
       approvalsUnavailable: approvals.unavailable,

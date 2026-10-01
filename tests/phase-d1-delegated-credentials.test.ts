@@ -145,7 +145,7 @@ test("D1 browser-facing connection view has no vault or secret serialization pat
   const source = readFileSync(join(process.cwd(), "lib", "connectors", "connection-view.ts"), "utf8");
   assert.doesNotMatch(source, /connector_connection_credentials|readConnectionSecret|readConnectionCredential/);
   assert.doesNotMatch(source, /access[_-]?token|refresh[_-]?token|ciphertext|auth[_-]?tag|nonce/i);
-  assert.match(source, /id,provider_family,external_account_label,status,last_refreshed_at,updated_at/);
+  assert.match(source, /id,provider_family,external_account_label,status,granted_scopes,last_error_category,last_refreshed_at,updated_at/);
 });
 
 test("D1 resolver emits no plaintext logs or telemetry", async () => {

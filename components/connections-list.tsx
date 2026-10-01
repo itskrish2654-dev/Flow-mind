@@ -21,7 +21,7 @@ import { AccessibleDialog } from "@/components/accessible-dialog";
 import { getConnectorOnboarding } from "@/lib/capability-registry";
 import type { ConnectionProvider, ConnectionView } from "@/lib/connectors/connection-view";
 
-type ProviderAvailability = { slack: boolean; notion: boolean };
+type ProviderAvailability = { slack: boolean; notion: boolean; google: boolean };
 
 const providerCopy: Record<ConnectionProvider, {
   name: string;
@@ -42,10 +42,10 @@ const providerCopy: Record<ConnectionProvider, {
     operation: "update_item",
   },
   google: {
-    name: "Google",
-    description: "Use approved Gmail permissions and explicitly selected spreadsheets.",
-    connectLabel: "Google Early Access",
-    operation: "",
+    name: "Google accounts",
+    description: "Search recent mail and send exact approved emails through your Google account.",
+    connectLabel: "Connect Gmail",
+    operation: "reply_to_email",
   },
   airtable: {
     name: "Airtable",
@@ -138,12 +138,13 @@ function connectionFreshness(connection: ConnectionView) {
   return checkedDate(connection.lastCheckedAt);
 }
 
-function connectHref(provider: "slack" | "notion", returnPath: string, connectionId?: string) {
+function connectHref(provider: "slack" | "notion" | "google", returnPath: string, connectionId?: string) {
   const operation = providerCopy[provider].operation;
   const query = new URLSearchParams({ operation, return: returnPath });
   if (connectionId) query.set("connection", connectionId);
   else query.set("account", "add");
-  return `/api/connectors/oauth/${provider}/start?${query.toString()}`;
+  const connectorId = provider === "google" ? "google_gmail" : provider;
+  return `/api/connectors/oauth/${connectorId}/start?${query.toString()}`;
 }
 
 function withConnectionResult(returnPath: string, connector: string) {
@@ -158,6 +159,10 @@ function providerFromConnector(connector: string | null): ConnectionProvider | n
   if (connector === "slack" || connector === "notion") return connector;
   if (connector === "google" || connector?.startsWith("google_")) return "google";
   return null;
+}
+
+function providerOnboarding(provider: ConnectionProvider) {
+  return getConnectorOnboarding(provider === "google" ? "google_gmail" : provider);
 }
 
 export function ConnectionsList({
@@ -196,8 +201,8 @@ export function ConnectionsList({
   const successItems = successProvider ? byProvider.get(successProvider) ?? [] : [];
   const successConnection = successItems.length === 1 ? successItems[0] : null;
   const providers = (["airtable", "hubspot", "slack", "notion", "google"] as const).filter((provider) => byProvider.has(provider));
-  const availableProviders = (["airtable", "slack", "notion"] as const).filter(
-    (provider) => !byProvider.has(provider) && getConnectorOnboarding(provider)?.available,
+  const availableProviders = (["airtable", "slack", "notion", "google"] as const).filter(
+    (provider) => !byProvider.has(provider) && providerOnboarding(provider)?.available,
   );
 
   async function submitAirtable(event: FormEvent<HTMLFormElement>) {
@@ -287,8 +292,8 @@ export function ConnectionsList({
           <div className="mt-4 space-y-5">
             {providers.map((provider) => {
               const items = byProvider.get(provider) ?? [];
-              const canAddAnother = (provider === "slack" || provider === "notion")
-                && Boolean(getConnectorOnboarding(provider)?.available)
+              const canAddAnother = (provider === "slack" || provider === "notion" || provider === "google")
+                && Boolean(providerOnboarding(provider)?.available)
                 && providerAvailability[provider];
               return (
                 <div key={provider} className="overflow-hidden rounded-2xl border border-[#ded6ca] bg-[#fffdfa] shadow-[0_10px_32px_rgba(39,37,54,.035)]">
@@ -322,6 +327,8 @@ export function ConnectionsList({
                                 <span className={`size-1.5 rounded-full ${details.dot}`} aria-hidden="true" />{details.label}
                               </span>
                               <span className="text-[10px] text-slate-500">{connectionFreshness(connection)}</span>
+                              {connection.gmailIntakeStatus === "setting_up" && <span className="text-[10px] text-amber-700">Gmail work sync is setting up</span>}
+                              {connection.gmailIntakeStatus === "needs_attention" && <span className="text-[10px] text-amber-700">Gmail work sync needs attention</span>}
                               {connection.usedByWorkflows > 0 && <span className="text-[10px] text-slate-500">Used by {connection.usedByWorkflows} workflow{connection.usedByWorkflows === 1 ? "" : "s"}</span>}
                             </div>
                           </div>
@@ -355,14 +362,14 @@ export function ConnectionsList({
           <h2 id="available-apps-title" className="mt-1 text-lg font-semibold tracking-[-0.02em] text-slate-950">Connect an app</h2>
           <div className="mt-4 divide-y divide-[#e8e1d7] overflow-hidden rounded-2xl border border-[#ded6ca] bg-[#fffdfa]">
             {availableProviders.map((provider) => {
-              const available = Boolean(getConnectorOnboarding(provider)?.available)
+              const available = Boolean(providerOnboarding(provider)?.available)
                 && (provider === "airtable" || providerAvailability[provider]);
               return (
                 <article key={provider} className="flex flex-col gap-4 px-4 py-4 transition hover:bg-[#fffaf0] sm:flex-row sm:items-center sm:px-5">
                   <div className="flex min-w-0 flex-1 items-center gap-3">
                     <ProviderIcon provider={provider} />
                     <div className="min-w-0">
-                      <h3 className="text-sm font-semibold text-slate-950">{providerCopy[provider].name}</h3>
+                      <h3 className="text-sm font-semibold text-slate-950">{provider === "google" ? "Gmail" : providerCopy[provider].name}</h3>
                       <p className="mt-1 text-xs leading-5 text-slate-500">{providerCopy[provider].description}</p>
                     </div>
                   </div>
@@ -397,7 +404,7 @@ export function ConnectionsList({
         <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Early access</p>
         <h2 id="early-access-title" className="mt-1 text-lg font-semibold tracking-[-0.02em] text-slate-950">Google apps</h2>
         <div className="mt-4 divide-y divide-[#e8e1d7] overflow-hidden rounded-2xl border border-[#ded6ca] bg-[#fffdfa]">
-          {[{ name: "Gmail", description: "Trigger from new messages and send email from your loops." }, { name: "Google Sheets", description: "Work only with spreadsheets explicitly selected through Google Picker." }].map((app) => (
+          {[{ name: "Google Sheets", description: "Work only with spreadsheets explicitly selected through Google Picker." }].map((app) => (
             <article key={app.name} className="flex items-center gap-3 px-4 py-4 sm:px-5">
               <ProviderIcon provider="google" />
               <div className="min-w-0 flex-1">
@@ -450,7 +457,7 @@ export function ConnectionsList({
                 <p className="mt-2 text-xs leading-5 text-slate-600">{managed.permissionSummary}</p>
               </div>
 
-              {(managed.provider === "slack" || managed.provider === "notion") && providerAvailability[managed.provider] && (
+              {(managed.provider === "slack" || managed.provider === "notion" || managed.provider === "google") && providerAvailability[managed.provider] && managed.providerName !== "Google Sheets" && (
                 <a
                   href={connectHref(managed.provider, returnPath, managed.id)}
                   aria-label={`Reconnect ${managed.providerName} account ${managed.accountLabel}`}

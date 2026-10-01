@@ -15,6 +15,7 @@ import { loadMyDayData } from "@/lib/my-day";
 import { listCurrentUserPendingApprovals } from "@/lib/approvals";
 import { listCurrentUserWorkItems } from "@/lib/work-items";
 import { listCurrentUserActionExecutions } from "@/lib/action-executions";
+import { readGmailForAsk } from "@/lib/connectors/google/gmail-read";
 
 export type AskTrustedScope = { userId: string; workspaceId: string };
 
@@ -222,8 +223,40 @@ async function loadActionActivity(scope: AskTrustedScope): Promise<AskToolResult
   };
 }
 
+async function loadGmail(scope: AskTrustedScope, question: string): Promise<AskToolResult> {
+  await assertTrustedScope(scope);
+  const result = await readGmailForAsk({ ...scope, question });
+  return {
+    tool: "gmail_search",
+    availability: result.status,
+    summary: result.status === "ok"
+      ? `${result.messages.length} bounded Gmail search result${result.messages.length === 1 ? "" : "s"} belong to this employee.`
+      : "Gmail is not currently available for this employee.",
+    records: result.messages.slice(0, ASK_LIMITS.recordsPerTool).map((message, index) => safeRecord({
+      key: `gmail_message:${index}`,
+      kind: "gmail_message",
+      id: result.connectionId!,
+      label: message.subject || `Email from ${message.from}`,
+      href: `/dashboard/gmail/${result.connectionId}/${message.id}`,
+      facts: {
+        messageId: message.id,
+        threadId: message.threadId,
+        from: message.from,
+        to: message.to,
+        cc: message.cc,
+        subject: message.subject,
+        receivedAt: message.receivedAt,
+        safeText: message.text,
+        attachments: message.attachments.length
+          ? message.attachments.map((attachment) => `${String(attachment.filename)} (${String(attachment.mimeType)}, ${String(attachment.size)} bytes)`).join("; ")
+          : undefined,
+      },
+    })),
+  };
+}
+
 /** Strict registry: callers cannot invent a tool name or provide query text. */
-export async function executeAskTool(tool: AskToolId, scope: AskTrustedScope): Promise<AskToolResult> {
+export async function executeAskTool(tool: AskToolId, scope: AskTrustedScope, question = ""): Promise<AskToolResult> {
   switch (AskToolIdSchema.parse(tool)) {
     case "my_day": return loadMyDay(scope);
     case "work_items": return loadWorkItems(scope);
@@ -231,5 +264,6 @@ export async function executeAskTool(tool: AskToolId, scope: AskTrustedScope): P
     case "workflow_status": return loadWorkflowStatus(scope);
     case "recent_activity": return loadRecentActivity(scope);
     case "action_activity": return loadActionActivity(scope);
+    case "gmail_search": return loadGmail(scope, question);
   }
 }

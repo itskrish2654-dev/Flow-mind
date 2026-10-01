@@ -13,6 +13,7 @@ import {
   finalizeGmailLiveAcceptanceConnection,
   getGmailLiveAcceptanceCallbackContext,
 } from "@/lib/operations/gmail-live-acceptance-oauth";
+import { initializeGmailWorkIntake } from "@/lib/connectors/google/gmail-push";
 import { captureOperationalEvent } from "@/lib/observability";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSiteOrigin, getSiteUrl } from "@/lib/site-origin";
@@ -91,12 +92,22 @@ export async function GET(
         await revokeGoogleToken(tokens.refreshToken ?? tokens.accessToken);
         throw new Error("The previous broad Google Sheets permission must be removed before reconnecting.");
       }
-      await finalizeGoogleOAuthConnection({
+      const connection = await finalizeGoogleOAuthConnection({
         userId: user.id,
         oauthConnectorId: connectorId,
         intendedConnectionId: oauth.connectionId,
         tokens,
       });
+      if (connectorId === "google_gmail") {
+        try {
+          await initializeGmailWorkIntake({ userId: user.id, connectionId: connection.id });
+        } catch {
+          await createAdminClient().from("connector_connections").update({
+            last_error_category: "gmail_intake_setup",
+            updated_at: new Date().toISOString(),
+          }).eq("id", connection.id).eq("user_id", user.id).eq("workspace_id", auth.workspace.id);
+        }
+      }
     } else {
       const admin = createAdminClient();
       const canonicalConnectorId = connector.manifest.providerFamily;
@@ -163,6 +174,16 @@ export async function GET(
           credentialType: "oauth_refresh_token",
           plaintext: tokens.refreshToken,
         });
+      }
+      if (connectorId === "google_gmail") {
+        try {
+          await initializeGmailWorkIntake({ userId: user.id, connectionId: connection.id });
+        } catch {
+          await admin.from("connector_connections").update({
+            last_error_category: "gmail_intake_setup",
+            updated_at: new Date().toISOString(),
+          }).eq("id", connection.id).eq("user_id", user.id).eq("workspace_id", auth.workspace.id);
+        }
       }
     }
 

@@ -269,7 +269,7 @@ test("6B.1D-J/K OAuth scope policy is exact and rejects every broader Google sco
   }
 });
 
-test("6B.1D-L/M Gmail capabilities remain reviewed and unavailable to customers", () => {
+test("6B.1D-L/M Gmail capabilities are customer-visible only through reviewed operations", () => {
   for (const id of [
     "gmail_new_email",
     "gmail_new_email_matching_search",
@@ -278,26 +278,25 @@ test("6B.1D-L/M Gmail capabilities remain reviewed and unavailable to customers"
   ] as const) {
     const capability = CAPABILITY_REGISTRY[id];
     assert.ok(capability, id);
-    assert.equal(capability.maturity, "REVIEWED", id);
-    assert.equal(capability.supported, false, id);
-    assert.equal(capability.availableInTest, false, id);
-    assert.equal(capability.availableInProduction, false, id);
-    assert.deepEqual(capability.onboarding, { available: false, method: "oauth2" }, id);
-    assert.equal(capability.plannerVisible, false, id);
-    assert.equal(capability.builderVisible, false, id);
-    assert.equal(capability.connectionVisible, false, id);
-    assert.equal(capability.customerVisible, false, id);
+    assert.equal(capability.maturity, "AVAILABLE", id);
+    assert.equal(capability.supported, true, id);
+    assert.equal(capability.availableInTest, true, id);
+    assert.equal(capability.availableInProduction, true, id);
+    assert.deepEqual(capability.onboarding, { available: true, method: "oauth2" }, id);
+    assert.equal(capability.plannerVisible, true, id);
+    assert.equal(capability.builderVisible, true, id);
+    assert.equal(capability.connectionVisible, true, id);
+    assert.equal(capability.customerVisible, true, id);
   }
 });
 
-test("6B.1D-N/O connections remain early access and OAuth still enforces onboarding", async () => {
+test("6B.1D-N/O connections offer Gmail through OAuth onboarding", async () => {
   const [connections, oauth] = await Promise.all([
     readFile("components/connections-list.tsx", "utf8"),
     readFile("lib/connectors/oauth.ts", "utf8"),
   ]);
-  assert.match(connections, /<h2[^>]*>Google apps<\/h2>/);
-  assert.match(connections, />Early Access<\/span>/);
-  assert.doesNotMatch(connections, /Connect Gmail/);
+  assert.match(connections, /Connect Gmail/);
+  assert.match(connections, /google_gmail/);
   assert.match(oauth, /createOAuthAuthorization/);
   assert.match(oauth, /!getConnectorOnboarding\(input\.connectorId\)\?\.available/);
 });

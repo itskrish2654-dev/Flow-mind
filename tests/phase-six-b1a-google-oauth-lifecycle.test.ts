@@ -372,7 +372,7 @@ test("6B.1A-15 credentials remain server-only and never appear in callback respo
   assert.doesNotMatch(client, /access_token|refresh_token|client_secret|ciphertext|auth_tag/i);
 });
 
-test("6B.1A-16 Gmail product maturity and execution gates remain unchanged", () => {
+test("6B.1A-16 Gmail product capabilities are available through the reviewed OAuth lifecycle", () => {
   for (const capabilityId of [
     "gmail_new_email",
     "gmail_new_email_matching_search",
@@ -380,9 +380,9 @@ test("6B.1A-16 Gmail product maturity and execution gates remain unchanged", () 
     "gmail_reply_to_email",
   ] as const) {
     const capability = CAPABILITY_REGISTRY[capabilityId];
-    assert.equal(capability.maturity, "REVIEWED");
-    assert.equal(capability.onboarding.available, false);
-    assert.equal(capability.availableInTest, false);
-    assert.equal(capability.availableInProduction, false);
+    assert.equal(capability.maturity, "AVAILABLE");
+    assert.equal(capability.onboarding.available, true);
+    assert.equal(capability.availableInTest, true);
+    assert.equal(capability.availableInProduction, true);
   }
 });

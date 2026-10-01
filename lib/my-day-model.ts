@@ -11,6 +11,7 @@ import {
 import { getStepInputs } from "@/lib/workflow-setup";
 import type { WorkItem } from "@/lib/work-items-core";
 import { ApprovalActionSnapshotSchema, type ApprovalRequest } from "@/lib/approvals-core";
+import type { ActionExecutionStatus } from "@/lib/action-execution-core";
 
 export const MY_DAY_LIMITS = {
   workflows: 30,
@@ -79,6 +80,7 @@ export type MyDayData = {
   approvalsUnavailable: boolean;
   workItemsUnavailable: boolean;
   workflowDataUnavailable: boolean;
+  actionActivityUnavailable: boolean;
 };
 
 export type MyDayApproval = {
@@ -116,6 +118,20 @@ export type MyDayExecutionCandidate = {
   failureCategory: string | null;
 };
 
+export type MyDayActionCandidate = {
+  id: string;
+  userId: string;
+  workspaceId: string;
+  workItemId: string;
+  capabilityId: string;
+  status: ActionExecutionStatus;
+  acknowledged: boolean;
+  externallyDelivered: boolean;
+  resultSummary: string | null;
+  createdAt: string;
+  completedAt: string | null;
+};
+
 export type MyDayConnectionCandidate = {
   id: string;
   userId: string;
@@ -135,12 +151,14 @@ export type BuildMyDayInput = {
   workspaceId?: string;
   workflows: readonly MyDayWorkflowCandidate[];
   executions: readonly MyDayExecutionCandidate[];
+  actions?: readonly MyDayActionCandidate[];
   connections: readonly MyDayConnectionCandidate[];
   workItems?: readonly WorkItem[];
   approvals?: readonly ApprovalRequest[];
   approvalsUnavailable?: boolean;
   workItemsUnavailable?: boolean;
   workflowDataUnavailable?: boolean;
+  actionActivityUnavailable?: boolean;
 };
 
 const USER_ACTION_FAILURES = new Set([
@@ -528,8 +546,7 @@ export function buildMyDayData(input: BuildMyDayInput): MyDayData {
   const handledByCrazyLoops = durable.filter((item) => item.workItem?.status === "handled")
     .slice(0, MY_DAY_LIMITS.handled);
 
-  const recentActivity = executions
-    .slice(0, MY_DAY_LIMITS.recentActivity)
+  const workflowActivity = executions
     .map<MyDayItem>((execution) => {
       const display = activityStatus(execution.status);
       return {
@@ -544,6 +561,35 @@ export function buildMyDayData(input: BuildMyDayInput): MyDayData {
         cta: { label: "View workflow", href: `/dashboard/projects/${execution.workflowId}` },
       };
     });
+  const actionActivity = (input.actions ?? [])
+    .filter((action) => action.userId === input.userId
+      && (!input.workspaceId || action.workspaceId === input.workspaceId))
+    .map<MyDayItem>((action) => {
+      const confirmed = action.status === "succeeded" && action.acknowledged && action.externallyDelivered;
+      const status: MyDayItemStatus = confirmed ? "success"
+        : action.status === "failed" ? "failed"
+        : action.status === "ambiguous" ? "action_required"
+        : action.status === "rejected" || action.status === "cancelled" ? "cancelled"
+        : action.status === "executing" ? "running" : "waiting";
+      const gmail = action.capabilityId === "gmail_send_email";
+      const title = gmail
+        ? confirmed ? "Gmail email sent" : action.status === "ambiguous" ? "Gmail delivery needs review" : "Gmail send update"
+        : confirmed ? "Approved action completed" : "Approved action update";
+      return {
+        id: `action:${action.id}:activity`,
+        kind: "activity",
+        priority: action.status === "ambiguous" ? 0 : 1,
+        title,
+        description: safeText(action.resultSummary ?? "Review the recorded action outcome.", "Review the recorded action outcome.", 240),
+        source: gmail ? "Gmail" : "CrazyLoops action",
+        timestamp: action.completedAt ?? action.createdAt,
+        status,
+        cta: { label: "Review work item", href: `/my-day#work-item-${action.workItemId}` },
+      };
+    });
+  const recentActivity = [...workflowActivity, ...actionActivity]
+    .sort(newestFirst)
+    .slice(0, MY_DAY_LIMITS.recentActivity);
 
   const recentCompletedCount = executions.filter((execution) => Boolean(execution.completedAt)).length;
   const readyToTestCount = evaluated.filter(({ readiness }) => readiness.testReady).length;
@@ -572,5 +618,6 @@ export function buildMyDayData(input: BuildMyDayInput): MyDayData {
     approvalsUnavailable,
     workItemsUnavailable: input.workItemsUnavailable ?? false,
     workflowDataUnavailable: input.workflowDataUnavailable ?? false,
+    actionActivityUnavailable: input.actionActivityUnavailable ?? false,
   };
 }

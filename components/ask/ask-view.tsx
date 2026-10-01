@@ -33,6 +33,7 @@ function sourceLabel(kind: string): string {
     case "workflow": return "Workflow";
     case "execution": return "Execution";
     case "action_execution": return "Action result";
+    case "gmail_message": return "Gmail";
     default: return "CrazyLoops";
   }
 }

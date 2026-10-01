@@ -3,6 +3,7 @@ import "server-only";
 import type { Json } from "@/lib/supabase/types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveTrustedWorkspaceMembership } from "@/lib/workspace-context";
+import { GOOGLE_SCOPES } from "@/lib/connectors/google/scopes";
 
 export type ConnectionProvider = "airtable" | "google" | "slack" | "notion" | "hubspot";
 
@@ -16,6 +17,7 @@ export type ConnectionView = {
   usedByWorkflows: number;
   permissionSummary: string;
   verification: "provider_verified" | "locally_configured";
+  gmailIntakeStatus?: "active" | "setting_up" | "needs_attention";
 };
 
 const providerDetails: Record<ConnectionProvider, {
@@ -36,7 +38,7 @@ const providerDetails: Record<ConnectionProvider, {
   google: {
     name: "Google",
     fallbackLabel: "Connected Google account",
-    permissionSummary: "Use approved Gmail permissions and spreadsheets explicitly selected through Google Picker.",
+    permissionSummary: "Use only the Google permissions granted to this account.",
   },
   airtable: {
     name: "Airtable",
@@ -86,7 +88,7 @@ export async function listConnectionViews(userId: string): Promise<ConnectionVie
   const [{ data: rows, error }, { data: workflows }] = await Promise.all([
     admin
       .from("connector_connections")
-      .select("id,provider_family,external_account_label,status,last_refreshed_at,updated_at")
+      .select("id,provider_family,external_account_label,status,granted_scopes,last_error_category,last_refreshed_at,updated_at")
       .eq("user_id", userId)
       .eq("workspace_id", membership.workspaceId)
       .neq("status", "revoked")
@@ -99,6 +101,14 @@ export async function listConnectionViews(userId: string): Promise<ConnectionVie
   ]);
 
   if (error) throw new Error("Connections could not be loaded.");
+  const gmailConnectionIds = (rows ?? []).filter((row) => row.provider_family === "google").map((row) => row.id);
+  const intakeResult = gmailConnectionIds.length
+    ? await admin.from("gmail_ingestion_states")
+        .select("connection_id,status,last_error_category,poll_error_category")
+        .eq("user_id", userId).in("connection_id", gmailConnectionIds)
+    : { data: [], error: null };
+  if (intakeResult.error) throw new Error("Gmail intake health could not be loaded.");
+  const intakeByConnection = new Map((intakeResult.data ?? []).map((state) => [state.connection_id, state]));
   const versionIds = (workflows ?? [])
     .flatMap((workflow) => [workflow.current_version_id, workflow.published_version_id])
     .filter((id): id is string => Boolean(id));
@@ -125,6 +135,9 @@ export async function listConnectionViews(userId: string): Promise<ConnectionVie
     const provider = providerFrom(row.provider_family);
     if (!provider || row.status === "revoked") return [];
     const details = providerDetails[provider];
+    const gmailRead = provider === "google" && row.granted_scopes.includes(GOOGLE_SCOPES.gmailReadonly);
+    const gmailSend = provider === "google" && row.granted_scopes.includes(GOOGLE_SCOPES.gmailSend);
+    const sheets = provider === "google" && row.granted_scopes.includes(GOOGLE_SCOPES.driveFile);
     const status = row.status === "connected"
       ? "connected"
       : row.status === "expired"
@@ -133,13 +146,26 @@ export async function listConnectionViews(userId: string): Promise<ConnectionVie
     return [{
       id: row.id,
       provider,
-      providerName: details.name,
+      providerName: provider === "google" ? gmailRead || gmailSend ? "Gmail" : sheets ? "Google Sheets" : "Google" : details.name,
       accountLabel: safeAccountLabel(provider, row.external_account_label),
       status,
       lastCheckedAt: row.last_refreshed_at ?? row.updated_at,
       usedByWorkflows: workflowCounts.get(row.id) ?? 0,
-      permissionSummary: details.permissionSummary,
+      permissionSummary: provider === "google"
+        ? [gmailRead ? "Read the connected mailbox." : "", gmailSend ? "Send exact approved emails." : "",
+          sheets ? "Use spreadsheets explicitly selected through Google Picker." : ""].filter(Boolean).join(" ")
+          || "This Google account needs permission review before use."
+        : details.permissionSummary,
       verification: provider === "airtable" ? "locally_configured" : "provider_verified",
+      ...(provider === "google" && gmailRead ? {
+        gmailIntakeStatus: row.last_error_category === "gmail_intake_setup"
+          ? "needs_attention" as const
+          : !intakeByConnection.has(row.id) ? "setting_up" as const
+          : ["resync_required", "reconnect_required"].includes(intakeByConnection.get(row.id)?.status ?? "")
+            || intakeByConnection.get(row.id)?.last_error_category
+            || intakeByConnection.get(row.id)?.poll_error_category
+            ? "needs_attention" as const : "active" as const,
+      } : {}),
     }];
   });
 }

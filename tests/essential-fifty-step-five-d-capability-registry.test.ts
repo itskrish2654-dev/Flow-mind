@@ -155,7 +155,7 @@ test("5D-2b explicit maturity validates legacy mode flags without being inferred
     /TEST_ONLY capability has invalid mode availability/,
   );
 
-  const gmail = cloneCapability(CAPABILITY_REGISTRY.gmail_send_email);
+  const gmail = cloneCapability(CAPABILITY_REGISTRY.google_sheets_add_row);
   const invalidReviewed = { ...gmail, supported: true };
   assert.match(
     validateCapabilityRegistry(replaceCapability(gmail, invalidReviewed)).join(" "),
@@ -173,7 +173,7 @@ test("5D-2b explicit maturity validates legacy mode flags without being inferred
     /Non-executable maturity exposes an execution mode/,
   );
 
-  for (const id of ["salesforce", "gmail_send_email", "formatter.scripting"] as const) {
+  for (const id of ["salesforce", "google_sheets_add_row", "formatter.scripting"] as const) {
     const capability = cloneCapability(CAPABILITY_REGISTRY[id]);
     const invalidNonExecutable = {
       ...capability,
@@ -271,13 +271,13 @@ test("5D-3 maturity and mode availability remain truthful", () => {
   assert.equal(assessCapability("hubspot.get_contact", "production").available, false);
   assert.equal(airtable.maturity, "AVAILABLE");
   assert.equal(assessCapability("airtable.create_record", "production").available, true);
-  assert.equal(CAPABILITY_REGISTRY.gmail_send_email.maturity, "REVIEWED");
+  assert.equal(CAPABILITY_REGISTRY.gmail_send_email.maturity, "AVAILABLE");
   assert.equal(CAPABILITY_REGISTRY.google_sheets_add_row.maturity, "REVIEWED");
   assert.equal(CAPABILITY_REGISTRY.slack_send_channel_message.maturity, "REVIEWED");
   assert.equal(CAPABILITY_REGISTRY.notion_create_page.maturity, "REVIEWED");
   assert.equal(CAPABILITY_REGISTRY["internal.connector_runner_canary"].maturity, "TEST_ONLY");
   assert.equal(CAPABILITY_REGISTRY["internal.connector_runner_canary"].internalOnly, true);
-  assert.equal(assessCapability("gmail_send_email", "test").available, false);
+  assert.equal(assessCapability("gmail_send_email", "test").available, true);
   assert.equal(assessCapability("google_sheets_add_row", "production").available, false);
   assert.equal(assessCapability("slack_send_channel_message", "test").available, false);
   assert.equal(assessCapability("notion_create_page", "production").available, false);
@@ -363,7 +363,7 @@ test("5D-6 onboarding availability is separate from execution availability", () 
   assert.deepEqual(getConnectorOnboarding("airtable"), { available: true, method: "api_key" });
   assert.deepEqual(getConnectorOnboarding("slack"), { available: false, method: "oauth2" });
   assert.deepEqual(getConnectorOnboarding("notion"), { available: false, method: "oauth2" });
-  assert.deepEqual(getConnectorOnboarding("google_gmail"), { available: false, method: "oauth2" });
+  assert.deepEqual(getConnectorOnboarding("google_gmail"), { available: true, method: "oauth2" });
   assert.deepEqual(getConnectorOnboarding("google_sheets"), { available: false, method: "oauth2" });
   assert.equal(CAPABILITY_REGISTRY["hubspot.get_contact"].availableInTest, true);
   assert.equal(CAPABILITY_REGISTRY["hubspot.get_contact"].onboarding.available, false);
@@ -606,7 +606,7 @@ test("5D-10 product UI reads registry maturity and onboarding without exposing s
   ]);
   assert.match(workspace, /capability\?\.onboarding\.available/);
   assert.match(workspace, /capability\?\.maturity === "TEST_ONLY"/);
-  assert.match(connections, /getConnectorOnboarding\(provider\)\?\.available/);
+  assert.match(connections, /providerOnboarding\(provider\)\?\.available/);
   assert.doesNotMatch(registry, /client_secret|access_token|refresh_token|credentialCapsule|CONNECTOR_RUNNER_SECRET/);
 });
 
