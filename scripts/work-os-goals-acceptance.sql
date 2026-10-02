@@ -145,5 +145,32 @@ end;
 $$;
 
 set local role service_role;
+do $$
+declare v_owner uuid := current_setting('goals.owner')::uuid;
+declare v_other uuid := current_setting('goals.other')::uuid;
+declare v_workspace uuid := current_setting('goals.workspace')::uuid;
+declare v_goal uuid;
+declare v_plan uuid;
+begin
+  insert into public.goals(workspace_id, created_by_user_id, owner_user_id,
+    last_actor_user_id, request_key, request_hash, title, success_criteria)
+  values (v_workspace, v_owner, v_owner, v_owner, gen_random_uuid(), repeat('b', 64),
+    'Review member departure safely', 'One assigned review task has a durable outcome')
+  returning id into v_goal;
+  select public.save_goal_plan(v_owner, v_goal, 0, 'manager', jsonb_build_array(
+    jsonb_build_object('title','Complete assigned review','assigneeUserId',v_other)
+  ), '{}') into v_plan;
+  perform public.activate_goal_plan(v_owner, v_goal, v_plan, 1);
+  if (select count(*) from public.work_items where goal_id = v_goal) <> 1
+  then raise exception 'Departure fixture did not activate work'; end if;
+  delete from public.workspace_memberships
+    where workspace_id = v_workspace and user_id = v_other;
+  if (select count(*) from public.work_items where goal_id = v_goal) <> 0
+    or (select count(*) from public.goal_plan_items where goal_id = v_goal) <> 1
+    or (select status from public.goals where id = v_goal) <> 'active'
+  then raise exception 'Member departure left an inconsistent goal link'; end if;
+end;
+$$;
+
 select 'PASS' as goals_runtime_acceptance;
 rollback;
