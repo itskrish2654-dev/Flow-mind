@@ -159,7 +159,7 @@ export async function getSelectedGoogleSpreadsheetOptions(connectionId: string) 
   if (!connection || connection.status !== "connected" || !connection.granted_scopes.includes(GOOGLE_SCOPES.driveFile)) {
     return { ok: false as const, error: "Reconnect Google Sheets to continue.", spreadsheets: [] };
   }
-  try { return { ok: true as const, spreadsheets: await listSelectedGoogleSpreadsheets({ userId: user.id, connectionId: parsed.data }) }; }
+  try { return { ok: true as const, spreadsheets: await listSelectedGoogleSpreadsheets({ userId: user.id, workspaceId: auth.workspace.id, connectionId: parsed.data }) }; }
   catch (error) { return { ok: false as const, error: error instanceof Error ? error.message : "Selected spreadsheets could not be loaded.", spreadsheets: [] }; }
 }
 
@@ -193,14 +193,15 @@ export async function selectGoogleSpreadsheetForWorkflow(
     if (request.data.pickerAccessToken) {
       await registerPickerSelectedSpreadsheet({
         userId: user.id,
+        workspaceId: auth.workspace.id,
         connectionId: request.data.connectionId,
         spreadsheetId: request.data.spreadsheetId,
         pickerAccessToken: request.data.pickerAccessToken,
       });
     } else {
-      await assertSelectedGoogleSpreadsheet({ userId: user.id, connectionId: request.data.connectionId, spreadsheetId: request.data.spreadsheetId });
+      await assertSelectedGoogleSpreadsheet({ userId: user.id, workspaceId: auth.workspace.id, connectionId: request.data.connectionId, spreadsheetId: request.data.spreadsheetId });
     }
-    const spreadsheet = await inspectGoogleSpreadsheet({ userId: user.id, connectionId: request.data.connectionId, spreadsheetId: request.data.spreadsheetId });
+    const spreadsheet = await inspectGoogleSpreadsheet({ userId: user.id, workspaceId: auth.workspace.id, connectionId: request.data.connectionId, spreadsheetId: request.data.spreadsheetId });
     const setupConfig = { ...snapshot.setupConfig, [`${request.data.stepId}-spreadsheetId`]: request.data.spreadsheetId };
     delete setupConfig[`${request.data.stepId}-worksheet`];
     await createImmutableWorkflowVersion(admin, {
@@ -213,6 +214,40 @@ export async function selectGoogleSpreadsheetForWorkflow(
       summary: "Selected a Google spreadsheet through Google Picker.",
     });
     revalidatePath(`/dashboard/projects/${request.data.workflowId}`);
+    return { ok: true as const, spreadsheet };
+  } catch (error) {
+    return { ok: false as const, error: error instanceof Error ? error.message : "Spreadsheet selection could not be saved." };
+  }
+}
+
+/** Work OS selection is independent of a workflow draft, but never of the owner/workspace. */
+export async function selectGoogleSpreadsheetForWorkOs(connectionId: string, spreadsheetId: string, pickerAccessToken?: string) {
+  const request = z.object({
+    connectionId: z.string().uuid(),
+    spreadsheetId: z.string().regex(/^[A-Za-z0-9_-]{20,100}$/),
+    pickerAccessToken: z.string().min(1).max(4_096).optional(),
+  }).safeParse({ connectionId, spreadsheetId, pickerAccessToken });
+  if (!request.success) return { ok: false as const, error: "Choose a valid spreadsheet through Google Picker." };
+  const auth = await getAuthenticatedContext();
+  if (!auth) return { ok: false as const, error: "Unauthorized" };
+  try {
+    if (request.data.pickerAccessToken) {
+      await registerPickerSelectedSpreadsheet({
+        userId: auth.user.id, workspaceId: auth.workspace.id,
+        connectionId: request.data.connectionId, spreadsheetId: request.data.spreadsheetId,
+        pickerAccessToken: request.data.pickerAccessToken,
+      });
+    } else {
+      await assertSelectedGoogleSpreadsheet({
+        userId: auth.user.id, workspaceId: auth.workspace.id,
+        connectionId: request.data.connectionId, spreadsheetId: request.data.spreadsheetId,
+      });
+    }
+    const spreadsheet = await inspectGoogleSpreadsheet({
+      userId: auth.user.id, workspaceId: auth.workspace.id,
+      connectionId: request.data.connectionId, spreadsheetId: request.data.spreadsheetId,
+    });
+    revalidatePath("/connections");
     return { ok: true as const, spreadsheet };
   } catch (error) {
     return { ok: false as const, error: error instanceof Error ? error.message : "Spreadsheet selection could not be saved." };

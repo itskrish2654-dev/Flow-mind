@@ -1,10 +1,12 @@
 export const CANONICAL_PRODUCTION_ORIGIN = "https://www.crazy-loops.com";
+export const CANONICAL_STAGING_ORIGIN = "https://staging.crazy-loops.com";
 export const LEGACY_PRODUCTION_ORIGIN = "https://flow-mind-beta.vercel.app";
 
 type SiteOriginInput = {
   siteUrl?: string | null;
   vercelUrl?: string | null;
   vercelEnvironment?: string | null;
+  deploymentRole?: string | null;
   fallbackOrigin?: string | null;
 };
 
@@ -18,6 +20,13 @@ function normalizeOrigin(value: string) {
 }
 
 export function resolveSiteOrigin(input: SiteOriginInput = {}) {
+  if (input.deploymentRole === "staging") {
+    if (input.siteUrl?.trim() !== CANONICAL_STAGING_ORIGIN) {
+      throw new Error("The staging site origin is not configured correctly.");
+    }
+    return CANONICAL_STAGING_ORIGIN;
+  }
+
   if (input.vercelEnvironment === "production") {
     return CANONICAL_PRODUCTION_ORIGIN;
   }
@@ -37,6 +46,7 @@ export function getSiteOrigin(fallbackOrigin?: string) {
     siteUrl: process.env.NEXT_PUBLIC_SITE_URL,
     vercelUrl: process.env.VERCEL_URL,
     vercelEnvironment: process.env.VERCEL_ENV,
+    deploymentRole: process.env.CRAZYLOOPS_DEPLOYMENT_ROLE,
     fallbackOrigin,
   });
 }

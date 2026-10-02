@@ -16,6 +16,8 @@ import { listCurrentUserPendingApprovals } from "@/lib/approvals";
 import { listCurrentUserWorkItems } from "@/lib/work-items";
 import { listCurrentUserActionExecutions } from "@/lib/action-executions";
 import { readGmailForAsk } from "@/lib/connectors/google/gmail-read";
+import { findSelectedGoogleSpreadsheetRow, inspectSelectedGoogleWorksheet, readSelectedGoogleSpreadsheetRows } from "@/lib/connectors/google/sheets";
+import { resolveSelectedSheetForQuestion } from "@/lib/connectors/google/sheets-work-context";
 
 export type AskTrustedScope = { userId: string; workspaceId: string };
 
@@ -255,6 +257,96 @@ async function loadGmail(scope: AskTrustedScope, question: string): Promise<AskT
   };
 }
 
+async function loadSheets(scope: AskTrustedScope, question: string): Promise<AskToolResult> {
+  await assertTrustedScope(scope);
+  const resolved = await resolveSelectedSheetForQuestion({ ...scope, question });
+  if (resolved.status !== "ok") return {
+    tool: "sheets_search", availability: resolved.status,
+    summary: resolved.message, records: [],
+  };
+  const sheet = resolved.selection;
+  const worksheet = await inspectSelectedGoogleWorksheet({
+    ...scope, connectionId: sheet.connectionId,
+    spreadsheetId: sheet.spreadsheetId, worksheet: sheet.worksheet,
+  });
+  const link = "/connections#google-sheets";
+  const rowQuestion = question.match(/\brow\s+(\d{1,6})\b/i);
+  const requestedRow = rowQuestion ? Number(rowQuestion[1]) : null;
+  const email = question.match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i)?.[0];
+  const company = question.match(/\bstatus of\s+([^?.!,]+?)(?:\s+in\s+|\s+on\s+|$)/i)?.[1]?.trim();
+  const exactColumn = email && worksheet.headers.find((header) => /^e-?mail(?: address)?$/i.test(header))
+    || company && worksheet.headers.find((header) => /^(?:company|customer|client)$/i.test(header));
+  const exactValue = email || company;
+  let rows: Array<{ rowNumber: number; cells: Record<string, { value: string; truncated: boolean }> }> = [];
+  let range = `${sheet.worksheet}!A2`;
+  let complete = true;
+  let matchCount: number | null = null;
+  if (exactColumn && exactValue) {
+    const match = await findSelectedGoogleSpreadsheetRow({
+      ...scope, connectionId: sheet.connectionId, spreadsheetId: sheet.spreadsheetId,
+      worksheet: sheet.worksheet, matchColumn: exactColumn, matchValue: exactValue,
+    });
+    matchCount = match.matchCount;
+    range = `${sheet.worksheet}!${exactColumn}2:${exactColumn}${worksheet.rowCount}`;
+    if (match.found && match.rowNumber) rows = [{
+      rowNumber: match.rowNumber,
+      cells: Object.fromEntries(Object.entries(match.values).map(([key, value]) => [key, {
+        value: boundedText(String(value), "", 180), truncated: String(value).length > 180,
+      }])),
+    }];
+  } else {
+    const page = await readSelectedGoogleSpreadsheetRows({
+      ...scope, connectionId: sheet.connectionId, spreadsheetId: sheet.spreadsheetId,
+      worksheet: sheet.worksheet,
+      ...(requestedRow !== null ? { startRow: requestedRow, limit: 1 } : {}),
+    });
+    rows = page.rows;
+    range = page.range;
+    complete = requestedRow !== null || !page.hasMore;
+    const statusColumn = worksheet.headers.find((header) => /^(?:status|stage)$/i.test(header));
+    if (statusColumn && /\b(?:open|waiting|follow[- ]?up)\b/i.test(question)) {
+      const desired = /\bfollow[- ]?up\b/i.test(question) ? /follow[- ]?up|waiting/i : /open/i;
+      rows = rows.filter((row) => desired.test(row.cells[statusColumn]?.value ?? ""));
+      matchCount = rows.length;
+    }
+  }
+  const shownRows = rows.slice(0, ASK_LIMITS.recordsPerTool - 1);
+  const coverageRecord = safeRecord({
+    key: "sheet_range:0", kind: "sheet_range", id: sheet.connectionId,
+    label: `${sheet.spreadsheetName} / ${sheet.worksheet} / ${range}`,
+    href: link,
+    facts: {
+      spreadsheet: sheet.spreadsheetName,
+      worksheet: sheet.worksheet,
+      scannedRange: range,
+      coverageComplete: complete ? "yes" : "no",
+      matchedRowsInRange: String(matchCount ?? rows.length),
+      totalRowsShown: String(shownRows.length),
+      ambiguousExactMatch: matchCount !== null && matchCount > 1 && rows.length === 0 ? "yes" : "no",
+      omittedRows: rows.length > shownRows.length ? "yes" : "no",
+      omittedColumns: worksheet.headers.length > 8 ? "yes" : "no",
+    },
+  });
+  const records = shownRows.map((row, index) => safeRecord({
+    key: `sheet_row:${index + 1}`, kind: "sheet_row", id: sheet.connectionId,
+    label: `${sheet.spreadsheetName} / ${sheet.worksheet} / row ${row.rowNumber}`,
+    href: link,
+    facts: {
+      spreadsheet: sheet.spreadsheetName,
+      worksheet: sheet.worksheet,
+      rowNumber: String(row.rowNumber),
+      ...Object.fromEntries(worksheet.headers.slice(0, 8).map((header) => [
+        header, `${row.cells[header]?.value ?? ""}${row.cells[header]?.truncated ? " [truncated]" : ""}`,
+      ])),
+    },
+  }));
+  return {
+    tool: "sheets_search", availability: "ok",
+    summary: `Selected spreadsheet ${sheet.spreadsheetName}; worksheet ${sheet.worksheet}; scanned ${range}. ${complete ? "This bounded range covers the requested rows." : "This is a partial page; rows outside the range were not read."} ${rows.length > shownRows.length ? "Some scanned rows were omitted from the model context." : ""}`,
+    records: [coverageRecord, ...records],
+  };
+}
+
 /** Strict registry: callers cannot invent a tool name or provide query text. */
 export async function executeAskTool(tool: AskToolId, scope: AskTrustedScope, question = ""): Promise<AskToolResult> {
   switch (AskToolIdSchema.parse(tool)) {
@@ -265,5 +357,6 @@ export async function executeAskTool(tool: AskToolId, scope: AskTrustedScope, qu
     case "recent_activity": return loadRecentActivity(scope);
     case "action_activity": return loadActionActivity(scope);
     case "gmail_search": return loadGmail(scope, question);
+    case "sheets_search": return loadSheets(scope, question);
   }
 }

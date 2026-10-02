@@ -88,7 +88,7 @@ test("missing and expired Gmail connections become a truthful connect state", as
       callModel: async () => { modelCalls += 1; return "{}"; },
     });
     assert.equal(response.metadata.responseType, "unsupported");
-    assert.equal(response.metadata.suggestedAction?.href, "/dashboard/connections");
+    assert.equal(response.metadata.suggestedAction?.href, "/connections");
     assert.equal(modelCalls, 0);
   }
 });
@@ -240,8 +240,9 @@ test("Gmail connection UI is environment-gated and requests read plus send scope
   assert.match(list, /Connect Gmail/);
   assert.match(list, /google_gmail/);
   assert.match(list, /operation: "reply_to_email"/);
-  assert.match(list, /managed\.providerName !== "Google Sheets"/);
-  assert.match(list, /\{ name: "Google Sheets"/);
+  assert.match(list, /GoogleSpreadsheetPicker/);
+  assert.match(list, /Connect Google Sheets or add file access/);
+  assert.match(list, /Gmail and Sheets use separate Google permissions/);
   assert.doesNotMatch(list, /\{ name: "Gmail", description: "Trigger from new messages/);
   assert.match(scopes, /GOOGLE_SCOPES\.gmailReadonly, GOOGLE_SCOPES\.gmailSend/);
 });

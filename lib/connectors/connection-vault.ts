@@ -110,6 +110,11 @@ export async function revokeConnection(userId: string, connectionId: string) {
       await revokeSlackToken(accessToken).catch(() => false);
     }
   }
+  if (connection.provider_family === "google") {
+    const { error: selectionError } = await admin.from("google_selected_spreadsheets")
+      .delete().eq("connection_id", connectionId).eq("user_id", userId);
+    if (selectionError) throw new Error("Selected Google spreadsheets could not be removed.");
+  }
   const { error: credentialError } = await admin.from("connector_connection_credentials").delete().eq("connection_id", connectionId).eq("user_id", userId);
   if (credentialError) throw new Error("Connection secrets could not be removed.");
   const { error } = await admin.from("connector_connections").update({ status: "revoked", granted_scopes: [], token_expires_at: null, updated_at: new Date().toISOString() }).eq("id", connectionId).eq("user_id", userId).eq("workspace_id", connection.workspace_id);

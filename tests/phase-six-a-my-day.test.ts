@@ -371,7 +371,6 @@ test("Phase 6A fails closed without falsely claiming a credential is missing whe
 
 test("Phase 6A never presents REVIEWED connectors as usable or connectable", () => {
   const reviewedCapabilities = [
-    "google_sheets_add_row",
     "slack_send_channel_message",
     "notion_create_page",
   ] as const;
@@ -488,9 +487,10 @@ test("Phase 6A activity is bounded, newest first, and cannot surface raw secret 
   assert.equal(JSON.stringify(result).includes("access_token"), false);
 });
 
-test("Phase 6A capability truth preserves reviewed maturity transitions", () => {
+test("Phase 6A capability truth preserves connector maturity transitions", () => {
   assert.equal(CAPABILITY_REGISTRY.gmail_new_email.maturity, "AVAILABLE");
-  assert.equal(CAPABILITY_REGISTRY.google_sheets_add_row.maturity, "REVIEWED");
+  assert.equal(CAPABILITY_REGISTRY.google_sheets_add_row.maturity, "AVAILABLE");
+  assert.equal(CAPABILITY_REGISTRY.google_sheets_add_row.plannerVisible, false);
   assert.equal(CAPABILITY_REGISTRY.slack_new_channel_message.maturity, "REVIEWED");
   assert.equal(CAPABILITY_REGISTRY.notion_page_created_or_added.maturity, "REVIEWED");
   assert.equal(CAPABILITY_REGISTRY["hubspot.get_contact"].maturity, "TEST_ONLY");

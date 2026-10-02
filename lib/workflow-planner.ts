@@ -501,7 +501,7 @@ export function planWorkflow(prompt: string): WorkflowPlan {
   }
   for (const capabilityId of unavailableRequestedCapabilityIds) {
     const capability = getCapability(capabilityId);
-    if (capability && !capability.supported) unsupported.push(capability);
+    if (capability && (!capability.supported || !capability.plannerVisible)) unsupported.push(capability);
   }
   const asksForUnknownExternalConnection =
     /\b(connect(?:\s+to)?|sync\s+(?:to|with)|post\s+(?:it\s+)?to)\b/i.test(
@@ -524,7 +524,9 @@ export function planWorkflow(prompt: string): WorkflowPlan {
       status: "UNSUPPORTED",
       requestedUnsupportedCapabilities: requested,
       message: requested
-        .map(({ displayName }) => `${displayName} is not currently supported.`)
+        .map(({ capabilityId, displayName }) => getCapability(capabilityId as CapabilityId)?.supported
+          ? `${displayName} is not available in workflow planning. Use the supported Ask action instead.`
+          : `${displayName} is not currently supported.`)
         .join(" "),
     };
   }

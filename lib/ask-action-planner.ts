@@ -8,6 +8,9 @@ import { getCapability } from "@/lib/capability-registry";
 import { connectorConnectionIds } from "@/lib/connectors/connection-matching";
 import { getConnector } from "@/lib/connectors/registry";
 import { parseGmailSendIntent } from "@/lib/connectors/google/gmail-action-intent";
+import { parseSheetWriteIntent } from "@/lib/connectors/google/sheets-action-intent";
+import { findSelectedGoogleSpreadsheetRow, inspectSelectedGoogleWorksheet, readSelectedGoogleSpreadsheetRow } from "@/lib/connectors/google/sheets";
+import { resolveSelectedSheetForQuestion } from "@/lib/connectors/google/sheets-work-context";
 import type { Database } from "@/lib/supabase/types";
 
 type Scope = { userId: string; workspaceId: string; supabase: SupabaseClient<Database> };
@@ -81,7 +84,7 @@ function connectionRequired(name: string): AskGroundedResponse {
       clarificationRequired: false,
       references: [],
       unsupportedReason: `${name} is not connected for this workspace.`,
-      suggestedAction: { label: "Open Connections", href: "/dashboard/connections" },
+      suggestedAction: { label: "Open Connections", href: "/connections" },
     },
   };
 }
@@ -90,8 +93,120 @@ function parameter(name: string, label: string, value: string) {
   return { name, label, value };
 }
 
+function existingColumnAssignments(headers: string[], requested: Record<string, string>) {
+  const values: Record<string, string> = {};
+  for (const [key, value] of Object.entries(requested)) {
+    const header = headers.find((item) => item.toLowerCase() === key.trim().toLowerCase());
+    if (!header || Object.hasOwn(values, header) || !value.trim()) return null;
+    values[header] = value.trim();
+  }
+  return values;
+}
+
+async function planSheetsAction(scope: Scope, question: string): Promise<AskGroundedResponse | null> {
+  const intent = parseSheetWriteIntent(question);
+  if (!intent) return null;
+  if (intent === "clarification") return clarification("Specify a Google spreadsheet, worksheet, and exact existing column values such as Status = Qualified. Nothing was changed.");
+  const capability = getCapability(intent.kind === "add" ? "google_sheets_add_row" : "google_sheets_update_row");
+  if (!capability?.supported || !capability.availableInProduction || !capability.connectorOperation) return null;
+  const resolved = await resolveSelectedSheetForQuestion({ userId: scope.userId, workspaceId: scope.workspaceId, question });
+  if (resolved.status === "connection_required" || resolved.status === "reconnect_required") return connectionRequired("Google Sheets");
+  if (resolved.status !== "ok") return clarification(resolved.message + " Nothing was changed.");
+  const selected = resolved.selection;
+  const worksheet = await inspectSelectedGoogleWorksheet({
+    userId: scope.userId, workspaceId: scope.workspaceId,
+    connectionId: selected.connectionId, spreadsheetId: selected.spreadsheetId, worksheet: selected.worksheet,
+  });
+  const requested = { ...intent.assignments };
+  if (intent.kind === "add" && intent.initialValue) {
+    const subjectHeader = worksheet.headers.find((header) => /^(?:company|customer|client)$/i.test(header));
+    if (!subjectHeader || Object.keys(requested).some((key) => key.toLowerCase() === subjectHeader.toLowerCase())) {
+      return clarification(`Name the exact column for “${intent.initialValue.slice(0, 80)}” and every value to add. Nothing was changed.`);
+    }
+    requested[subjectHeader] = intent.initialValue;
+  }
+  const values = existingColumnAssignments(worksheet.headers, requested);
+  if (!values || Object.keys(values).length === 0) {
+    return clarification("Use only existing worksheet headers, with a non-empty value for each requested column. Nothing was changed.");
+  }
+  const changes = Object.entries(values).map(([header, value]) => `${header} = “${value}”`).join("; ");
+  const common = [
+    parameter("spreadsheetId", "Picker-selected spreadsheet ID", selected.spreadsheetId),
+    parameter("worksheet", "Worksheet", selected.worksheet),
+  ];
+  if (intent.kind === "add") {
+    const preview = ActionPreviewSchema.safeParse({
+      version: 1, capabilityId: capability.id,
+      connectorId: capability.connectorOperation.connectorId,
+      operationKey: capability.connectorOperation.operationKey,
+      operationVersion: capability.connectorOperation.operationVersion,
+      connectionId: selected.connectionId,
+      actionTitle: "Add one Google Sheets row",
+      actionSummary: `Add one row in ${selected.spreadsheetName} / ${selected.worksheet}: ${changes}. Other existing columns will be blank.`,
+      approvalReason: "Appending a row changes an external spreadsheet and requires approval.",
+      target: { kind: "external_resource", label: `${selected.spreadsheetName} / ${selected.worksheet}`.slice(0, 180), reference: selected.spreadsheetId },
+      parameters: [...common, parameter("values", "Exact column values", JSON.stringify(values)), parameter("strictColumns", "Require exact columns", "true")],
+    });
+    return preview.success ? response(preview.data)
+      : clarification("This row is too large or contains credential-like text for a safe approval preview. Nothing was changed.");
+  }
+
+  let rowNumber: number;
+  let current: Record<string, string | number | boolean>;
+  let rowHash: string;
+  const requestedRow = intent.target.match(/^row\s+(\d{1,6})$/i);
+  if (requestedRow) {
+    const row = await readSelectedGoogleSpreadsheetRow({
+      userId: scope.userId, workspaceId: scope.workspaceId,
+      connectionId: selected.connectionId, spreadsheetId: selected.spreadsheetId,
+      worksheet: selected.worksheet, rowNumber: Number(requestedRow[1]),
+    });
+    rowNumber = row.rowNumber; current = row.values; rowHash = row.rowHash;
+  } else {
+    const matchColumn = worksheet.headers.find((header) => /^(?:company|customer|client)$/i.test(header));
+    if (!matchColumn) return clarification("Name a unique row number or use a worksheet with a Company, Customer, or Client header. Nothing was changed.");
+    const match = await findSelectedGoogleSpreadsheetRow({
+      userId: scope.userId, workspaceId: scope.workspaceId,
+      connectionId: selected.connectionId, spreadsheetId: selected.spreadsheetId,
+      worksheet: selected.worksheet, matchColumn, matchValue: intent.target,
+    });
+    if (match.multipleMatches) return clarification("More than one row matches that name. Specify a unique row number. Nothing was changed.");
+    if (!match.found || !match.rowNumber) return clarification("No exact matching row was found in the selected worksheet. Nothing was changed.");
+    const row = await readSelectedGoogleSpreadsheetRow({
+      userId: scope.userId, workspaceId: scope.workspaceId,
+      connectionId: selected.connectionId, spreadsheetId: selected.spreadsheetId,
+      worksheet: selected.worksheet, rowNumber: match.rowNumber,
+    });
+    if (String(row.values[matchColumn] ?? "") !== intent.target) {
+      return clarification("The matching row changed while preparing the preview. Ask again before approving anything.");
+    }
+    rowNumber = row.rowNumber; current = row.values; rowHash = row.rowHash;
+  }
+  const beforeAfter = Object.entries(values).map(([header, value]) =>
+    `${header}: “${String(current[header] ?? "")}” → “${value}”`).join("; ");
+  const preview = ActionPreviewSchema.safeParse({
+    version: 1, capabilityId: capability.id,
+    connectorId: capability.connectorOperation.connectorId,
+    operationKey: capability.connectorOperation.operationKey,
+    operationVersion: capability.connectorOperation.operationVersion,
+    connectionId: selected.connectionId,
+    actionTitle: "Update one Google Sheets row",
+    actionSummary: `Update only row ${rowNumber} in ${selected.spreadsheetName} / ${selected.worksheet}. ${beforeAfter}. All other columns remain unchanged. If the row changes before execution, the update stops.`,
+    approvalReason: "Changing an existing spreadsheet row requires approval of this exact row and values.",
+    target: { kind: "external_resource", label: `${selected.spreadsheetName} / ${selected.worksheet} / row ${rowNumber}`.slice(0, 180), reference: `${selected.spreadsheetId}:${rowNumber}` },
+    parameters: [...common, parameter("rowNumber", "Exact row number", String(rowNumber)),
+      parameter("values", "Changed column values", JSON.stringify(values)),
+      parameter("expectedRowHash", "Reviewed row fingerprint", rowHash),
+      parameter("strictColumns", "Require exact columns", "true")],
+  });
+  return preview.success ? response(preview.data)
+    : clarification("This update is too large or contains credential-like text for a safe approval preview. Nothing was changed.");
+}
+
 /** Deterministic allowlist. The model cannot name or construct executable capabilities. */
 export async function planAskAction(scope: Scope, question: string): Promise<AskGroundedResponse | null> {
+  const sheets = await planSheetsAction(scope, question);
+  if (sheets) return sheets;
   const internal = question.match(/^\[acceptance action\]\s*acknowledge:\s*(.{1,500})$/i);
   if (internal && acceptanceHarnessEnabled()) {
     const capability = getCapability("internal.action_acknowledge");

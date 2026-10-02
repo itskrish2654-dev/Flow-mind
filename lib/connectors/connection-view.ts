@@ -18,6 +18,7 @@ export type ConnectionView = {
   permissionSummary: string;
   verification: "provider_verified" | "locally_configured";
   gmailIntakeStatus?: "active" | "setting_up" | "needs_attention";
+  sheetsAccess?: boolean;
 };
 
 const providerDetails: Record<ConnectionProvider, {
@@ -157,6 +158,7 @@ export async function listConnectionViews(userId: string): Promise<ConnectionVie
           || "This Google account needs permission review before use."
         : details.permissionSummary,
       verification: provider === "airtable" ? "locally_configured" : "provider_verified",
+      ...(sheets ? { sheetsAccess: true } : {}),
       ...(provider === "google" && gmailRead ? {
         gmailIntakeStatus: row.last_error_category === "gmail_intake_setup"
           ? "needs_attention" as const

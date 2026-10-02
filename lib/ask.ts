@@ -175,7 +175,9 @@ function requestedExternalCapability(question: string): string | null {
   if (!asksForExternalUse) return null;
   if (/\b(gmail|email|inbox)\b/.test(text)) return /\b(send|reply)\b/.test(text) || /^email\b/.test(text) ? "gmail_send_email" : "gmail_new_email";
   if (/\b(slack|channel)\b/.test(text)) return /\b(send|post|message|notify|reply)\b/.test(text) ? "slack_send_channel_message" : "slack_new_channel_message";
-  if (/\b(sheet|sheets|spreadsheet)\b/.test(text)) return /\b(update|change|write)\b/.test(text) ? "google_sheets_update_row" : "google_sheets_find_row";
+  if (/\b(sheet|sheets|spreadsheet|worksheet)\b/.test(text)) return /\b(update|change|write|mark|set)\b/.test(text)
+    ? "google_sheets_update_row" : /\b(add|append|create)\b/.test(text)
+      ? "google_sheets_add_row" : "google_sheets_find_row";
   if (/\bnotion\b/.test(text)) return /\b(update|change|write)\b/.test(text) ? "notion_update_item" : "notion_find_item";
   if (/\bcalendar|event\b/.test(text)) return "google_calendar";
   const registryMatch = Object.values(CAPABILITY_REGISTRY)
@@ -314,8 +316,10 @@ async function generateResponse(auth: AuthContext, question: string, history: As
     }
     // Only the deterministic action planner can construct an executable Ask
     // preview. A supported workflow action is not automatically an Ask action.
-    if (externalCapabilityId === "gmail_send_email") {
-      return unsupportedAskResponse("this Gmail send/reply request through Ask");
+    if (externalCapabilityId === "gmail_send_email"
+      || externalCapabilityId === "google_sheets_add_row"
+      || externalCapabilityId === "google_sheets_update_row") {
+      return unsupportedAskResponse("this request without an exact approved action preview");
     }
   }
   return runGroundedAsk({

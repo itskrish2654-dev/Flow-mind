@@ -572,7 +572,10 @@ export function buildMyDayData(input: BuildMyDayInput): MyDayData {
         : action.status === "rejected" || action.status === "cancelled" ? "cancelled"
         : action.status === "executing" ? "running" : "waiting";
       const gmail = action.capabilityId === "gmail_send_email";
-      const title = gmail
+      const sheets = action.capabilityId === "google_sheets_add_row" || action.capabilityId === "google_sheets_update_row";
+      const title = sheets
+        ? confirmed ? "Google Sheets change confirmed" : action.status === "ambiguous" ? "Google Sheets result needs review" : "Google Sheets action update"
+        : gmail
         ? confirmed ? "Gmail email sent" : action.status === "ambiguous" ? "Gmail delivery needs review" : "Gmail send update"
         : confirmed ? "Approved action completed" : "Approved action update";
       return {
@@ -581,7 +584,7 @@ export function buildMyDayData(input: BuildMyDayInput): MyDayData {
         priority: action.status === "ambiguous" ? 0 : 1,
         title,
         description: safeText(action.resultSummary ?? "Review the recorded action outcome.", "Review the recorded action outcome.", 240),
-        source: gmail ? "Gmail" : "CrazyLoops action",
+        source: sheets ? "Google Sheets" : gmail ? "Gmail" : "CrazyLoops action",
         timestamp: action.completedAt ?? action.createdAt,
         status,
         cta: { label: "Review work item", href: `/my-day#work-item-${action.workItemId}` },

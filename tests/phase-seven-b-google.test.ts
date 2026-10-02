@@ -205,18 +205,23 @@ test("7B-20. Sheets schema helper lists worksheets after owner-bound access", as
 
 test("7B-21. add and update use RAW semantics and require one-row acknowledgement", async () => {
   const sheets = await readFile("lib/connectors/google/sheets.ts", "utf8");
+  const values = await readFile("lib/connectors/google/sheets-values.ts", "utf8");
   assert.match(sheets, /valueInputOption=RAW/);
   assert.match(sheets, /insertDataOption=INSERT_ROWS/);
-  assert.match(sheets, /updatedRows !== 1/);
+  assert.match(sheets, /acknowledgedSheetAppendRange/);
+  assert.match(sheets, /acknowledgedSheetCellRanges/);
+  assert.match(values, /updatedRows !== 1/);
   assert.match(sheets, /rowNumber < 2/);
 });
 
 test("7B-22. find row distinguishes zero, one, and multiple exact matches", async () => {
   const sheets = await readFile("lib/connectors/google/sheets.ts", "utf8");
-  assert.match(sheets, /String\(row\[columnIndex\] \?\? ""\) === expected/);
-  assert.match(sheets, /matches\.length > 1/);
+  assert.match(sheets, /sheet\.rowCount - 1 > MAX_EXACT_LOOKUP_ROWS/);
+  assert.match(sheets, /String\(row\[0\] \?\? ""\) === input\.matchValue/);
+  assert.match(sheets, /matches\.length !== 1/);
+  assert.match(sheets, /multipleMatches: matches\.length > 1/);
   assert.match(sheets, /SHEETS_AMBIGUOUS_MATCH/);
-  assert.match(sheets, /found: Boolean\(match\)/);
+  assert.match(sheets, /found: true as const/);
 });
 
 test("7B-23. Google 429 and ambiguous write outcomes remain truthful", async () => {
@@ -228,7 +233,7 @@ test("7B-23. Google 429 and ambiguous write outcomes remain truthful", async () 
   assert.match(api, /externallyDelivered: false/);
 });
 
-test("7B-24. Gmail is available while Google Sheets remains unavailable", () => {
+test("7B-24. Gmail and Sheets capabilities are available, but Sheets workflow planning stays unsupported", () => {
   const storePrompt = "When a new Gmail message arrives, store it inside CrazyLoops.";
   const storePlan = planWorkflow(storePrompt);
   assert.equal(storePlan.status, "READY_TO_COMPILE");
@@ -236,10 +241,10 @@ test("7B-24. Gmail is available while Google Sheets remains unavailable", () => 
   const sheetsPlan = planWorkflow(sheetsPrompt);
   assert.equal(sheetsPlan.status, "UNSUPPORTED");
   assert.equal(assessCapability("gmail_new_email", "test").available, true);
-  assert.equal(assessCapability("google_sheets_add_row", "production").available, false);
+  assert.equal(assessCapability("google_sheets_add_row", "production").available, true);
 });
 
-test("7B-25. product planning exposes Gmail but keeps reviewed Sheets unavailable", () => {
+test("7B-25. product workflow planning exposes Gmail but keeps Sheets out of the builder", () => {
   assert.equal(planWorkflow("When a public form is submitted, add a row to Google Sheets.").status, "UNSUPPORTED");
   assert.equal(planWorkflow("When I run this manually, send an email through Gmail.").status, "READY_TO_COMPILE");
 });
@@ -249,7 +254,7 @@ test("7B-26. Gmail search is derived only from concrete sender, phrase, or subje
   assert.equal(planWorkflow("When a new Gmail message arrives from a customer, store it in CrazyLoops.").status, "NEEDS_CLARIFICATION");
 });
 
-test("7B-27. reviewed Google operation metadata stays exact without product compilation", () => {
+test("7B-27. Sheets operation metadata stays exact without workflow compilation", () => {
   const prompt = "When a public form is submitted, add a row to Google Sheets.";
   const plan = planWorkflow(prompt);
   assert.equal(plan.status, "UNSUPPORTED");
@@ -313,10 +318,13 @@ test("7B-32. Picker filters to spreadsheets and prevents accumulated browser sco
 
 test("7B-33. Picker selection is verified and persisted server-side", async () => {
   const selected = await readFile("lib/connectors/google/selected-spreadsheets.ts", "utf8");
+  const token = await readFile("lib/connectors/google/picker-token.ts", "utf8");
   const actions = await readFile("app/actions/connections.ts", "utf8");
-  assert.match(selected, /token\.aud !== expectedAudience/);
-  assert.match(selected, /connection\.external_account_id !== token\.sub/);
-  assert.match(selected, /tokenScopes\.has\(GOOGLE_SCOPES\.driveFile\)/);
+  assert.match(selected, /pickerAccessTokenMatchesConnection/);
+  assert.match(selected, /externalAccountId: connection\.external_account_id/);
+  assert.match(token, /info\.audience, info\.issued_to/);
+  assert.match(token, /info\.user_id !== input\.externalAccountId/);
+  assert.match(token, /scopes\.has\(GOOGLE_SCOPES\.driveFile\)/);
   assert.match(selected, /file\.mimeType !== GOOGLE_SPREADSHEET_MIME_TYPE/);
   assert.match(selected, /google_selected_spreadsheets/);
   assert.match(actions, /loadWorkflowSnapshot\(admin, request\.data\.workflowId, user\.id\)/);

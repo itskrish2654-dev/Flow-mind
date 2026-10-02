@@ -7,6 +7,7 @@ import {
   getGooglePickerConfiguration,
   getSelectedGoogleSpreadsheetOptions,
   selectGoogleSpreadsheetForWorkflow,
+  selectGoogleSpreadsheetForWorkOs,
 } from "@/app/actions/connections";
 
 const DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -93,8 +94,8 @@ export function GoogleSpreadsheetPicker({
   value,
   onSelected,
 }: {
-  workflowId: string;
-  stepId: string;
+  workflowId?: string;
+  stepId?: string;
   connectionId?: string;
   value: string;
   onSelected: (spreadsheet: { id: string; title: string; worksheets: Array<{ id: number; title: string }> }) => void;
@@ -116,13 +117,9 @@ export function GoogleSpreadsheetPicker({
 
   async function saveSelection(spreadsheetId: string, pickerAccessToken?: string) {
     if (!connectionId) return;
-    const result = await selectGoogleSpreadsheetForWorkflow(
-      workflowId,
-      stepId,
-      connectionId,
-      spreadsheetId,
-      pickerAccessToken,
-    );
+    const result = workflowId && stepId
+      ? await selectGoogleSpreadsheetForWorkflow(workflowId, stepId, connectionId, spreadsheetId, pickerAccessToken)
+      : await selectGoogleSpreadsheetForWorkOs(connectionId, spreadsheetId, pickerAccessToken);
     if (!result.ok) throw new Error(result.error);
     setSpreadsheets((current) => [
       { id: result.spreadsheet.spreadsheetId, name: result.spreadsheet.title },
@@ -211,6 +208,9 @@ export function GoogleSpreadsheetPicker({
   const selected = spreadsheets.find((item) => item.id === value);
   return (
     <div className="space-y-2">
+      {spreadsheets.length > 0 && (
+        <p className="text-[10px] leading-4 text-slate-600">Picker-selected files: {spreadsheets.map((item) => item.name).join(", ")}</p>
+      )}
       {spreadsheets.length > 0 && (
         <select
           aria-label="Picker-selected Google spreadsheet"

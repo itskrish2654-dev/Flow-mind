@@ -8,6 +8,7 @@ import {
   ArrowRight,
   Check,
   CheckCircle2,
+  FileSpreadsheet,
   Link2Off,
   LoaderCircle,
   Plus,
@@ -18,6 +19,7 @@ import {
 import { connectAirtable } from "@/app/actions/airtable-connections";
 import { disconnectConnector } from "@/app/actions/connections";
 import { AccessibleDialog } from "@/components/accessible-dialog";
+import { GoogleSpreadsheetPicker } from "@/components/google-spreadsheet-picker";
 import { getConnectorOnboarding } from "@/lib/capability-registry";
 import type { ConnectionProvider, ConnectionView } from "@/lib/connectors/connection-view";
 
@@ -147,6 +149,13 @@ function connectHref(provider: "slack" | "notion" | "google", returnPath: string
   return `/api/connectors/oauth/${connectorId}/start?${query.toString()}`;
 }
 
+function sheetsConnectHref(returnPath: string, connectionId?: string) {
+  const query = new URLSearchParams({ operation: "add_row", return: returnPath });
+  if (connectionId) query.set("connection", connectionId);
+  else query.set("account", "add");
+  return `/api/connectors/oauth/google_sheets/start?${query.toString()}`;
+}
+
 function withConnectionResult(returnPath: string, connector: string) {
   const target = new URL(returnPath, "https://crazyloops.invalid");
   target.searchParams.set("connected", connector);
@@ -189,6 +198,7 @@ export function ConnectionsList({
   const [airtablePat, setAirtablePat] = useState("");
   const [airtableSubmitting, setAirtableSubmitting] = useState(false);
   const [airtableError, setAirtableError] = useState<string | null>(null);
+  const [selectedSheets, setSelectedSheets] = useState<Record<string, { id: string; title: string; worksheets: Array<{ id: number; title: string }> }>>({});
 
   const byProvider = useMemo(() => {
     const result = new Map<ConnectionProvider, ConnectionView[]>();
@@ -400,20 +410,52 @@ export function ConnectionsList({
         </section>
       )}
 
-      <section className="mt-10" aria-labelledby="early-access-title">
-        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Early access</p>
-        <h2 id="early-access-title" className="mt-1 text-lg font-semibold tracking-[-0.02em] text-slate-950">Google apps</h2>
-        <div className="mt-4 divide-y divide-[#e8e1d7] overflow-hidden rounded-2xl border border-[#ded6ca] bg-[#fffdfa]">
-          {[{ name: "Google Sheets", description: "Work only with spreadsheets explicitly selected through Google Picker." }].map((app) => (
-            <article key={app.name} className="flex items-center gap-3 px-4 py-4 sm:px-5">
-              <ProviderIcon provider="google" />
-              <div className="min-w-0 flex-1">
-                <h3 className="text-sm font-semibold text-slate-950">{app.name}</h3>
-                <p className="mt-1 text-xs leading-5 text-slate-500">{app.description}</p>
+      <section id="google-sheets" className="mt-10" aria-labelledby="google-sheets-title">
+        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Selected files only</p>
+        <h2 id="google-sheets-title" className="mt-1 text-lg font-semibold tracking-[-0.02em] text-slate-950">Google Sheets</h2>
+        <p className="mt-2 max-w-2xl text-xs leading-5 text-slate-600">Gmail and Sheets use separate Google permissions. CrazyLoops can only use spreadsheets you explicitly choose with Google Picker; connecting an account does not grant access to your whole Drive.</p>
+        <div className="mt-4 space-y-3">
+          {connections.filter((connection) => connection.provider === "google" && connection.sheetsAccess && connection.status === "connected").map((connection) => (
+            <article key={connection.id} className="rounded-2xl border border-[#ded6ca] bg-[#fffdfa] p-4 sm:p-5">
+              <div className="flex items-center gap-3">
+                <FileSpreadsheet className="size-5 shrink-0 text-[#8a6200]" aria-hidden="true" />
+                <div className="min-w-0">
+                  <h3 className="truncate text-sm font-semibold text-slate-950">{connection.accountLabel}</h3>
+                  <p className="text-xs text-slate-500">Choose one spreadsheet to make it available in Ask and approved actions.</p>
+                </div>
               </div>
-              <span className="shrink-0 rounded-full bg-[#fff2bd] px-2.5 py-1 text-[10px] font-semibold text-[#795700]">Early Access</span>
+              <div className="mt-4 max-w-md">
+                <GoogleSpreadsheetPicker
+                  connectionId={connection.id}
+                  value={selectedSheets[connection.id]?.id ?? ""}
+                  onSelected={(spreadsheet) => setSelectedSheets((current) => ({ ...current, [connection.id]: spreadsheet }))}
+                />
+              </div>
+              {selectedSheets[connection.id] && (
+                <div role="status" className="mt-3 text-xs leading-5 text-slate-700">
+                  <p className="font-semibold">Selected: {selectedSheets[connection.id].title}</p>
+                  <p>Worksheets: {selectedSheets[connection.id].worksheets.map((item) => item.title).join(", ") || "None available"}</p>
+                </div>
+              )}
+              <a href={sheetsConnectHref(returnPath, connection.id)} className="mt-3 inline-flex min-h-10 items-center gap-2 text-xs font-semibold text-[#765600] underline underline-offset-4">
+                <RefreshCw className="size-3.5" aria-hidden="true" /> Reconnect this account if file access expires
+              </a>
             </article>
           ))}
+          {connections.filter((connection) => connection.provider === "google" && (!connection.sheetsAccess || connection.status !== "connected")).map((connection) => (
+            <article key={connection.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#ded6ca] bg-[#fffdfa] p-4">
+              <p className="text-xs text-slate-700">{connection.accountLabel} needs separate Google Sheets permission before a file can be selected.</p>
+              <a href={sheetsConnectHref(returnPath, connection.id)} className="inline-flex min-h-10 items-center rounded-xl border border-[#d7aa2f] bg-[#fff7dc] px-3 text-xs font-semibold text-[#6f5100]">Add Sheets access</a>
+            </article>
+          ))}
+          {providerAvailability.google && (
+            <a
+              href={sheetsConnectHref(returnPath)}
+              className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-[#d7aa2f] bg-[#fff7dc] px-4 text-xs font-semibold text-[#6f5100] hover:bg-[#fff2bd]"
+            >
+              <Plus className="size-4" aria-hidden="true" /> Connect Google Sheets or add file access
+            </a>
+          )}
         </div>
       </section>
 
@@ -457,9 +499,9 @@ export function ConnectionsList({
                 <p className="mt-2 text-xs leading-5 text-slate-600">{managed.permissionSummary}</p>
               </div>
 
-              {(managed.provider === "slack" || managed.provider === "notion" || managed.provider === "google") && providerAvailability[managed.provider] && managed.providerName !== "Google Sheets" && (
+              {(managed.provider === "slack" || managed.provider === "notion" || managed.provider === "google") && providerAvailability[managed.provider] && (
                 <a
-                  href={connectHref(managed.provider, returnPath, managed.id)}
+                  href={managed.providerName === "Google Sheets" ? sheetsConnectHref(returnPath, managed.id) : connectHref(managed.provider, returnPath, managed.id)}
                   aria-label={`Reconnect ${managed.providerName} account ${managed.accountLabel}`}
                   className="mt-6 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#d8caa8] bg-white px-4 text-xs font-semibold text-slate-700 transition hover:bg-[#fff8e3]"
                 >

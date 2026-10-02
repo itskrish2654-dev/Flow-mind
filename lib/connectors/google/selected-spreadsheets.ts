@@ -5,6 +5,7 @@ import { ConnectorError } from "@/lib/connectors/errors";
 import { stopGmailWatch } from "@/lib/connectors/google/gmail-push";
 import { revokeGoogleToken } from "@/lib/connectors/google/oauth-provider";
 import { GOOGLE_LEGACY_SHEETS_SCOPE, GOOGLE_SCOPES } from "@/lib/connectors/google/scopes";
+import { pickerAccessTokenMatchesConnection } from "@/lib/connectors/google/picker-token";
 import { normalizeSpreadsheetId } from "@/lib/connectors/google/sheets-values";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Json } from "@/lib/supabase/types";
@@ -28,11 +29,24 @@ function safeMetadata(value: Json): Record<string, Json | undefined> {
 
 export async function assertSelectedGoogleSpreadsheet(input: {
   userId: string;
+  workspaceId?: string;
   connectionId: string;
   spreadsheetId: unknown;
 }) {
   const spreadsheetId = normalizeSpreadsheetId(input.spreadsheetId);
-  const { data, error } = await createAdminClient()
+  const admin = createAdminClient();
+  const connectionQuery = admin.from("connector_connections")
+    .select("id,status,granted_scopes")
+    .eq("id", input.connectionId).eq("user_id", input.userId)
+    .eq("provider_family", "google");
+  const { data: connection, error: connectionError } = await (input.workspaceId
+    ? connectionQuery.eq("workspace_id", input.workspaceId)
+    : connectionQuery).maybeSingle();
+  if (connectionError || !connection || connection.status !== "connected" ||
+    !connection.granted_scopes.includes(GOOGLE_SCOPES.driveFile)) {
+    throw authorizationError("GOOGLE_SHEET_CONNECTION_UNAVAILABLE", "Reconnect this Google Sheets account to continue.");
+  }
+  const { data, error } = await admin
     .from("google_selected_spreadsheets")
     .select("spreadsheet_id,display_name")
     .eq("user_id", input.userId)
@@ -50,8 +64,18 @@ export async function assertSelectedGoogleSpreadsheet(input: {
 
 export async function listSelectedGoogleSpreadsheets(input: {
   userId: string;
+  workspaceId?: string;
   connectionId: string;
 }) {
+  const connectionQuery = createAdminClient().from("connector_connections")
+    .select("id,granted_scopes").eq("id", input.connectionId).eq("user_id", input.userId)
+    .eq("provider_family", "google").eq("status", "connected");
+  const { data: connection } = await (input.workspaceId
+    ? connectionQuery.eq("workspace_id", input.workspaceId)
+    : connectionQuery).maybeSingle();
+  if (!connection?.granted_scopes.includes(GOOGLE_SCOPES.driveFile)) {
+    throw authorizationError("GOOGLE_SHEET_CONNECTION_UNAVAILABLE", "Reconnect this Google Sheets account to continue.");
+  }
   const { data, error } = await createAdminClient()
     .from("google_selected_spreadsheets")
     .select("spreadsheet_id,display_name,last_validated_at")
@@ -68,6 +92,7 @@ export async function listSelectedGoogleSpreadsheets(input: {
 
 export async function registerPickerSelectedSpreadsheet(input: {
   userId: string;
+  workspaceId?: string;
   connectionId: string;
   spreadsheetId: unknown;
   pickerAccessToken: string;
@@ -84,38 +109,29 @@ export async function registerPickerSelectedSpreadsheet(input: {
     `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(accessToken)}`,
     { cache: "no-store", signal: AbortSignal.timeout(8_000) },
   );
-  const token = await tokenResponse.json().catch(() => ({})) as {
-    aud?: string;
-    sub?: string;
-    scope?: string;
-    expires_in?: string;
-  };
-  const tokenScopes = new Set(token.scope?.split(/\s+/).filter(Boolean) ?? []);
-  if (
-    !tokenResponse.ok ||
-    token.aud !== expectedAudience ||
-    !token.sub ||
-    !tokenScopes.has(GOOGLE_SCOPES.driveFile) ||
-    tokenScopes.has(GOOGLE_LEGACY_SHEETS_SCOPE) ||
-    Number(token.expires_in ?? 0) <= 0
-  ) {
+  const tokenInfo = await tokenResponse.json().catch(() => ({})) as unknown;
+  if (!tokenResponse.ok || !tokenInfo || typeof tokenInfo !== "object") {
     throw authorizationError("GOOGLE_PICKER_TOKEN_INVALID", "Google Picker authorization could not be verified.");
   }
 
   const admin = createAdminClient();
-  const { data: connection } = await admin
+  const connectionQuery = admin
     .from("connector_connections")
     .select("id,external_account_id,status,granted_scopes")
     .eq("id", input.connectionId)
     .eq("user_id", input.userId)
-    .eq("provider_family", "google")
-    .maybeSingle();
+    .eq("provider_family", "google");
+  const { data: connection } = await (input.workspaceId
+    ? connectionQuery.eq("workspace_id", input.workspaceId)
+    : connectionQuery).maybeSingle();
   if (
     !connection ||
     connection.status !== "connected" ||
-    connection.external_account_id !== token.sub ||
     !connection.granted_scopes.includes(GOOGLE_SCOPES.driveFile) ||
-    connection.granted_scopes.includes(GOOGLE_LEGACY_SHEETS_SCOPE)
+    connection.granted_scopes.includes(GOOGLE_LEGACY_SHEETS_SCOPE) ||
+    !pickerAccessTokenMatchesConnection({
+      tokenInfo, expectedAudience, externalAccountId: connection.external_account_id ?? "",
+    })
   ) {
     throw authorizationError("GOOGLE_RECONNECT_REQUIRED", "Reconnect the selected Google account to continue.");
   }
@@ -198,7 +214,7 @@ export async function prepareGoogleConnectionForDriveFileReconnect(input: {
     throw new Error("The previous Google permission could not be revoked safely.");
   }
 
-  await Promise.all([
+  const cleanup = await Promise.all([
     admin.from("connector_connection_credentials").delete()
       .eq("connection_id", input.connectionId).eq("user_id", input.userId),
     admin.from("google_selected_spreadsheets").delete()
@@ -206,6 +222,9 @@ export async function prepareGoogleConnectionForDriveFileReconnect(input: {
     admin.from("connector_subscriptions").update({ status: "paused", updated_at: new Date().toISOString() })
       .eq("connection_id", input.connectionId).eq("user_id", input.userId).eq("status", "active"),
   ]);
+  if (cleanup.some((result) => result.error)) {
+    throw new Error("The old Google authorization could not be cleared safely.");
+  }
   const { error } = await admin.from("connector_connections").update({
     status: "expired",
     granted_scopes: [],

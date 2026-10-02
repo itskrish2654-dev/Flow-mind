@@ -45,7 +45,7 @@ test("connection rows expose real labels, health, multiple accounts, and focused
   assert.doesNotMatch(component, /external_account_id|granted_scopes|client ID|OAuth scopes/i);
 });
 
-test("Gmail connection is available while Sheets remains Early Access and built-ins remain account-free", async () => {
+test("Gmail and Picker-scoped Sheets connections are available while built-ins remain account-free", async () => {
   const page = await readFile("app/connections/page.tsx", "utf8");
   const component = await readFile("components/connections-list.tsx", "utf8");
   for (const capability of ["Webhook", "HTTP JSON", "Hosted Forms", "AI", "PDF", "CrazyLoops Storage"]) {
@@ -53,9 +53,11 @@ test("Gmail connection is available while Sheets remains Early Access and built-
   }
   assert.match(component, /Gmail/);
   assert.match(component, /Google Sheets/);
-  assert.match(component, /Early Access/);
   assert.match(component, /Connect Gmail/);
-  assert.doesNotMatch(component, /Connect Google Sheets/);
+  assert.match(component, /Connect Google Sheets or add file access/);
+  assert.match(component, /GoogleSpreadsheetPicker/);
+  assert.match(component, /Selected files only/);
+  assert.match(component, /connection\.sheetsAccess/);
 });
 
 test("workflow missing-connection CTAs preserve the originating project route", async () => {

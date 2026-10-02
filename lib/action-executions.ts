@@ -226,10 +226,13 @@ async function executeQueuedAction(execution: ActionExecution): Promise<ActionEx
         timeout,
       ]);
       if (result.status === "succeeded" && result.acknowledged && result.externallyDelivered) {
+        const sheets = action.capability_id === "google_sheets_add_row" || action.capability_id === "google_sheets_update_row";
         return complete(action, claimToken, {
           status: "succeeded", acknowledged: true, externallyDelivered: true,
           providerReferenceId: result.providerReferenceId,
-          resultSummary: "The provider acknowledged the exact approved action.",
+          resultSummary: sheets && result.providerReferenceId
+            ? `Google Sheets acknowledged the exact approved change at ${result.providerReferenceId.slice(0, 180)}.`
+            : "The provider acknowledged the exact approved action.",
         });
       }
       const ambiguous = result.status === "ambiguous" || result.error?.category === "ambiguous_acknowledgement";

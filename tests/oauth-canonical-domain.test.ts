@@ -4,10 +4,12 @@ import test from "node:test";
 
 import {
   CANONICAL_PRODUCTION_ORIGIN,
+  CANONICAL_STAGING_ORIGIN,
   LEGACY_PRODUCTION_ORIGIN,
   resolveSiteOrigin,
 } from "../lib/site-origin";
 import { getPublicFormUrl } from "../lib/public-form";
+import robots from "../app/robots";
 
 const callback = (connectorId: string) => new URL(
   `/api/connectors/oauth/${connectorId}/callback`,
@@ -32,6 +34,38 @@ test("Production always resolves to the canonical CrazyLoops origin", () => {
     }),
     CANONICAL_PRODUCTION_ORIGIN,
   );
+});
+
+test("an explicitly configured staging deployment uses only the staging origin", () => {
+  assert.equal(resolveSiteOrigin({
+    siteUrl: CANONICAL_STAGING_ORIGIN,
+    vercelEnvironment: "production",
+    deploymentRole: "staging",
+  }), CANONICAL_STAGING_ORIGIN);
+  assert.equal(resolveSiteOrigin({
+    siteUrl: CANONICAL_STAGING_ORIGIN,
+    vercelEnvironment: "production",
+  }), CANONICAL_PRODUCTION_ORIGIN);
+  assert.throws(() => resolveSiteOrigin({
+    siteUrl: CANONICAL_PRODUCTION_ORIGIN,
+    vercelEnvironment: "production",
+    deploymentRole: "staging",
+  }));
+});
+
+test("staging robots exclude crawlers without changing production robots", () => {
+  const previous = process.env.CRAZYLOOPS_DEPLOYMENT_ROLE;
+  try {
+    process.env.CRAZYLOOPS_DEPLOYMENT_ROLE = "staging";
+    assert.deepEqual(robots().rules, { userAgent: "*", disallow: "/" });
+    delete process.env.CRAZYLOOPS_DEPLOYMENT_ROLE;
+    assert.deepEqual(robots().rules, {
+      userAgent: "*", allow: "/", disallow: ["/dashboard", "/settings", "/api/"],
+    });
+  } finally {
+    if (previous === undefined) delete process.env.CRAZYLOOPS_DEPLOYMENT_ROLE;
+    else process.env.CRAZYLOOPS_DEPLOYMENT_ROLE = previous;
+  }
 });
 
 test("all current and future connector callbacks share the canonical route builder", () => {

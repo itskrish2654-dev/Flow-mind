@@ -34,6 +34,8 @@ function sourceLabel(kind: string): string {
     case "execution": return "Execution";
     case "action_execution": return "Action result";
     case "gmail_message": return "Gmail";
+    case "sheet_row": return "Sheet row";
+    case "sheet_range": return "Sheet range";
     default: return "CrazyLoops";
   }
 }
