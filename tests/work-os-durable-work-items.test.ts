@@ -28,6 +28,7 @@ function item(overrides: Partial<WorkItem> = {}): WorkItem {
     status: "needs_you", priority: "high", due_at: now,
     source_type: "internal", source_id: null, source_label: "Customer request",
     dedupe_key: null, created_at: now, updated_at: now, resolved_at: null,
+    goal_id: null, goal_plan_item_id: null,
     ...overrides,
   };
 }

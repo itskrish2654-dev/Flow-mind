@@ -77,6 +77,7 @@ function workItem(overrides: Partial<WorkItem> = {}): WorkItem {
     status: "needs_you", priority: "normal", due_at: null,
     source_type: "internal", source_id: null, source_label: "Prepared work",
     dedupe_key: "draft-1", created_at: now, updated_at: now, resolved_at: null,
+    goal_id: null, goal_plan_item_id: null,
     ...overrides,
   };
 }

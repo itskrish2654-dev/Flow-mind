@@ -34,6 +34,8 @@ function workItem(value: number, overrides: Partial<WorkItem> = {}): WorkItem {
     created_at: `2026-09-30T08:${String(value % 60).padStart(2, "0")}:00.000Z`,
     updated_at: `2026-09-30T08:${String(value % 60).padStart(2, "0")}:00.000Z`,
     resolved_at: null,
+    goal_id: null,
+    goal_plan_item_id: null,
     ...overrides,
   };
 }

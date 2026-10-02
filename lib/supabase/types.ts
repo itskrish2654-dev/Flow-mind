@@ -9,6 +9,68 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      goals: {
+        Row: {
+          id: string; workspace_id: string; created_by_user_id: string | null;
+          owner_user_id: string | null; last_actor_user_id: string | null;
+          request_key: string; request_hash: string;
+          title: string; description: string | null; success_criteria: string | null;
+          target_date: string | null;
+          status: "draft" | "awaiting_approval" | "active" | "completed" | "cancelled";
+          current_plan_id: string | null; approved_plan_id: string | null;
+          activated_at: string | null; completed_at: string | null; cancelled_at: string | null;
+          created_at: string; updated_at: string;
+        };
+        Insert: {
+          id?: string; workspace_id: string; created_by_user_id?: string | null;
+          owner_user_id?: string | null; last_actor_user_id?: string | null;
+          request_key: string; request_hash: string;
+          title: string; description?: string | null; success_criteria?: string | null;
+          target_date?: string | null;
+          status?: "draft" | "awaiting_approval" | "active" | "completed" | "cancelled";
+          current_plan_id?: string | null; approved_plan_id?: string | null;
+          activated_at?: string | null; completed_at?: string | null; cancelled_at?: string | null;
+          created_at?: string; updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["goals"]["Insert"]>;
+        Relationships: [];
+      };
+      goal_plans: {
+        Row: {
+          id: string; workspace_id: string; goal_id: string; revision: number;
+          status: "proposed" | "superseded" | "approved";
+          origin: "manager" | "ai_assisted"; proposed_by_user_id: string | null;
+          approved_by_user_id: string | null; source_references: Json;
+          created_at: string; approved_at: string | null;
+        };
+        Insert: {
+          id?: string; workspace_id: string; goal_id: string; revision: number;
+          status?: "proposed" | "superseded" | "approved";
+          origin: "manager" | "ai_assisted"; proposed_by_user_id?: string | null;
+          approved_by_user_id?: string | null; source_references?: Json;
+          created_at?: string; approved_at?: string | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["goal_plans"]["Insert"]>;
+        Relationships: [];
+      };
+      goal_plan_items: {
+        Row: {
+          id: string; workspace_id: string; goal_id: string; plan_id: string;
+          position: number; title: string; description: string | null;
+          rationale: string | null; suggested_owner_role: string | null;
+          assignee_user_id: string | null; due_at: string | null;
+          priority: "low" | "normal" | "high"; created_at: string;
+        };
+        Insert: {
+          id?: string; workspace_id: string; goal_id: string; plan_id: string;
+          position: number; title: string; description?: string | null;
+          rationale?: string | null; suggested_owner_role?: string | null;
+          assignee_user_id?: string | null; due_at?: string | null;
+          priority?: "low" | "normal" | "high"; created_at?: string;
+        };
+        Update: Record<PropertyKey, never>;
+        Relationships: [];
+      };
       knowledge_documents: {
         Row: {
           id: string; workspace_id: string; uploaded_by_user_id: string | null;
@@ -52,8 +114,9 @@ export type Database = {
           actor_user_id: string | null;
           visibility: "private" | "workspace";
           event_type: string;
-          source_type: "work_item" | "approval" | "action" | "workflow_execution";
+          source_type: "work_item" | "approval" | "action" | "workflow_execution" | "goal";
           source_id: string;
+          goal_id: string | null;
           work_item_id: string | null;
           approval_request_id: string | null;
           action_execution_id: string | null;
@@ -67,8 +130,9 @@ export type Database = {
           actor_user_id?: string | null;
           visibility: "private" | "workspace";
           event_type: string;
-          source_type: "work_item" | "approval" | "action" | "workflow_execution";
+          source_type: "work_item" | "approval" | "action" | "workflow_execution" | "goal";
           source_id: string;
+          goal_id?: string | null;
           work_item_id?: string | null;
           approval_request_id?: string | null;
           action_execution_id?: string | null;
@@ -290,6 +354,8 @@ export type Database = {
           created_at: string;
           updated_at: string;
           resolved_at: string | null;
+          goal_id: string | null;
+          goal_plan_item_id: string | null;
         };
         Insert: {
           id?: string;
@@ -309,11 +375,15 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           resolved_at?: string | null;
+          goal_id?: string | null;
+          goal_plan_item_id?: string | null;
         };
         Update: {
           status?: "needs_you" | "waiting" | "handled" | "done";
           updated_at?: string;
           resolved_at?: string | null;
+          goal_id?: string | null;
+          goal_plan_item_id?: string | null;
         };
         Relationships: [];
       };
@@ -933,6 +1003,30 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      save_goal_plan: {
+        Args: {
+          p_actor_user_id: string; p_goal_id: string; p_expected_revision: number;
+          p_origin: "manager" | "ai_assisted"; p_items: Json;
+          p_source_chunk_ids?: string[];
+        };
+        Returns: string;
+      };
+      update_goal_draft: {
+        Args: {
+          p_actor_user_id: string; p_goal_id: string; p_expected_updated_at: string;
+          p_owner_user_id: string; p_title: string; p_description: string | null;
+          p_success_criteria: string | null; p_target_date: string | null;
+        };
+        Returns: string;
+      };
+      activate_goal_plan: {
+        Args: { p_actor_user_id: string; p_goal_id: string; p_plan_id: string; p_expected_revision: number };
+        Returns: string;
+      };
+      finish_goal: {
+        Args: { p_actor_user_id: string; p_goal_id: string; p_action: "cancel" | "complete" };
+        Returns: string;
+      };
       search_company_knowledge: {
         Args: { p_actor_user_id: string; p_workspace_id: string; p_query: string; p_limit?: number };
         Returns: Array<{

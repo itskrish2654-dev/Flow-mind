@@ -21,6 +21,7 @@ import { readGmailForAsk } from "@/lib/connectors/google/gmail-read";
 import { findSelectedGoogleSpreadsheetRow, inspectSelectedGoogleWorksheet, readSelectedGoogleSpreadsheetRows } from "@/lib/connectors/google/sheets";
 import { resolveSelectedSheetForQuestion } from "@/lib/connectors/google/sheets-work-context";
 import { searchCompanyKnowledge } from "@/lib/knowledge";
+import { getWorkspaceGoal, listWorkspaceGoals } from "@/lib/goals";
 
 export type AskTrustedScope = { userId: string; workspaceId: string };
 
@@ -363,6 +364,38 @@ async function loadCompanyKnowledge(scope: AskTrustedScope, question: string): P
   };
 }
 
+async function loadGoals(scope: AskTrustedScope, question: string): Promise<AskToolResult> {
+  await assertTrustedScope(scope);
+  const { goals } = await listWorkspaceGoals();
+  const searchWords = question.toLowerCase().match(/[a-z]{4,}/g)?.filter((word) =>
+    !["what", "which", "goals", "goal", "about", "with", "doing", "work", "have", "there", "been", "finish", "finished", "overdue", "blocking", "track"].includes(word)) ?? [];
+  const ranked = goals.map((goal) => ({ goal, score: searchWords.reduce((score, word) =>
+    score + (goal.title.toLowerCase().includes(word) ? 1 : 0), 0) }))
+    .sort((a, b) => b.score - a.score);
+  const chosen = ranked.slice(0, Math.min(5, ASK_LIMITS.recordsPerTool));
+  const details = await Promise.all(chosen.map(async ({ goal }) => getWorkspaceGoal(goal.id)));
+  return { tool: "goals",
+    summary: `${goals.length} workspace goal${goals.length === 1 ? "" : "s"} are visible. ${goals.length > chosen.length ? "Only the most relevant recent goals were read in detail." : ""} Progress counts only linked Work Items marked done.`,
+    records: chosen.flatMap(({ goal }, index) => {
+      const detail = details[index];
+      if (!detail) return [];
+      const incomplete = detail.items.filter((item) => item.workItem?.status !== "done");
+      const workSummary = incomplete.slice(0, 6).map((item) =>
+        `${item.title}: ${item.workItem?.status ?? "assignment missing"}${item.due_at ? `, due ${item.due_at.slice(0, 10)}` : ""}`).join("; ");
+      return [safeRecord({ key: `goal:${index}`, kind: "goal", id: goal.id,
+        label: goal.title, href: `/goals/${goal.id}`,
+        facts: { title: goal.title, status: goal.status, successCriteria: goal.success_criteria,
+          targetDate: goal.target_date, completedWork: detail.progress
+            ? `${detail.progress.completed} of ${detail.progress.total}` : "No plan activated",
+          needsAttention: detail.progress ? String(detail.progress.needsAttention) : undefined,
+          overdue: detail.progress ? String(detail.progress.overdue) : undefined,
+          incompleteWork: workSummary || undefined,
+          coverage: incomplete.length > 6 ? "Only the first six incomplete plan items are shown" : undefined,
+        } })];
+    }),
+  };
+}
+
 /** Strict registry: callers cannot invent a tool name or provide query text. */
 export async function executeAskTool(tool: AskToolId, scope: AskTrustedScope, question = ""): Promise<AskToolResult> {
   switch (AskToolIdSchema.parse(tool)) {
@@ -375,5 +408,6 @@ export async function executeAskTool(tool: AskToolId, scope: AskTrustedScope, qu
     case "gmail_search": return loadGmail(scope, question);
     case "sheets_search": return loadSheets(scope, question);
     case "company_knowledge": return loadCompanyKnowledge(scope, question);
+    case "goals": return loadGoals(scope, question);
   }
 }

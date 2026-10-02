@@ -33,6 +33,17 @@ export function parseActivityCursor(value: unknown): number | null {
 
 export function activityLabel(event: ActivityEvent): string {
   if (event.visibility === "workspace") {
+    if (event.source_type === "goal") {
+      const shared: Record<string, string> = {
+        goal_created: "A teammate created a goal",
+        goal_plan_proposed: "A teammate proposed a goal plan",
+        goal_plan_approved: "A teammate approved a goal plan",
+        goal_activated: "A goal became active",
+        goal_completed: "A goal was completed",
+        goal_cancelled: "A goal was cancelled",
+      };
+      return shared[event.event_type] ?? "Goal activity";
+    }
     if (event.event_type === "action_succeeded") return "A teammate's approved action completed";
     if (event.event_type === "action_ambiguous") return "A teammate's action outcome is uncertain";
     return "A teammate's approved action failed";
@@ -57,11 +68,24 @@ export function activityLabel(event: ActivityEvent): string {
     action_cancelled: "Proposed action cancelled",
     workflow_succeeded: "Workflow completed",
     workflow_failed: "Workflow did not complete",
+    goal_created: "Goal created",
+    goal_plan_proposed: "Plan proposed for review",
+    goal_plan_approved: "Plan approved",
+    goal_activated: "Goal activated and Work Items created",
+    goal_completed: "Goal completed",
+    goal_cancelled: "Goal cancelled",
   };
   return labels[event.event_type] ?? "CrazyLoops activity";
 }
 
 export function activityOutcome(event: ActivityEvent): string {
+  if (event.source_type === "goal") {
+    if (event.event_type === "goal_completed") return "Completed";
+    if (event.event_type === "goal_cancelled") return "Cancelled";
+    if (event.event_type === "goal_activated") return "Active";
+    if (event.event_type === "goal_plan_approved") return "Approved";
+    return "For review";
+  }
   if (event.event_type === "work_item_created") return "Created";
   if (event.event_type === "approval_cancelled" || event.event_type === "action_cancelled") return "Cancelled";
   if (event.event_type === "action_ambiguous") return "Outcome uncertain";
@@ -75,6 +99,7 @@ export function activityOutcome(event: ActivityEvent): string {
 }
 
 export function activitySourceHref(event: ActivityEvent): string | null {
+  if (event.goal_id) return `/goals/${event.goal_id}`;
   if (event.visibility !== "private") return null;
   if (event.work_item_id) return `/my-day#work-item-${event.work_item_id}`;
   if (event.workflow_id) return `/dashboard/projects/${event.workflow_id}`;

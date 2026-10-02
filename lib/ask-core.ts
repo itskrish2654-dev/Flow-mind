@@ -38,6 +38,7 @@ export const AskToolIdSchema = z.enum([
   "gmail_search",
   "sheets_search",
   "company_knowledge",
+  "goals",
 ]);
 export type AskToolId = z.infer<typeof AskToolIdSchema>;
 
@@ -52,11 +53,12 @@ export const AskReferenceKindSchema = z.enum([
   "sheet_row",
   "sheet_range",
   "knowledge_chunk",
+  "goal",
 ]);
 export type AskReferenceKind = z.infer<typeof AskReferenceKindSchema>;
 
 const InternalHrefSchema = z.string().max(500).refine(
-  (value) => /^\/(?:my-day|dashboard|connections|activity|knowledge)(?:[/?#][^\s]*)?$/.test(value),
+  (value) => /^\/(?:my-day|dashboard|connections|activity|knowledge|goals)(?:[/?#][^\s]*)?$/.test(value),
   "Reference links must stay inside CrazyLoops.",
 );
 
@@ -97,7 +99,7 @@ export type AskResponseMetadata = z.infer<typeof AskResponseMetadataSchema>;
 export const AskModelOutputSchema = z.object({
   responseType: z.enum(ASK_MODEL_RESPONSE_TYPES),
   answer: z.string().trim().min(1).max(ASK_LIMITS.modelAnswerCharacters),
-  referenceKeys: z.array(z.string().regex(/^(?:work_item|approval|workflow|execution|action_execution|activity|gmail_message|sheet_row|sheet_range|knowledge_chunk):\d+$/)).max(12),
+  referenceKeys: z.array(z.string().regex(/^(?:work_item|approval|workflow|execution|action_execution|activity|gmail_message|sheet_row|sheet_range|knowledge_chunk|goal):\d+$/)).max(12),
   clarificationRequired: z.boolean(),
   suggestedAction: AskSuggestedActionSchema.optional(),
 }).strict();
@@ -120,7 +122,7 @@ export const ASK_MODEL_OUTPUT_CONTRACT_INSTRUCTION = [
   `"responseType" must be exactly ${ASK_MODEL_RESPONSE_TYPES.map((value) => `"${value}"`).join(" or ")}. "answer" must be a non-empty string. "clarificationRequired" must be a boolean.`,
   '"referenceKeys" must be an array containing only reference keys supplied in the retrieved records.',
   'If the requested fact is not present in the supplied records, say that the information is not available, use "responseType":"clarification", set "clarificationRequired":true, use an empty "referenceKeys" array, and omit "suggestedAction".',
-  'When a useful safe internal action exists, "suggestedAction" must be exactly an object with two fields: {"label":"non-empty text","href":"internal path"}. Its href must begin with /my-day, /dashboard, /activity, /knowledge, or /connections. Otherwise omit "suggestedAction" entirely. Never return null, a string, an external URL, or extra fields for "suggestedAction".',
+  'When a useful safe internal action exists, "suggestedAction" must be exactly an object with two fields: {"label":"non-empty text","href":"internal path"}. Its href must begin with /my-day, /dashboard, /activity, /knowledge, /goals, or /connections. Otherwise omit "suggestedAction" entirely. Never return null, a string, an external URL, or extra fields for "suggestedAction".',
   `Valid complete example: ${JSON.stringify(ASK_MODEL_OUTPUT_CONTRACT_EXAMPLE)}`,
 ].join(" ");
 
@@ -192,6 +194,7 @@ export function isAskActionOutcomeQuestion(question: string): boolean {
 export function selectAskTools(question: string): AskToolId[] {
   const text = question.toLowerCase();
   const tools: AskToolId[] = [];
+  if (/\b(?:goals?|objectives?|milestones?|on track|overdue work|blocking the)\b/.test(text)) tools.push("goals");
   const generalAttention = /^attention[?.!]*$|(?:needs?|requires?|deserves?) my attention|what should i (?:do|handle|focus on)|what do i need(?: to do)?|anything (?:i need to handle|that needs me)|what needs me|my priorities/.test(text.trim());
   const explicitWorkflow = /workflow|automation/.test(text);
   const employeeApprovalAction = hasEmployeeApprovalActionIntent(text);
@@ -369,6 +372,7 @@ export function resolveGroundedResponse(
 }
 
 function emptyAnswer(tools: readonly AskToolId[]): string {
+  if (tools.includes("goals")) return "I found no workspace goals matching the bounded current goal list.";
   if (tools.includes("company_knowledge")) return "The uploaded company documents do not specify that. Ask an owner or admin to add the relevant source if it should be available.";
   if (tools.includes("sheets_search")) return "I found no matching rows in the bounded selected spreadsheet range. Ask about a narrower range if the sheet has more data.";
   if (tools.includes("gmail_search")) return "I found no matching Gmail messages in the bounded recent mailbox search.";

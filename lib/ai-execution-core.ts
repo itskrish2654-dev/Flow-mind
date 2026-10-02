@@ -65,6 +65,7 @@ export class AiExecutionError extends Error {
 export type AiTextExecutor = (input: {
   instruction: string;
   content: string;
+  maxOutputTokens?: number;
 }) => Promise<{ text: string; metadata: AiExecutionMetadata }>;
 
 type UnknownRecord = Record<string, unknown>;
@@ -287,7 +288,11 @@ export function createAiTextExecutor({
     maxOutputTokens: number;
   }) => Promise<AiProviderResult>;
 }): AiTextExecutor {
-  return async ({ instruction, content }) => {
+  return async ({ instruction, content, maxOutputTokens: requestedOutputTokens }) => {
+    const outputBudget = typeof requestedOutputTokens === "number"
+      && Number.isInteger(requestedOutputTokens) && requestedOutputTokens > 0
+      ? Math.min(requestedOutputTokens, Math.max(maxOutputTokens, 2_000))
+      : maxOutputTokens;
     const combinedLength = instruction.length + content.length;
     if (combinedLength > maxInputCharacters) {
       throw new AiExecutionError(
@@ -314,7 +319,7 @@ export function createAiTextExecutor({
           durationMs: 0,
           inputCharacters: combinedLength,
           inputTokenEstimate: Math.max(1, Math.ceil(combinedLength / 4)),
-          maxOutputTokens,
+          maxOutputTokens: outputBudget,
         },
         false,
       );
@@ -334,7 +339,7 @@ export function createAiTextExecutor({
 
     try {
       const result = await Promise.race([
-        runModel({ instruction, content, signal: controller.signal, maxOutputTokens }),
+        runModel({ instruction, content, signal: controller.signal, maxOutputTokens: outputBudget }),
         timeoutPromise,
       ]);
       const text = result.text.trim();
@@ -363,7 +368,7 @@ export function createAiTextExecutor({
             durationMs: Date.now() - startedAt,
             inputCharacters: combinedLength,
             inputTokenEstimate: Math.max(1, Math.ceil(combinedLength / 4)),
-            maxOutputTokens,
+            maxOutputTokens: outputBudget,
           },
           false,
         );
@@ -376,7 +381,7 @@ export function createAiTextExecutor({
           durationMs: Date.now() - startedAt,
           inputCharacters: combinedLength,
           outputCharacters: text.length,
-          maxOutputTokens,
+          maxOutputTokens: outputBudget,
           inputTokens: result.inputTokens ?? null,
           outputTokens: result.outputTokens ?? null,
         },
@@ -390,7 +395,7 @@ export function createAiTextExecutor({
           model,
           durationMs: Date.now() - startedAt,
           inputCharacters: combinedLength,
-          maxOutputTokens,
+          maxOutputTokens: outputBudget,
         },
       );
       throw normalized;

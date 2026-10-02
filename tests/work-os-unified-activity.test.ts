@@ -33,6 +33,7 @@ function event(overrides: Partial<ActivityEvent> = {}): ActivityEvent {
     visibility: "private", event_type: "action_succeeded", source_type: "action",
     source_id: actionId, work_item_id: actionId, approval_request_id: actionId,
     action_execution_id: actionId, workflow_id: null, event_key: "action:1:succeeded",
+    goal_id: null,
     occurred_at: "2026-10-02T08:00:00Z", ...overrides,
   };
 }
