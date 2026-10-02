@@ -36,6 +36,7 @@ function sourceLabel(kind: string): string {
     case "gmail_message": return "Gmail";
     case "sheet_row": return "Sheet row";
     case "sheet_range": return "Sheet range";
+    case "knowledge_chunk": return "Company document";
     default: return "CrazyLoops";
   }
 }

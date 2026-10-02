@@ -4,11 +4,13 @@ import { GENERATED_DOCUMENTS_BUCKET } from "@/lib/document-storage";
 import { captureOperationalError, captureOperationalEvent } from "@/lib/observability";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revokeAllUserConnections } from "@/lib/connectors/connection-vault";
+import { cleanupCompanyKnowledgeForAccountDeletion } from "@/lib/knowledge";
 
 const RETRYABLE_FAILURES = new Set([
   "storage_cleanup_failed",
   "connector_revocation_failed",
   "connector_cleanup_failed",
+  "knowledge_cleanup_failed",
   "database_cleanup_failed",
   "identity_cleanup_failed",
   "completion_record_failed",
@@ -69,6 +71,8 @@ async function retryDeletionJob(job: {
     catch { throw new Error("connector_revocation_failed"); }
     const { data: connectorCleaned, error: connectorCleanupError } = await admin.rpc("cleanup_connector_account_data", { p_user_id: job.user_id });
     if (connectorCleanupError || !connectorCleaned) throw new Error("connector_cleanup_failed");
+    try { await cleanupCompanyKnowledgeForAccountDeletion(job.user_id); }
+    catch { throw new Error("knowledge_cleanup_failed"); }
     const { data: cleaned, error: cleanupError } = await admin.rpc("cleanup_account_data", {
       p_job_id: job.id,
       p_user_id: job.user_id,

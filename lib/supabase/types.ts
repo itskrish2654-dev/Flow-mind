@@ -9,6 +9,41 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      knowledge_documents: {
+        Row: {
+          id: string; workspace_id: string; uploaded_by_user_id: string | null;
+          title: string; filename: string; mime_type: string; size_bytes: number;
+          sha256: string; storage_path: string;
+          status: "processing" | "ready" | "failed" | "deleting";
+          page_count: number | null; character_count: number | null;
+          chunk_count: number | null; failure_reason: string | null;
+          created_at: string; updated_at: string;
+        };
+        Insert: {
+          id?: string; workspace_id: string; uploaded_by_user_id?: string | null;
+          title: string; filename: string; mime_type: string; size_bytes: number;
+          sha256: string; storage_path: string;
+          status?: "processing" | "ready" | "failed" | "deleting";
+          page_count?: number | null; character_count?: number | null;
+          chunk_count?: number | null; failure_reason?: string | null;
+          created_at?: string; updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["knowledge_documents"]["Insert"]>;
+        Relationships: [];
+      };
+      knowledge_chunks: {
+        Row: {
+          id: string; workspace_id: string; document_id: string;
+          chunk_index: number; page_number: number | null; content: string;
+          search_vector: unknown;
+        };
+        Insert: {
+          id?: string; workspace_id: string; document_id: string;
+          chunk_index: number; page_number?: number | null; content: string;
+        };
+        Update: Record<PropertyKey, never>;
+        Relationships: [];
+      };
       activity_events: {
         Row: {
           id: number;
@@ -898,6 +933,13 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      search_company_knowledge: {
+        Args: { p_actor_user_id: string; p_workspace_id: string; p_query: string; p_limit?: number };
+        Returns: Array<{
+          chunk_id: string; document_id: string; document_title: string;
+          chunk_index: number; page_number: number | null; content: string; rank: number;
+        }>;
+      };
       claim_ask_turn: {
         Args: {
           p_actor_user_id: string;

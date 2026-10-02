@@ -1,4 +1,4 @@
-const ALLOWED_PREFIXES = ["/dashboard", "/settings", "/my-day", "/ask", "/connections"];
+const ALLOWED_PREFIXES = ["/dashboard", "/settings", "/my-day", "/ask", "/connections", "/knowledge"];
 
 export function safeAuthReturnPath(value: string | string[] | null | undefined) {
   const candidate = Array.isArray(value) ? value[0] : value;

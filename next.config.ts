@@ -31,6 +31,7 @@ const contentSecurityPolicy = [
 ].join("; ");
 
 const nextConfig: NextConfig = {
+  serverExternalPackages: ["pdfjs-dist"],
   turbopack: {
     root: process.cwd(),
   },
@@ -41,6 +42,7 @@ const nextConfig: NextConfig = {
       "./node_modules/@fontsource/noto-sans-jp/files/*.woff",
       "./node_modules/@fontsource/noto-sans-jp/unicode.json",
       "./node_modules/pdfkit/js/data/*.afm",
+      "./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
     ],
   },
   async headers() {

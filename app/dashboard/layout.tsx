@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Building2,
+  BookOpenText,
   CheckCircle2,
   Clock3,
   LoaderCircle,
@@ -229,6 +230,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Link href="/activity" onClick={() => setMobileNavOpen(false)} aria-current={pathname === "/activity" ? "page" : undefined} className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl text-xs font-semibold ${pathname === "/activity" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-700 hover:bg-[#f8f4ec]"}`}><History className="size-4" />Activity</Link>
               <Link href="/dashboard" onClick={() => setMobileNavOpen(false)} aria-current={pathname === "/dashboard" ? "page" : undefined} className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl text-xs font-semibold ${pathname === "/dashboard" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-700 hover:bg-[#f8f4ec]"}`}><LayoutDashboard className="size-4" />Workflows</Link>
               <Link href="/connections" onClick={() => setMobileNavOpen(false)} aria-current={pathname === "/connections" ? "page" : undefined} className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl text-xs font-semibold ${pathname === "/connections" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-700 hover:bg-[#f8f4ec]"}`}><PlugZap className="size-4" />Connections</Link>
+              <Link href="/knowledge" onClick={() => setMobileNavOpen(false)} aria-current={pathname.startsWith("/knowledge") ? "page" : undefined} className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl text-xs font-semibold ${pathname.startsWith("/knowledge") ? "bg-[#fff7dc] text-[#725300]" : "text-slate-700 hover:bg-[#f8f4ec]"}`}><BookOpenText className="size-4" />Knowledge</Link>
             </div>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
@@ -275,6 +277,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </Link>
             <Link href="/connections" aria-current={pathname === "/connections" ? "page" : undefined} className={`flex h-9 items-center justify-center gap-1 rounded-lg text-[9px] font-semibold transition ${pathname === "/connections" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-500 hover:bg-[#fff7dc] hover:text-[#725300]"}`}>
               <PlugZap className="size-3.5" />Connections
+            </Link>
+            <Link href="/knowledge" aria-current={pathname.startsWith("/knowledge") ? "page" : undefined} className={`flex h-9 items-center justify-center gap-1 rounded-lg text-[9px] font-semibold transition ${pathname.startsWith("/knowledge") ? "bg-[#fff7dc] text-[#725300]" : "text-slate-500 hover:bg-[#fff7dc] hover:text-[#725300]"}`}>
+              <BookOpenText className="size-3.5" />Knowledge
             </Link>
           </nav>
         </div>

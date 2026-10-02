@@ -9,6 +9,7 @@ import {
   AskResponseMetadataSchema,
   deterministicThreadTitle,
   isAskActionOutcomeQuestion,
+  selectAskTools,
   runGroundedAsk,
   unsupportedAskResponse,
   type AskGroundedResponse,
@@ -308,7 +309,9 @@ async function generateResponse(auth: AuthContext, question: string, history: As
     supabase: auth.supabase,
   }, question);
   if (action) return action;
-  const externalCapabilityId = requestedExternalCapability(question);
+  const isKnowledgeRead = selectAskTools(question).includes("company_knowledge")
+    && !/\b(?:send|reply|post|notify|add|append|update|write|create)\b/i.test(question);
+  const externalCapabilityId = isKnowledgeRead ? null : requestedExternalCapability(question);
   if (externalCapabilityId) {
     const capability = getCapability(externalCapabilityId);
     if (!capability?.supported || !capability.availableInProduction) {
