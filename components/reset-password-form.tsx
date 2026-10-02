@@ -35,7 +35,7 @@ export function ResetPasswordForm() {
       <span className="flex size-11 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd] text-[#8a6200]"><LockKeyhole className="size-5" /></span>
       <h1 className="mt-6 text-2xl font-semibold tracking-tight text-slate-950">Choose a new password</h1>
       <p className="mt-2 text-sm leading-6 text-slate-600">Use at least 12 characters with uppercase, lowercase, a number, and a symbol.</p>
-      <form onSubmit={(event) => void submit(event)} className="mt-7 space-y-4">
+      <form method="post" onSubmit={(event) => void submit(event)} className="mt-7 space-y-4">
         <label className="block text-xs font-semibold text-slate-700">New password
           <input type="password" autoComplete="new-password" minLength={12} required value={password} onChange={(event) => setPassword(event.target.value)} className="mt-2 h-11 w-full rounded-xl border border-[#ddd5c9] bg-[#faf8f4] px-3.5 text-sm outline-none focus:border-[#d7aa2f] focus:ring-4 focus:ring-[#f4e5ad]" />
         </label>

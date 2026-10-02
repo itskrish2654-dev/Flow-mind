@@ -9,6 +9,41 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      activity_events: {
+        Row: {
+          id: number;
+          workspace_id: string;
+          owner_user_id: string;
+          actor_user_id: string | null;
+          visibility: "private" | "workspace";
+          event_type: string;
+          source_type: "work_item" | "approval" | "action" | "workflow_execution";
+          source_id: string;
+          work_item_id: string | null;
+          approval_request_id: string | null;
+          action_execution_id: string | null;
+          workflow_id: string | null;
+          event_key: string;
+          occurred_at: string;
+        };
+        Insert: {
+          workspace_id: string;
+          owner_user_id: string;
+          actor_user_id?: string | null;
+          visibility: "private" | "workspace";
+          event_type: string;
+          source_type: "work_item" | "approval" | "action" | "workflow_execution";
+          source_id: string;
+          work_item_id?: string | null;
+          approval_request_id?: string | null;
+          action_execution_id?: string | null;
+          workflow_id?: string | null;
+          event_key: string;
+          occurred_at?: string;
+        };
+        Update: Record<PropertyKey, never>;
+        Relationships: [];
+      };
       ask_threads: {
         Row: {
           id: string;

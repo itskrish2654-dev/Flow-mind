@@ -1,6 +1,8 @@
 import "server-only";
 
 import { getAuthenticatedContext } from "@/lib/auth";
+import { activityEventTypesForQuestion, activityLabel, activityOutcome } from "@/lib/activity-core";
+import { listCurrentWorkspaceActivity } from "@/lib/activity";
 import { buildAskMyDayToolResult } from "@/lib/ask-my-day";
 import {
   ASK_LIMITS,
@@ -105,10 +107,6 @@ async function loadApprovals(scope: AskTrustedScope): Promise<AskToolResult> {
   };
 }
 
-function uuidFromCompositeId(value: string): string | null {
-  return value.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i)?.[0] ?? null;
-}
-
 async function loadMyDay(scope: AskTrustedScope): Promise<AskToolResult> {
   await assertTrustedScope(scope);
   const [data, currentWorkItems] = await Promise.all([
@@ -168,32 +166,28 @@ async function loadWorkflowStatus(scope: AskTrustedScope): Promise<AskToolResult
   };
 }
 
-async function loadRecentActivity(scope: AskTrustedScope): Promise<AskToolResult> {
+async function loadRecentActivity(scope: AskTrustedScope, question: string): Promise<AskToolResult> {
   await assertTrustedScope(scope);
-  const data = await loadMyDayData();
+  const data = await listCurrentWorkspaceActivity("all", null, activityEventTypesForQuestion(question));
   if (!data) throw new Error("Recent activity is unavailable.");
   return {
     tool: "recent_activity",
-    summary: `${data.recentActivity.length} recent CrazyLoops event${data.recentActivity.length === 1 ? "" : "s"} are available.`,
-    records: data.recentActivity.slice(0, ASK_LIMITS.recordsPerTool).flatMap((item, index) => {
-      const id = uuidFromCompositeId(item.id);
-      if (!id) return [];
-      const kind: AskReferenceKind = item.id.startsWith("execution:") ? "execution" : "workflow";
-      return [safeRecord({
-        key: `${kind}:${index}`,
-        kind,
-        id,
-        label: item.source,
-        href: item.cta.href,
+    summary: `${data.events.length} recent durable CrazyLoops event${data.events.length === 1 ? "" : "s"} are available${data.nextCursor !== null ? " in this bounded page; older events were not read" : ""}.`,
+    records: data.events.slice(0, ASK_LIMITS.recordsPerTool).map((event, index) => safeRecord({
+        key: `activity:${index}`,
+        kind: "activity",
+        id: event.source_id,
+        label: activityLabel(event),
+        href: `/activity?entry=${event.id}`,
         facts: {
-          event: item.title,
-          description: item.description,
-          status: item.status,
-          workflow: item.source,
-          timestamp: item.timestamp,
+          event: activityLabel(event),
+          status: activityOutcome(event),
+          sourceType: event.source_type,
+          visibility: event.visibility,
+          timestamp: event.occurred_at,
+          providerAcknowledged: event.event_type === "action_succeeded" ? "yes" : event.event_type.startsWith("action_") ? "not confirmed" : undefined,
         },
-      })];
-    }),
+      })),
   };
 }
 
@@ -354,7 +348,7 @@ export async function executeAskTool(tool: AskToolId, scope: AskTrustedScope, qu
     case "work_items": return loadWorkItems(scope);
     case "pending_approvals": return loadApprovals(scope);
     case "workflow_status": return loadWorkflowStatus(scope);
-    case "recent_activity": return loadRecentActivity(scope);
+    case "recent_activity": return loadRecentActivity(scope, question);
     case "action_activity": return loadActionActivity(scope);
     case "gmail_search": return loadGmail(scope, question);
     case "sheets_search": return loadSheets(scope, question);

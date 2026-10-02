@@ -275,6 +275,7 @@ export function MyDayView({ data, actionError = false, approvalActionError = fal
               items={data.recentActivity}
               empty="Your workflow runs and approved actions will appear here."
             />
+            <Link href="/activity" className="mt-3 inline-flex min-h-11 items-center rounded-xl px-3 text-sm font-semibold text-[#725300] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#725300]">See the full trust trail in Activity</Link>
           </div>
         </div>
 

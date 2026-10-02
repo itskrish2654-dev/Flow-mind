@@ -13,6 +13,7 @@ import {
   MessageCircle,
   Plus,
   Gauge,
+  History,
   LifeBuoy,
   LayoutDashboard,
   Settings,
@@ -225,6 +226,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div className="mt-3 grid grid-cols-2 gap-1">
               <Link href="/my-day" onClick={() => setMobileNavOpen(false)} aria-current={pathname === "/my-day" ? "page" : undefined} className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl text-xs font-semibold ${pathname === "/my-day" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-700 hover:bg-[#f8f4ec]"}`}><SunMedium className="size-4" />My Day</Link>
               <Link href="/ask" onClick={() => setMobileNavOpen(false)} aria-current={pathname === "/ask" ? "page" : undefined} className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl text-xs font-semibold ${pathname === "/ask" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-700 hover:bg-[#f8f4ec]"}`}><MessageCircle className="size-4" />Ask</Link>
+              <Link href="/activity" onClick={() => setMobileNavOpen(false)} aria-current={pathname === "/activity" ? "page" : undefined} className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl text-xs font-semibold ${pathname === "/activity" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-700 hover:bg-[#f8f4ec]"}`}><History className="size-4" />Activity</Link>
               <Link href="/dashboard" onClick={() => setMobileNavOpen(false)} aria-current={pathname === "/dashboard" ? "page" : undefined} className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl text-xs font-semibold ${pathname === "/dashboard" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-700 hover:bg-[#f8f4ec]"}`}><LayoutDashboard className="size-4" />Workflows</Link>
               <Link href="/connections" onClick={() => setMobileNavOpen(false)} aria-current={pathname === "/connections" ? "page" : undefined} className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl text-xs font-semibold ${pathname === "/connections" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-700 hover:bg-[#f8f4ec]"}`}><PlugZap className="size-4" />Connections</Link>
             </div>
@@ -264,6 +266,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </Link>
             <Link href="/ask" aria-current={pathname === "/ask" ? "page" : undefined} className={`flex h-9 items-center justify-center gap-1 rounded-lg text-[9px] font-semibold transition ${pathname === "/ask" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-500 hover:bg-[#f8f4ec] hover:text-slate-800"}`}>
               <MessageCircle className="size-3.5" />Ask
+            </Link>
+            <Link href="/activity" aria-current={pathname === "/activity" ? "page" : undefined} className={`flex h-9 items-center justify-center gap-1 rounded-lg text-[9px] font-semibold transition ${pathname === "/activity" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-500 hover:bg-[#f8f4ec] hover:text-slate-800"}`}>
+              <History className="size-3.5" />Activity
             </Link>
             <Link href="/dashboard" aria-current={pathname === "/dashboard" ? "page" : undefined} className={`flex h-9 items-center justify-center gap-1 rounded-lg text-[9px] font-semibold transition ${pathname === "/dashboard" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-500 hover:bg-[#f8f4ec] hover:text-slate-800"}`}>
               <LayoutDashboard className="size-3.5" />Workflows

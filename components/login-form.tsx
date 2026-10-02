@@ -164,7 +164,7 @@ export function LoginForm({
             <p className="mt-2 text-sm leading-6 text-slate-500">{description}</p>
           </div>
 
-          <form onSubmit={(event) => void submit(event)} className="mt-6 space-y-4">
+          <form method="post" onSubmit={(event) => void submit(event)} className="mt-6 space-y-4">
             <div>
               <label htmlFor="email" className="text-xs font-semibold text-slate-700">Email address</label>
               <div className="relative mt-2"><Mail className="absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-slate-400" /><input id="email" name="email" type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" className="h-11 w-full rounded-xl border border-[#ddd5c9] bg-[#faf8f4] pl-10 pr-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-[#cfc5b6] focus:border-[#d7aa2f] focus:bg-white focus:ring-4 focus:ring-[#f4e5ad]" /></div>

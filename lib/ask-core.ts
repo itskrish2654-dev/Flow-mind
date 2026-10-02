@@ -46,6 +46,7 @@ export const AskReferenceKindSchema = z.enum([
   "workflow",
   "execution",
   "action_execution",
+  "activity",
   "gmail_message",
   "sheet_row",
   "sheet_range",
@@ -53,7 +54,7 @@ export const AskReferenceKindSchema = z.enum([
 export type AskReferenceKind = z.infer<typeof AskReferenceKindSchema>;
 
 const InternalHrefSchema = z.string().max(500).refine(
-  (value) => /^\/(?:my-day|dashboard|connections)(?:[/?#][^\s]*)?$/.test(value),
+  (value) => /^\/(?:my-day|dashboard|connections|activity)(?:[/?#][^\s]*)?$/.test(value),
   "Reference links must stay inside CrazyLoops.",
 );
 
@@ -94,7 +95,7 @@ export type AskResponseMetadata = z.infer<typeof AskResponseMetadataSchema>;
 export const AskModelOutputSchema = z.object({
   responseType: z.enum(ASK_MODEL_RESPONSE_TYPES),
   answer: z.string().trim().min(1).max(ASK_LIMITS.modelAnswerCharacters),
-  referenceKeys: z.array(z.string().regex(/^(?:work_item|approval|workflow|execution|action_execution|gmail_message|sheet_row|sheet_range):\d+$/)).max(12),
+  referenceKeys: z.array(z.string().regex(/^(?:work_item|approval|workflow|execution|action_execution|activity|gmail_message|sheet_row|sheet_range):\d+$/)).max(12),
   clarificationRequired: z.boolean(),
   suggestedAction: AskSuggestedActionSchema.optional(),
 }).strict();
@@ -117,7 +118,7 @@ export const ASK_MODEL_OUTPUT_CONTRACT_INSTRUCTION = [
   `"responseType" must be exactly ${ASK_MODEL_RESPONSE_TYPES.map((value) => `"${value}"`).join(" or ")}. "answer" must be a non-empty string. "clarificationRequired" must be a boolean.`,
   '"referenceKeys" must be an array containing only reference keys supplied in the retrieved records.',
   'If the requested fact is not present in the supplied records, say that the information is not available, use "responseType":"clarification", set "clarificationRequired":true, use an empty "referenceKeys" array, and omit "suggestedAction".',
-  'When a useful safe internal action exists, "suggestedAction" must be exactly an object with two fields: {"label":"non-empty text","href":"internal path"}. Its href must begin with /my-day, /dashboard, or /connections. Otherwise omit "suggestedAction" entirely. Never return null, a string, an external URL, or extra fields for "suggestedAction".',
+  'When a useful safe internal action exists, "suggestedAction" must be exactly an object with two fields: {"label":"non-empty text","href":"internal path"}. Its href must begin with /my-day, /dashboard, /activity, or /connections. Otherwise omit "suggestedAction" entirely. Never return null, a string, an external URL, or extra fields for "suggestedAction".',
   `Valid complete example: ${JSON.stringify(ASK_MODEL_OUTPUT_CONTRACT_EXAMPLE)}`,
 ].join(" ");
 
@@ -206,7 +207,7 @@ export function selectAskTools(question: string): AskToolId[] {
   if (/waiting|handled|task|work item|needs you/.test(text)) tools.push("work_items");
   if (generalAttention) tools.push("my_day", "pending_approvals");
   if (explicitWorkflow || /failed|failure|problem|broken/.test(text)) tools.push("workflow_status");
-  if (/activity|what happened|completed|run|\brecent(?:ly)?\b/.test(text)) tools.push("recent_activity");
+  if (/activity|what happened|completed|run|\brecent(?:ly)?\b|what did crazyloops do|actions? failed|uncertain outcome|after i approved/.test(text)) tools.push("recent_activity");
   const actionOutcome = isAskActionOutcomeQuestion(question);
   if (actionOutcome && (!tools.includes("gmail_search")
     || /\b(?:crazyloops|you)\b|\baction (?:status|outcome|result)\b/.test(text))) tools.push("action_activity");
@@ -365,8 +366,8 @@ function emptyAnswer(tools: readonly AskToolId[]): string {
   if (tools.includes("gmail_search")) return "I found no matching Gmail messages in the bounded recent mailbox search.";
   if (tools.includes("my_day")) return "There is nothing in CrazyLoops that needs your attention right now.";
   if (tools.includes("pending_approvals")) return "You have no pending approvals in CrazyLoops right now.";
+  if (tools.includes("recent_activity")) return "I found no matching Activity in the bounded recent history I checked.";
   if (tools.includes("workflow_status")) return "I found no current workflow problems in your CrazyLoops workspace.";
-  if (tools.includes("recent_activity")) return "There is no recent CrazyLoops activity to report yet.";
   if (tools.includes("work_items")) return "I found no matching open Work Items for you right now.";
   return "There is nothing in CrazyLoops that needs your attention right now.";
 }
