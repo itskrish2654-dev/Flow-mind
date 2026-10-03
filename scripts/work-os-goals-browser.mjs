@@ -23,7 +23,8 @@ const tables = ["workspaces", "workspace_memberships", "goals", "goal_plans", "g
   "action_executions", "activity_events", "knowledge_documents", "knowledge_chunks",
   "workspace_invitations", "connector_connections", "connector_connection_credentials",
   "gmail_ingestion_states", "gmail_push_receipts"];
-const created = { users: [], workspaces: [], knowledgePath: null, knowledgeId: null };
+const created = { users: [], workspaces: [], knowledgePath: null, knowledgeId: null,
+  knowledgeDigest: null, knowledgeWorkspaceId: null };
 let baseline = {};
 let cleanupPassed = true;
 const results = [];
@@ -84,23 +85,24 @@ async function dataApi(browserSession, path, options = {}) {
       ...options.headers },
   });
 }
-async function addKnowledge(owner) {
+async function addKnowledge(owner, page) {
   const content = Buffer.from("Customer support hiring procedure: the recruitment manager reviews the final role description before publishing. Interview notes must be reviewed before a written offer is sent. Written offer acceptance confirms each hire.");
-  const documentId = randomUUID();
-  const path = `${owner.workspaceId}/${documentId}/Hiring-SOP.txt`;
-  await checked(await admin.storage.from("company_knowledge").upload(path, content,
-    { contentType: "text/plain", upsert: false }), "upload synthetic SOP");
-  created.knowledgePath = path;
-  await checked(await admin.from("knowledge_documents").insert({ id: documentId,
-    workspace_id: owner.workspaceId, uploaded_by_user_id: owner.id,
-    title: "Customer Support Hiring SOP", filename: "Hiring-SOP.txt", mime_type: "text/plain",
-    size_bytes: content.byteLength, sha256: createHash("sha256").update(content).digest("hex"),
-    storage_path: path, status: "ready", character_count: content.length, chunk_count: 1,
-  }), "index synthetic SOP");
-  created.knowledgeId = documentId;
-  await checked(await admin.from("knowledge_chunks").insert({ id: randomUUID(), workspace_id: owner.workspaceId,
-    document_id: documentId, chunk_index: 0, content: content.toString("utf8") }), "index SOP chunk");
-  return documentId;
+  created.knowledgeDigest = createHash("sha256").update(content).digest("hex");
+  created.knowledgeWorkspaceId = owner.workspaceId;
+  await page.goto(`${origin}/knowledge`);
+  await page.locator("#knowledge-file").setInputFiles({ name: "Customer Support Hiring SOP.txt",
+    mimeType: "text/plain", buffer: content });
+  await page.getByRole("button", { name: "Upload", exact: true }).click();
+  await page.getByRole("status").getByText("Document indexed and ready for Ask.").waitFor({ timeout: 60_000 });
+  const document = await checked(await admin.from("knowledge_documents")
+    .select("id,storage_path,status,uploaded_by_user_id")
+    .eq("workspace_id", owner.workspaceId)
+    .eq("sha256", created.knowledgeDigest).single(), "uploaded SOP");
+  assert.equal(document.status, "ready");
+  assert.equal(document.uploaded_by_user_id, owner.id);
+  created.knowledgeId = document.id;
+  created.knowledgePath = document.storage_path;
+  return document.id;
 }
 
 try {
@@ -109,7 +111,6 @@ try {
   const owner = await createAccount();
   const member = await createAccount();
   const outsider = await createAccount();
-  const knowledgeId = await addKnowledge(owner);
   const ownerBrowser = await login(owner);
   const memberBrowser = await login(member);
   const outsiderBrowser = await login(outsider);
@@ -135,6 +136,12 @@ try {
   } else {
     await joinAccount(member, owner.workspaceId, "member");
   }
+
+  const knowledgeId = await addKnowledge(owner, ownerBrowser.page);
+  await memberBrowser.page.goto(`${origin}/knowledge`);
+  await memberBrowser.page.getByRole("heading", { name: "Customer Support Hiring SOP" }).waitFor();
+  assert.equal(await memberBrowser.page.locator("#knowledge-file").count(), 0);
+  results.push("OWNER_KNOWLEDGE_UPLOAD_MEMBER_READ_NO_MEMBER_MANAGE=PASS");
 
   await ownerBrowser.page.goto(`${origin}/goals`);
   await ownerBrowser.page.getByRole("heading", { name: "Goals", exact: true }).waitFor();
@@ -310,6 +317,12 @@ try {
   await ownerBrowser.context.close(); await memberBrowser.context.close(); await outsiderBrowser.context.close();
   console.log(results.join("\n"));
 } finally {
+  if (created.knowledgeDigest && !created.knowledgeId) {
+    const { data, error } = await admin.from("knowledge_documents").select("id,storage_path")
+      .eq("workspace_id", created.knowledgeWorkspaceId).eq("sha256", created.knowledgeDigest).maybeSingle();
+    if (error) cleanupPassed = false;
+    if (data) { created.knowledgeId = data.id; created.knowledgePath = data.storage_path; }
+  }
   if (created.knowledgeId) {
     const { error } = await admin.from("knowledge_documents").delete().eq("id", created.knowledgeId);
     if (error) cleanupPassed = false;
