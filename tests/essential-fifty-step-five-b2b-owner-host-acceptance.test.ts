@@ -11,7 +11,8 @@ import { bodyDigest, transportSignature } from "../services/connector-runner/src
 
 const ROOT = resolve(import.meta.dirname, "..");
 const HARNESS_PATH = resolve(ROOT, "scripts/e50-step5b2b-runner-supervisor-host-acceptance.sh");
-const HARNESS = readFileSync(HARNESS_PATH, "utf8");
+// Git's Windows checkout may use CRLF; the owner-host Bash script is evaluated as lines.
+const HARNESS = readFileSync(HARNESS_PATH, "utf8").replace(/\r\n/g, "\n");
 
 function section(start: string, end: string) {
   const startIndex = HARNESS.indexOf(start);

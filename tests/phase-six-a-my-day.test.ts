@@ -489,7 +489,7 @@ test("Phase 6A activity is bounded, newest first, and cannot surface raw secret 
 
 test("Phase 6A capability truth preserves connector maturity transitions", () => {
   assert.equal(CAPABILITY_REGISTRY.gmail_new_email.maturity, "AVAILABLE");
-  assert.equal(CAPABILITY_REGISTRY.google_sheets_add_row.maturity, "AVAILABLE");
+  assert.equal(CAPABILITY_REGISTRY.google_sheets_add_row.maturity, "TEST_ONLY");
   assert.equal(CAPABILITY_REGISTRY.google_sheets_add_row.plannerVisible, false);
   assert.equal(CAPABILITY_REGISTRY.slack_new_channel_message.maturity, "REVIEWED");
   assert.equal(CAPABILITY_REGISTRY.notion_page_created_or_added.maturity, "REVIEWED");

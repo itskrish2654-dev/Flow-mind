@@ -29,6 +29,7 @@ const ACTION_EXECUTION_VIEW_COLUMNS = [
 ].join(",");
 
 function acceptanceHarnessEnabled() {
+  if (process.env.NODE_ENV === "production") return false;
   if (process.env.WORK_OS_ACTION_ACCEPTANCE_ENABLED !== "true") return false;
   try {
     return new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "").hostname === "localhost";

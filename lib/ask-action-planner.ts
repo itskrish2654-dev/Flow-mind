@@ -16,6 +16,7 @@ import type { Database } from "@/lib/supabase/types";
 type Scope = { userId: string; workspaceId: string; supabase: SupabaseClient<Database> };
 
 function acceptanceHarnessEnabled() {
+  if (process.env.NODE_ENV === "production") return false;
   if (process.env.WORK_OS_ACTION_ACCEPTANCE_ENABLED !== "true") return false;
   try {
     return new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "").hostname === "localhost";

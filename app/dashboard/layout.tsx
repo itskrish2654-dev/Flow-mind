@@ -220,7 +220,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <button type="button" aria-label="Open navigation menu" onClick={() => setMobileNavOpen(true)} className="fixed left-3 top-3 z-40 flex size-11 items-center justify-center rounded-xl border border-[#d8caa8] bg-[#fffdfa] text-[#272536] shadow-sm lg:hidden">
         <Menu className="size-5" />
       </button>
-      <AccessibleDialog open={mobileNavOpen} onOpenChange={setMobileNavOpen} title="CrazyLoops navigation" description="Open workflows, account settings, usage, support, or log out." side="left" contentClassName="rounded-r-3xl">
+      <AccessibleDialog open={mobileNavOpen} onOpenChange={setMobileNavOpen} title="CrazyLoops navigation" description="Open your work, goals, knowledge, connections, company settings, or account controls." side="left" contentClassName="rounded-r-3xl">
         <nav aria-label="Mobile dashboard navigation" className="flex min-h-0 flex-1 flex-col pt-16">
           <div className="border-b border-[#e4ddd2] px-4 pb-4">
             <p className="text-lg font-bold text-[#272536]">CrazyLoops</p>

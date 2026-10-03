@@ -37,6 +37,7 @@ import { PieceSupervisorService } from "../services/piece-runtime/src/supervisor
 
 const ROOT = resolve(import.meta.dirname, "..");
 const SELF_CONTAINER_NAME = "cl-piece-step5b1-supervisor";
+const readStep5B1Harness = () => readFileSync(resolve(ROOT, "scripts/e50-step5b1-supervisor-host-acceptance.sh"), "utf8").replace(/\r\n/g, "\n");
 
 function supervisorLabels() {
   return {
@@ -804,7 +805,7 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
   });
 
   test("owner harness is gated, label-scoped, UDS-only, and never deploys product", () => {
-    const harness = readFileSync(resolve(ROOT, "scripts/e50-step5b1-supervisor-host-acceptance.sh"), "utf8");
+    const harness = readStep5B1Harness();
     assert.match(harness, /E50_ACCEPT_STEP5B1/);
     assert.match(harness, /E50_EXPECTED_STEP5B1_COMMIT/);
     assert.match(harness, /353b2c4821b1b959aeb7f485beade3a5eaf219fd/);
@@ -864,7 +865,7 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
   });
 
   test("owner harness source gate explicitly permits only reviewed Step 5B.1 files", () => {
-    const harness = readFileSync(resolve(ROOT, "scripts/e50-step5b1-supervisor-host-acceptance.sh"), "utf8");
+    const harness = readStep5B1Harness();
     const match = harness.match(/\[\[ "\$file" =~ \^\(([^\r\n]+)\)\$ \]\]/);
     assert.ok(match);
     const allowlistSource = match[1];
@@ -911,7 +912,7 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
   });
 
   test("owner harness cleanup is exact-resource scoped and safe on preflight failure", () => {
-    const harness = readFileSync(resolve(ROOT, "scripts/e50-step5b1-supervisor-host-acceptance.sh"), "utf8");
+    const harness = readStep5B1Harness();
     const cleanup = harness.match(/\ncleanup\(\) \{\n([\s\S]*?)\n\}/)?.[1];
     assert.ok(cleanup);
     assert.doesNotMatch(cleanup, /docker ps -aq|docker network ls -q/);
@@ -939,7 +940,7 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
   });
 
   test("owner harness transfers directory ownership and reaches UDS through isolated helpers", () => {
-    const harness = readFileSync(resolve(ROOT, "scripts/e50-step5b1-supervisor-host-acceptance.sh"), "utf8");
+    const harness = readStep5B1Harness();
     assert.doesNotMatch(harness, /^\s*chown 65532:65532 "\$CONTROL_DIR"/m);
     assert.doesNotMatch(harness, /\bsudo\b/);
     assert.match(harness, /HOST_UID="\$\(id -u\)"/);
@@ -994,7 +995,7 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
   });
 
   test("owner harness uses immutable exact identities and fail-safe observation cleanup", () => {
-    const harness = readFileSync(resolve(ROOT, "scripts/e50-step5b1-supervisor-host-acceptance.sh"), "utf8");
+    const harness = readStep5B1Harness();
     assert.match(harness, /OBSERVATION_GATEWAY_ID=''/);
     assert.match(harness, /OBSERVATION_GATEWAY_PAUSED=0/);
     assert.match(harness, /OBSERVATION_SUPERVISOR_ID=''/);
@@ -1106,7 +1107,7 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
   });
 
   test("owner harness freezes the supervisor across the strict real-ready transition", () => {
-    const harness = readFileSync(resolve(ROOT, "scripts/e50-step5b1-supervisor-host-acceptance.sh"), "utf8");
+    const harness = readStep5B1Harness();
     const docs = readFileSync(resolve(ROOT, "docs/piece-runtime/SUPERVISOR_V1.md"), "utf8");
     assert.match(harness, /READY_TRANSITION_TIMEOUT_MS=750/);
 
@@ -1205,7 +1206,7 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
   });
 
   test("post-release acceptance checks fail with bounded stage diagnostics", () => {
-    const harness = readFileSync(resolve(ROOT, "scripts/e50-step5b1-supervisor-host-acceptance.sh"), "utf8");
+    const harness = readStep5B1Harness();
     const releaseStart = harness.indexOf("printf 'OBSERVATION_RELEASED\\n'");
     const providerResult = harness.indexOf("expect_error \"$ARTIFACT_DIR/response.json\" 'PIECE_AUTH_FAILED'", releaseStart);
     assert.ok(releaseStart >= 0 && providerResult > releaseStart);
@@ -1248,7 +1249,7 @@ describe("Essential 50 Step 5B.1 private piece supervisor", () => {
   });
 
   test("gateway evidence failure diagnostics expose only bounded allowlisted facts", () => {
-    const harness = readFileSync(resolve(ROOT, "scripts/e50-step5b1-supervisor-host-acceptance.sh"), "utf8");
+    const harness = readStep5B1Harness();
     const helper = harness.match(/print_gateway_failure_diagnostics\(\) \{[\s\S]*?<<'NODE'\r?\n([\s\S]*?)\r?\nNODE\r?\n\}/)?.[1] ?? "";
     assert.ok(helper);
     assert.match(helper, /MAX_GATEWAY_LOG_BYTES = 256 \* 1024/);

@@ -20,6 +20,7 @@ function unavailable() {
 }
 
 export async function GET(request: Request) {
+  if (process.env.NODE_ENV === "production") return unavailable();
   const requestUrl = new URL(request.url);
   if (requestUrl.search) return unavailable();
 

@@ -233,7 +233,7 @@ test("7B-23. Google 429 and ambiguous write outcomes remain truthful", async () 
   assert.match(api, /externallyDelivered: false/);
 });
 
-test("7B-24. Gmail and Sheets capabilities are available, but Sheets workflow planning stays unsupported", () => {
+test("7B-24. Gmail is pilot-ready while Sheets remains an engineering-only capability", () => {
   const storePrompt = "When a new Gmail message arrives, store it inside CrazyLoops.";
   const storePlan = planWorkflow(storePrompt);
   assert.equal(storePlan.status, "READY_TO_COMPILE");
@@ -241,7 +241,8 @@ test("7B-24. Gmail and Sheets capabilities are available, but Sheets workflow pl
   const sheetsPlan = planWorkflow(sheetsPrompt);
   assert.equal(sheetsPlan.status, "UNSUPPORTED");
   assert.equal(assessCapability("gmail_new_email", "test").available, true);
-  assert.equal(assessCapability("google_sheets_add_row", "production").available, true);
+  assert.equal(assessCapability("google_sheets_add_row", "test").available, true);
+  assert.equal(assessCapability("google_sheets_add_row", "production").available, false);
 });
 
 test("7B-25. product workflow planning exposes Gmail but keeps Sheets out of the builder", () => {

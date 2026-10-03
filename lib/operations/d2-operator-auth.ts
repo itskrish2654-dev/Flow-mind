@@ -30,6 +30,8 @@ export function isD2OperatorAuthorized(input: {
   enabledName: string;
   secretName: string;
 }): boolean {
+  // D2 owner acceptance is confined to isolated local/test runtimes.
+  if (input.environment.NODE_ENV === "production") return false;
   if (input.environment[input.enabledName] !== "true") return false;
   const secret = input.environment[input.secretName] ?? "";
   if (

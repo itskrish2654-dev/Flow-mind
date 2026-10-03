@@ -148,6 +148,19 @@ test("6B.1D-A acceptance is disabled by default", () => {
   assert.deepEqual(readGmailLiveAcceptancePolicy({}), { status: "disabled", config: null });
 });
 
+test("6B.1D-A2 production runtime cannot enable local acceptance even with complete settings", () => {
+  const environment = validEnvironment({ NODE_ENV: "production" });
+  assert.deepEqual(readGmailLiveAcceptancePolicy(environment), { status: "disabled", config: null });
+  assert.equal(isGmailLiveAcceptanceOwner(OWNER_ID, environment), false);
+  assert.equal(isGmailLiveAcceptanceOperatorAuthorized(`Bearer ${OPERATOR_SECRET}`, environment), false);
+  assert.equal(getGmailLiveAcceptanceCallbackContext({
+    connectorId: GMAIL_LIVE_ACCEPTANCE_CONNECTOR_ID,
+    userId: OWNER_ID,
+    oauth: acceptanceState(),
+    environment,
+  }), null);
+});
+
 test("6B.1D-B only exact lowercase true enables the policy", () => {
   for (const value of [undefined, "", "false", "TRUE", "True", "1", "yes"]) {
     assert.equal(

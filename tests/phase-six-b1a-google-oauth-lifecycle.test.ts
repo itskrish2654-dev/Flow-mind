@@ -284,8 +284,12 @@ test("6B.1A-13 Gmail and Sheets share an account but remain scope-isolated", () 
     "ADDITIONAL_SCOPE_REQUIRED",
   );
   assert.equal(
-    assessConnectorPlan(sheets.manifest, sheets.manifest.actions[0], [connection], "production", connection.id).status,
+    assessConnectorPlan(sheets.manifest, sheets.manifest.actions[0], [connection], "test", connection.id).status,
     "SUPPORTED",
+  );
+  assert.equal(
+    assessConnectorPlan(sheets.manifest, sheets.manifest.actions[0], [connection], "production", connection.id).status,
+    "UNSUPPORTED",
   );
   assert.deepEqual(
     unionGoogleScopes([GOOGLE_SCOPES.driveFile], [GOOGLE_SCOPES.gmailSend], GOOGLE_LEGACY_SHEETS_SCOPE),

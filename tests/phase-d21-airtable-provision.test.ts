@@ -101,6 +101,16 @@ test("D2.1 provisioner is disabled by default and rejects unauthorized callers b
   assert.deepEqual(fixture.calls, { finds: [], inserts: [], stores: [], cleanups: [] });
 });
 
+test("D2.1 production runtime rejects even a correctly signed acceptance request before provisioning", async () => {
+  const fixture = dependencyFixture();
+  const response = await handleAirtableProvisionPost(request(), {
+    environment: environment({ NODE_ENV: "production" }),
+    dependencies: fixture.dependencies,
+  });
+  assert.equal(response.status, 401);
+  assert.deepEqual(fixture.calls, { finds: [], inserts: [], stores: [], cleanups: [] });
+});
+
 test("D2.1 provision secret must be long, dedicated, and independent", async () => {
   for (const badEnvironment of [
     environment({ D2_AIRTABLE_PROVISION_SECRET: "short" }),

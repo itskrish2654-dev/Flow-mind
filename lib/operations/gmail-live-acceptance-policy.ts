@@ -78,6 +78,9 @@ function hasDedicatedOperatorSecret(
 export function readGmailLiveAcceptancePolicy(
   environment: GmailLiveAcceptanceEnvironment = process.env,
 ): GmailLiveAcceptancePolicy {
+  // The legacy live-acceptance mechanism is for isolated local testing only.
+  // A misconfigured staging/production environment must never activate it.
+  if (environment.NODE_ENV === "production") return { status: "disabled", config: null };
   const enabledValue = environment.PHASE6B1D_GMAIL_ACCEPTANCE_ENABLED;
   if (enabledValue !== "true") return { status: "disabled", config: null };
 

@@ -75,7 +75,7 @@ export default async function ConnectionsPage({
           </p>
           <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-950">Connections</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
-            Connect the apps CrazyLoops can use in your workflows. You choose the account for every connected step.
+            Connect Gmail to bring work into CrazyLoops and send exact approved emails. Other integrations remain unavailable until their live-provider checks are complete.
           </p>
         </div>
         <p className="max-w-xs text-xs leading-5 text-slate-500">

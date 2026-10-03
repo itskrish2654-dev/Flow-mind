@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, type FormEvent } from "react";
 import {
@@ -19,9 +20,10 @@ import {
 import { connectAirtable } from "@/app/actions/airtable-connections";
 import { disconnectConnector } from "@/app/actions/connections";
 import { AccessibleDialog } from "@/components/accessible-dialog";
-import { GoogleSpreadsheetPicker } from "@/components/google-spreadsheet-picker";
 import { getConnectorOnboarding } from "@/lib/capability-registry";
 import type { ConnectionProvider, ConnectionView } from "@/lib/connectors/connection-view";
+
+const GoogleSpreadsheetPicker = dynamic(() => import("@/components/google-spreadsheet-picker").then((module) => module.GoogleSpreadsheetPicker));
 
 type ProviderAvailability = { slack: boolean; notion: boolean; google: boolean };
 
@@ -174,6 +176,10 @@ function providerOnboarding(provider: ConnectionProvider) {
   return getConnectorOnboarding(provider === "google" ? "google_gmail" : provider);
 }
 
+function providerReadyForPilot(provider: ConnectionProvider) {
+  return provider === "google";
+}
+
 export function ConnectionsList({
   connections,
   successConnector,
@@ -212,8 +218,9 @@ export function ConnectionsList({
   const successConnection = successItems.length === 1 ? successItems[0] : null;
   const providers = (["airtable", "hubspot", "slack", "notion", "google"] as const).filter((provider) => byProvider.has(provider));
   const availableProviders = (["airtable", "slack", "notion", "google"] as const).filter(
-    (provider) => !byProvider.has(provider) && providerOnboarding(provider)?.available,
+    (provider) => providerReadyForPilot(provider) && !byProvider.has(provider) && providerOnboarding(provider)?.available,
   );
+  const sheetsReadyForPilot = Boolean(getConnectorOnboarding("google_sheets")?.available);
 
   async function submitAirtable(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -302,9 +309,9 @@ export function ConnectionsList({
           <div className="mt-4 space-y-5">
             {providers.map((provider) => {
               const items = byProvider.get(provider) ?? [];
-              const canAddAnother = (provider === "slack" || provider === "notion" || provider === "google")
+              const canAddAnother = providerReadyForPilot(provider)
                 && Boolean(providerOnboarding(provider)?.available)
-                && providerAvailability[provider];
+                && providerAvailability.google;
               return (
                 <div key={provider} className="overflow-hidden rounded-2xl border border-[#ded6ca] bg-[#fffdfa] shadow-[0_10px_32px_rgba(39,37,54,.035)]">
                   <div className="flex items-center gap-3 border-b border-[#eee8de] px-4 py-3.5 sm:px-5">
@@ -312,6 +319,7 @@ export function ConnectionsList({
                     <div className="min-w-0 flex-1">
                       <h3 className="text-base font-semibold tracking-[-0.02em] text-slate-950">{providerCopy[provider].name}</h3>
                       <p className="mt-0.5 text-xs leading-5 text-slate-500">{providerCopy[provider].description}</p>
+                      {!providerReadyForPilot(provider) && <p className="mt-1 text-xs font-medium text-amber-800">Not available in this pilot. Existing connection can be managed, but its actions are not pilot-ready.</p>}
                     </div>
                     {canAddAnother && (
                       <a
@@ -328,6 +336,7 @@ export function ConnectionsList({
                   <div className="divide-y divide-[#eee8de]">
                     {items.map((connection) => {
                       const details = statusDetails(connection.status, connection.verification);
+                      const pilotReady = providerReadyForPilot(provider) && connection.providerName === "Gmail";
                       return (
                         <article key={connection.id} className="flex flex-col gap-3 px-4 py-4 transition hover:bg-[#fffaf0] sm:flex-row sm:items-center sm:px-5">
                           <div className="min-w-0 flex-1">
@@ -336,6 +345,7 @@ export function ConnectionsList({
                               <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${details.classes}`}>
                                 <span className={`size-1.5 rounded-full ${details.dot}`} aria-hidden="true" />{details.label}
                               </span>
+                              {!pilotReady && <span className="text-[10px] font-semibold text-amber-800">Not pilot-ready</span>}
                               <span className="text-[10px] text-slate-500">{connectionFreshness(connection)}</span>
                               {connection.gmailIntakeStatus === "setting_up" && <span className="text-[10px] text-amber-700">Gmail work sync is setting up</span>}
                               {connection.gmailIntakeStatus === "needs_attention" && <span className="text-[10px] text-amber-700">Gmail work sync needs attention</span>}
@@ -410,7 +420,7 @@ export function ConnectionsList({
         </section>
       )}
 
-      <section id="google-sheets" className="mt-10" aria-labelledby="google-sheets-title">
+      {sheetsReadyForPilot ? <section id="google-sheets" className="mt-10" aria-labelledby="google-sheets-title">
         <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Selected files only</p>
         <h2 id="google-sheets-title" className="mt-1 text-lg font-semibold tracking-[-0.02em] text-slate-950">Google Sheets</h2>
         <p className="mt-2 max-w-2xl text-xs leading-5 text-slate-600">Gmail and Sheets use separate Google permissions. CrazyLoops can only use spreadsheets you explicitly choose with Google Picker; connecting an account does not grant access to your whole Drive.</p>
@@ -457,7 +467,11 @@ export function ConnectionsList({
             </a>
           )}
         </div>
-      </section>
+      </section> : <section id="google-sheets" className="mt-10 rounded-2xl border border-[#ded6ca] bg-[#fffdfa] p-5" aria-labelledby="google-sheets-title">
+        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Engineering preview</p>
+        <h2 id="google-sheets-title" className="mt-1 text-lg font-semibold text-slate-950">Google Sheets</h2>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Google Sheets is not available in this pilot while live-provider acceptance is pending. Gmail remains available separately.</p>
+      </section>}
 
       <AccessibleDialog
         open={Boolean(managed)}

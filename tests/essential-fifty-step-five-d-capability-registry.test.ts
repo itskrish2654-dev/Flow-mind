@@ -272,13 +272,14 @@ test("5D-3 maturity and mode availability remain truthful", () => {
   assert.equal(airtable.maturity, "AVAILABLE");
   assert.equal(assessCapability("airtable.create_record", "production").available, true);
   assert.equal(CAPABILITY_REGISTRY.gmail_send_email.maturity, "AVAILABLE");
-  assert.equal(CAPABILITY_REGISTRY.google_sheets_add_row.maturity, "AVAILABLE");
+  assert.equal(CAPABILITY_REGISTRY.google_sheets_add_row.maturity, "TEST_ONLY");
   assert.equal(CAPABILITY_REGISTRY.slack_send_channel_message.maturity, "REVIEWED");
   assert.equal(CAPABILITY_REGISTRY.notion_create_page.maturity, "REVIEWED");
   assert.equal(CAPABILITY_REGISTRY["internal.connector_runner_canary"].maturity, "TEST_ONLY");
   assert.equal(CAPABILITY_REGISTRY["internal.connector_runner_canary"].internalOnly, true);
   assert.equal(assessCapability("gmail_send_email", "test").available, true);
-  assert.equal(assessCapability("google_sheets_add_row", "production").available, true);
+  assert.equal(assessCapability("google_sheets_add_row", "test").available, true);
+  assert.equal(assessCapability("google_sheets_add_row", "production").available, false);
   assert.equal(CAPABILITY_REGISTRY.google_sheets_add_row.plannerVisible, false);
   assert.equal(CAPABILITY_REGISTRY.google_sheets_add_row.builderVisible, false);
   assert.equal(assessCapability("slack_send_channel_message", "test").available, false);
@@ -366,7 +367,7 @@ test("5D-6 onboarding availability is separate from execution availability", () 
   assert.deepEqual(getConnectorOnboarding("slack"), { available: false, method: "oauth2" });
   assert.deepEqual(getConnectorOnboarding("notion"), { available: false, method: "oauth2" });
   assert.deepEqual(getConnectorOnboarding("google_gmail"), { available: true, method: "oauth2" });
-  assert.deepEqual(getConnectorOnboarding("google_sheets"), { available: true, method: "oauth2" });
+  assert.deepEqual(getConnectorOnboarding("google_sheets"), { available: false, method: "oauth2" });
   assert.equal(CAPABILITY_REGISTRY["hubspot.get_contact"].availableInTest, true);
   assert.equal(CAPABILITY_REGISTRY["hubspot.get_contact"].onboarding.available, false);
 });

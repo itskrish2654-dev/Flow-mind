@@ -10,15 +10,19 @@ const raw = await readFile(new URL("../.env.local", import.meta.url), "utf8");
 const env = Object.fromEntries(raw.split(/\r?\n/).filter((line) => /^[A-Z][A-Z0-9_]*=/.test(line))
   .map((line) => { const at = line.indexOf("="); return [line.slice(0, at), line.slice(at + 1).replace(/^['"]|['"]$/g, "")]; }));
 assert.equal(new URL(env.NEXT_PUBLIC_SUPABASE_URL).hostname, "gamdxwtgccluifatcrrs.supabase.co");
-assert.equal(new URL(env.NEXT_PUBLIC_SITE_URL).hostname, "localhost");
-assert.ok(env.GROQ_API_KEY, "Real planning and Ask require the configured provider");
-const origin = env.NEXT_PUBLIC_SITE_URL;
+const origin = process.env.PILOT_RC_ORIGIN ?? env.NEXT_PUBLIC_SITE_URL;
+assert.ok(["localhost", "staging.crazy-loops.com"].includes(new URL(origin).hostname),
+  "Browser acceptance may target only local or the authorized staging origin");
+if (new URL(origin).hostname === "localhost")
+  assert.ok(env.GROQ_API_KEY, "Real planning and Ask require the configured provider");
 const admin = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SECRET_KEY,
   { auth: { autoRefreshToken: false, persistSession: false } });
 const browser = await chromium.launch({ headless: true });
 const tables = ["workspaces", "workspace_memberships", "goals", "goal_plans", "goal_plan_items",
   "work_items", "approval_requests", "ask_threads", "ask_messages", "ask_turns",
-  "action_executions", "activity_events", "knowledge_documents", "knowledge_chunks"];
+  "action_executions", "activity_events", "knowledge_documents", "knowledge_chunks",
+  "workspace_invitations", "connector_connections", "connector_connection_credentials",
+  "gmail_ingestion_states", "gmail_push_receipts"];
 const created = { users: [], workspaces: [], knowledgePath: null, knowledgeId: null };
 let baseline = {};
 let cleanupPassed = true;
@@ -105,11 +109,32 @@ try {
   const owner = await createAccount();
   const member = await createAccount();
   const outsider = await createAccount();
-  await joinAccount(member, owner.workspaceId, "member");
   const knowledgeId = await addKnowledge(owner);
   const ownerBrowser = await login(owner);
   const memberBrowser = await login(member);
   const outsiderBrowser = await login(outsider);
+
+  if (new URL(origin).hostname === "staging.crazy-loops.com") {
+    await ownerBrowser.page.goto(`${origin}/settings/company`);
+    await ownerBrowser.page.getByRole("heading", { name: "Invite teammates" }).waitFor();
+    await ownerBrowser.page.getByRole("textbox", { name: "Work email" }).fill(member.email);
+    await ownerBrowser.page.getByRole("button", { name: "Create invite" }).click();
+    const invitationUrl = await ownerBrowser.page.getByRole("textbox", { name: "Invitation link" }).inputValue();
+    assert.equal(new URL(invitationUrl).origin, origin);
+    await memberBrowser.page.goto(invitationUrl);
+    await memberBrowser.page.getByRole("heading", { name: /Join / }).waitFor();
+    await memberBrowser.page.getByRole("button", { name: "Accept invitation" }).click();
+    await memberBrowser.page.waitForURL(/\/my-day\?joined=1/);
+    const membership = await checked(await admin.from("workspace_memberships")
+      .select("workspace_id,role,is_default").eq("user_id", member.id)
+      .eq("workspace_id", owner.workspaceId).single(), "accepted membership");
+    assert.equal(membership.role, "member");
+    assert.equal(membership.is_default, true);
+    member.workspaceId = owner.workspaceId;
+    results.push("BROWSER_INVITE_ACCEPTANCE_REAL_MEMBERSHIP=PASS");
+  } else {
+    await joinAccount(member, owner.workspaceId, "member");
+  }
 
   await ownerBrowser.page.goto(`${origin}/goals`);
   await ownerBrowser.page.getByRole("heading", { name: "Goals", exact: true }).waitFor();
@@ -239,14 +264,35 @@ try {
   assert.match(answer, new RegExp(`1 of ${linkedWork.length}|one of ${linkedWork.length}`, "i"));
   results.push("GROUNDED_ASK_GOAL_STATUS_WITH_SOURCE_LINK=PASS");
 
+  await ownerBrowser.page.getByRole("textbox", { name: "Ask CrazyLoops" })
+    .fill("What does our customer support hiring SOP require for interview notes?");
+  await ownerBrowser.page.getByRole("button", { name: "Send message" }).click();
+  await ownerBrowser.page.locator(`a[href="/knowledge/${knowledgeId}"]`).first().waitFor({ timeout: 60_000 });
+  const knowledgeAnswer = await ownerBrowser.page.locator("article").last().innerText();
+  assert.match(knowledgeAnswer, /review/i);
+  results.push("GROUNDED_ASK_COMPANY_KNOWLEDGE_WITH_SOURCE_LINK=PASS");
+
+  const previousMessages = await ownerBrowser.page.locator("article").count();
+  await ownerBrowser.page.getByRole("textbox", { name: "Ask CrazyLoops" })
+    .fill("What did CrazyLoops do for the hiring goal today?");
+  await ownerBrowser.page.getByRole("button", { name: "Send message" }).click();
+  await ownerBrowser.page.waitForFunction((before) => document.querySelectorAll("article").length >= before + 2,
+    previousMessages, { timeout: 60_000 });
+  const activityAnswer = await ownerBrowser.page.locator("article").last().innerText();
+  assert.match(activityAnswer, /goal|activat|work item/i);
+  results.push("GROUNDED_ASK_ACTIVITY_AND_GOAL_PROGRESS=PASS");
+
   const mobile = await browser.newContext({ viewport: { width: 390, height: 844 },
     storageState: await memberBrowser.context.storageState() });
   const mobilePage = await mobile.newPage();
-  await mobilePage.goto(`${origin}/goals/${goalId}`);
-  await mobilePage.getByRole("heading", { name: /Hire 3 customer support agents/ }).waitFor();
-  assert.equal(await mobilePage.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+  for (const path of [`/goals/${goalId}`, "/my-day", "/ask", "/activity", "/knowledge"]) {
+    await mobilePage.goto(`${origin}${path}`);
+    await mobilePage.locator("main").first().waitFor();
+    assert.equal(await mobilePage.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false,
+      `mobile horizontal overflow: ${path}`);
+  }
   await mobile.close();
-  results.push("MOBILE_GOAL_DETAIL_NO_HORIZONTAL_OVERFLOW=PASS");
+  results.push("MOBILE_WORK_OS_CORE_PATHS_NO_HORIZONTAL_OVERFLOW=PASS");
 
   assert.equal(ownerBrowser.errors.length + memberBrowser.errors.length + outsiderBrowser.errors.length, 0);
   await secondTab.close();
@@ -260,6 +306,9 @@ try {
   if (created.knowledgePath) {
     const { error } = await admin.storage.from("company_knowledge").remove([created.knowledgePath]);
     if (error) cleanupPassed = false;
+    const { data, error: listError } = await admin.storage.from("company_knowledge")
+      .list(created.knowledgePath.slice(0, created.knowledgePath.lastIndexOf("/")));
+    if (listError || data?.some((item) => item.name === created.knowledgePath.split("/").at(-1))) cleanupPassed = false;
   }
   for (const workspaceId of created.workspaces.reverse()) {
     const { error } = await admin.from("workspaces").delete().eq("id", workspaceId);

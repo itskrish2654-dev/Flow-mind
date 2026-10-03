@@ -82,10 +82,17 @@ test("6-9. health endpoint is minimal, no-store, and does not expose versions or
   assert.doesNotMatch(health, /SUPABASE_SECRET_KEY|GROQ_API_KEY|process\.versions/);
 });
 
-test("6-10. no temporary acceptance or debug route exists", async () => {
+test("6-10. no temporary route is active in production", async () => {
   const routeFiles = (await readdir(new URL("../app/", import.meta.url), { recursive: true }))
     .filter((file) => /route\.tsx?$/.test(file));
   for (const file of routeFiles) {
+    if (file.replaceAll("\\", "/") === "api/operations/gmail-live-acceptance/oauth/start/route.ts") {
+      const route = await source(`app/${file.replaceAll("\\", "/")}`);
+      const policy = await source("lib/operations/gmail-live-acceptance-policy.ts");
+      assert.match(route, /if \(process\.env\.NODE_ENV === "production"\) return unavailable\(\)/);
+      assert.match(policy, /if \(environment\.NODE_ENV === "production"\) return \{ status: "disabled", config: null \}/);
+      continue;
+    }
     assert.doesNotMatch(file, /acceptance|debug|internal-test|smoke|fixture|temporary/i);
   }
 });
