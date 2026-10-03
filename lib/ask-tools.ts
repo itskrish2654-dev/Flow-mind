@@ -385,8 +385,10 @@ async function loadGoals(scope: AskTrustedScope, question: string): Promise<AskT
       return [safeRecord({ key: `goal:${index}`, kind: "goal", id: goal.id,
         label: goal.title, href: `/goals/${goal.id}`,
         facts: { title: goal.title, status: goal.status, successCriteria: goal.success_criteria,
-          targetDate: goal.target_date, completedWork: detail.progress
-            ? `${detail.progress.completed} of ${detail.progress.total}` : "No plan activated",
+          targetDate: goal.target_date, completedWorkItems: detail.progress
+            ? `${detail.progress.completed} of ${detail.progress.total} linked plan Work Items marked done`
+            : "No plan activated",
+          outcomeEvidence: "Work Item completion alone does not verify the stated business outcome",
           needsAttention: detail.progress ? String(detail.progress.needsAttention) : undefined,
           overdue: detail.progress ? String(detail.progress.overdue) : undefined,
           incompleteWork: workSummary || undefined,

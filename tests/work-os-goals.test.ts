@@ -80,13 +80,22 @@ test("goal routing and references stay inside authenticated workspace URLs", asy
   assert.equal(AskReferenceSchema.safeParse({ ...goalReference, href: "https://other.example" }).success, false);
   const tool: AskToolResult = { tool: "goals", summary: "One workspace goal", records: [{
     referenceKey: "goal:0", reference: goalReference as AskToolResult["records"][number]["reference"],
-    facts: { title: "Hire 3 support agents", status: "active", completedWork: "1 of 3" },
+    facts: { title: "Hire 3 support agents", status: "active",
+      completedWorkItems: "1 of 3 linked plan Work Items marked done" },
   }] };
   const answer = await runGroundedAsk({ question: "How are we doing on the hiring goal?", history: [],
     loadTool: async () => tool,
     callModel: async () => JSON.stringify({ responseType: "answer", answer: "One of three linked Work Items is done.",
       referenceKeys: ["goal:0"], clarificationRequired: false }) });
   assert.equal(answer.metadata.references[0].href, `/goals/${goalId}`);
+  assert.match(answer.answer, /1 of 3 linked plan Work Items marked done/);
+  const misframed = await runGroundedAsk({ question: "How are we doing on the hiring goal?", history: [],
+    loadTool: async () => tool,
+    callModel: async () => JSON.stringify({ responseType: "answer", answer: "We completed 1 of the 3 hires.",
+      referenceKeys: ["goal:0"], clarificationRequired: false }) });
+  assert.match(misframed.answer, /1 of 3 linked plan Work Items marked done/);
+  assert.doesNotMatch(misframed.answer, /3 hires/);
+  assert.equal(misframed.metadata.references[0].href, `/goals/${goalId}`);
   await assert.rejects(runGroundedAsk({ question: "How are we doing on the hiring goal?", history: [],
     loadTool: async () => tool,
     callModel: async () => JSON.stringify({ responseType: "answer", answer: "All done", referenceKeys: ["goal:9"], clarificationRequired: false }) }));

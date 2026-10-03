@@ -371,6 +371,27 @@ export function resolveGroundedResponse(
   };
 }
 
+function frameGoalProgressAsWork(input: {
+  question: string;
+  response: AskGroundedResponse;
+  toolResults: readonly AskToolResult[];
+}): AskGroundedResponse {
+  if (input.response.metadata.responseType !== "answer"
+    || !/\b(?:progress|status|on track)\b|\bhow\b.{0,80}\b(?:doing|goal|objective)\b/i.test(input.question)) {
+    return input.response;
+  }
+  const citedGoals = input.response.metadata.references.filter((reference) => reference.kind === "goal");
+  if (citedGoals.length !== 1) return input.response;
+  const goal = input.toolResults.flatMap((result) => result.tool === "goals" ? result.records : [])
+    .find((record) => record.reference.entityId === citedGoals[0].entityId);
+  if (!goal?.facts.completedWorkItems) return input.response;
+  return {
+    ...input.response,
+    answer: `${goal.reference.label} is ${goal.facts.status}. ${goal.facts.completedWorkItems}. `
+      + "This counts plan Work Items, not verified achievement of the goal's business outcome.",
+  };
+}
+
 function emptyAnswer(tools: readonly AskToolId[]): string {
   if (tools.includes("goals")) return "I found no workspace goals matching the bounded current goal list.";
   if (tools.includes("company_knowledge")) return "The uploaded company documents do not specify that. Ask an owner or admin to add the relevant source if it should be available.";
@@ -445,7 +466,8 @@ export async function runGroundedAsk(input: {
     };
   }
   const context = buildGroundedAskContext({ question: input.question, history: input.history, toolResults });
-  const grounded = resolveGroundedResponse(parseAskModelOutput(await input.callModel(context)), toolResults);
+  const grounded = frameGoalProgressAsWork({ question: input.question,
+    response: resolveGroundedResponse(parseAskModelOutput(await input.callModel(context)), toolResults), toolResults });
   const partialSheet = toolResults.find((result) => result.tool === "sheets_search"
     && result.records.some((record) => record.facts.coverageComplete === "no"
       || record.facts.omittedRows === "yes" || record.facts.omittedColumns === "yes"

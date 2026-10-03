@@ -261,15 +261,26 @@ try {
   await ownerBrowser.page.getByRole("button", { name: "Send message" }).click();
   await ownerBrowser.page.locator(`a[href="/goals/${goalId}"]`).first().waitFor({ timeout: 60_000 });
   const answer = await ownerBrowser.page.locator("article").last().innerText();
-  assert.match(answer, new RegExp(`1 of ${linkedWork.length}|one of ${linkedWork.length}`, "i"));
+  assert.match(answer, new RegExp(`\\b(?:1|one)\\s+of\\s+(?:the\\s+)?${linkedWork.length}\\b`, "i"));
+  assert.match(answer, /linked (?:plan )?Work Items?/i);
+  assert.doesNotMatch(answer, /\b(?:1|one)\s+of\s+(?:the\s+)?3\s+(?:required\s+)?hires\b/i);
   results.push("GROUNDED_ASK_GOAL_STATUS_WITH_SOURCE_LINK=PASS");
 
   await ownerBrowser.page.getByRole("textbox", { name: "Ask CrazyLoops" })
     .fill("What does our customer support hiring SOP require for interview notes?");
   await ownerBrowser.page.getByRole("button", { name: "Send message" }).click();
-  await ownerBrowser.page.locator(`a[href="/knowledge/${knowledgeId}"]`).first().waitFor({ timeout: 60_000 });
+  const knowledgeSource = ownerBrowser.page.locator(`a[href^="/knowledge/${knowledgeId}?chunk="]`).first();
+  await knowledgeSource.waitFor({ timeout: 60_000 });
+  const knowledgeHref = await knowledgeSource.getAttribute("href");
+  assert.match(knowledgeHref, /#chunk-[0-9a-f-]+$/);
   const knowledgeAnswer = await ownerBrowser.page.locator("article").last().innerText();
   assert.match(knowledgeAnswer, /review/i);
+  await knowledgeSource.click();
+  await ownerBrowser.page.getByRole("heading", { name: "Customer Support Hiring SOP" }).waitFor();
+  assert.equal(await ownerBrowser.page.locator(`li${new URL(knowledgeHref, origin).hash}`).count(), 1);
+  const outsiderKnowledge = await outsiderBrowser.page.goto(new URL(knowledgeHref, origin).toString());
+  assert.equal(outsiderKnowledge.status(), 404, "another workspace must not open the cited source");
+  await ownerBrowser.page.goto(`${origin}/ask`);
   results.push("GROUNDED_ASK_COMPANY_KNOWLEDGE_WITH_SOURCE_LINK=PASS");
 
   const previousMessages = await ownerBrowser.page.locator("article").count();
