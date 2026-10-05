@@ -22,6 +22,7 @@ import { disconnectConnector } from "@/app/actions/connections";
 import { AccessibleDialog } from "@/components/accessible-dialog";
 import { getConnectorOnboarding } from "@/lib/capability-registry";
 import type { ConnectionProvider, ConnectionView } from "@/lib/connectors/connection-view";
+import { matchesConnectorSuccess } from "@/lib/connectors/connection-success";
 
 const GoogleSpreadsheetPicker = dynamic(() => import("@/components/google-spreadsheet-picker").then((module) => module.GoogleSpreadsheetPicker));
 
@@ -216,8 +217,13 @@ export function ConnectionsList({
     return result;
   }, [connections]);
   const successProvider = providerFromConnector(successConnector);
-  const successItems = successProvider ? byProvider.get(successProvider) ?? [] : [];
+  const successItems = successProvider
+    ? (byProvider.get(successProvider) ?? []).filter((connection) => matchesConnectorSuccess(successConnector, connection))
+    : [];
   const successConnection = successItems.length === 1 ? successItems[0] : null;
+  const successHeading = successConnector === "google_gmail" ? "Gmail connected"
+    : successConnector === "google_sheets" ? "Google Sheets connected"
+      : successProvider ? `${providerCopy[successProvider].name} connected` : "";
   const providers = (["airtable", "hubspot", "slack", "notion", "google"] as const).filter((provider) => byProvider.has(provider));
   const availableProviders = (["airtable", "slack", "notion", "google"] as const).filter(
     (provider) => providerReadyForPilot(provider) && !byProvider.has(provider) && providerOnboarding(provider)?.available,
@@ -267,11 +273,11 @@ export function ConnectionsList({
 
   return (
     <>
-      {successProvider && (
+      {successItems.length > 0 && (
         <div role="status" aria-live="polite" className="mt-6 flex flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/80 p-4 sm:flex-row sm:items-center">
           <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-white text-emerald-600 shadow-sm"><Check className="size-4" aria-hidden="true" /></span>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-emerald-950">{providerCopy[successProvider].name} connected</p>
+            <p className="text-sm font-semibold text-emerald-950">{successHeading}</p>
             <p className="mt-0.5 truncate text-xs text-emerald-800">{successConnection?.accountLabel ?? "Your account"} is ready to use in your loops.</p>
           </div>
            <Link href={returnPath.startsWith("/dashboard/projects/") ? returnPath : "/dashboard"} className="inline-flex min-h-11 items-center gap-1.5 text-xs font-semibold text-emerald-900 hover:text-emerald-700">{returnPath.startsWith("/dashboard/projects/") ? "Continue workflow" : "Use it in a workflow"} <ArrowRight className="size-3.5" aria-hidden="true" /></Link>

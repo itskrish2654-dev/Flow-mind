@@ -4,6 +4,7 @@ import test from "node:test";
 
 import { askGoogleSourceSignals, runGroundedAsk, selectAskTools, type AskToolResult } from "../lib/ask-core";
 import { parseSheetWriteIntent } from "../lib/connectors/google/sheets-action-intent";
+import { matchesConnectorSuccess } from "../lib/connectors/connection-success";
 import { pickerAccessTokenHasRequiredGrant, pickerAccessTokenMatchesConnection, pickerDriveAccountMatches, pickerTokenAccountIdsMatchIfPresent } from "../lib/connectors/google/picker-token";
 import { readBoundedSheetJson, sheetResponseRows } from "../lib/connectors/google/sheets-response";
 import {
@@ -20,6 +21,29 @@ import {
   parseSheetHeaders,
   rowMatchesExpected,
 } from "../lib/connectors/google/sheets-values";
+
+test("Google connection success requires the requested connector's real grant", () => {
+  const sheets = { provider: "google", providerName: "Google Sheets", status: "connected", sheetsAccess: true };
+  const gmail = { provider: "google", providerName: "Gmail", status: "connected" };
+  const combined = { ...gmail, sheetsAccess: true };
+  assert.equal(matchesConnectorSuccess("google_gmail", sheets), false);
+  assert.equal(matchesConnectorSuccess("google_sheets", sheets), true);
+  assert.equal(matchesConnectorSuccess("google_gmail", gmail), true);
+  assert.equal(matchesConnectorSuccess("google_sheets", gmail), false);
+  assert.equal(matchesConnectorSuccess("google_gmail", combined), true);
+  assert.equal(matchesConnectorSuccess("google_sheets", combined), true);
+  assert.equal(matchesConnectorSuccess("google_gmail", { ...gmail, status: "expired" }), false);
+  assert.equal(matchesConnectorSuccess("slack", { provider: "slack", providerName: "Slack", status: "connected" }), true);
+  assert.equal(matchesConnectorSuccess("google_gmail", { provider: "slack", providerName: "Slack", status: "connected" }), false);
+});
+
+test("Connections UI never shows an OAuth success banner from the redirect hint alone", async () => {
+  const source = await readFile("components/connections-list.tsx", "utf8");
+  assert.match(source, /\.filter\(\(connection\) => matchesConnectorSuccess\(successConnector, connection\)\)/);
+  assert.match(source, /\{successItems\.length > 0 && \(/);
+  assert.match(source, /successConnector === "google_gmail" \? "Gmail connected"/);
+  assert.match(source, /successConnector === "google_sheets" \? "Google Sheets connected"/);
+});
 
 test("Sheets headers have one bounded, unambiguous positional mapping", () => {
   assert.deepEqual(parseSheetHeaders(["Company", "Status", "Owner"]), ["Company", "Status", "Owner"]);
