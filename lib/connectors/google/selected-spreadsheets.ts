@@ -2,16 +2,18 @@ import "server-only";
 
 import { readConnectionSecret } from "@/lib/connectors/connection-vault";
 import { ConnectorError } from "@/lib/connectors/errors";
+import { getGoogleAccessToken } from "@/lib/connectors/google/api";
 import { stopGmailWatch } from "@/lib/connectors/google/gmail-push";
 import { revokeGoogleToken } from "@/lib/connectors/google/oauth-provider";
 import { GOOGLE_LEGACY_SHEETS_SCOPE, GOOGLE_SCOPES } from "@/lib/connectors/google/scopes";
-import { pickerAccessTokenMatchesConnection, pickerTokenValidationDiagnostics } from "@/lib/connectors/google/picker-token";
+import { pickerAccessTokenHasRequiredGrant, pickerDriveAccountMatches, pickerTokenAccountIdsMatchIfPresent } from "@/lib/connectors/google/picker-token";
 import { normalizeSpreadsheetId } from "@/lib/connectors/google/sheets-values";
 import { googleSheetsLiveAcceptanceEnabled } from "@/lib/google-sheets-live-acceptance";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Json } from "@/lib/supabase/types";
 
 export const GOOGLE_SPREADSHEET_MIME_TYPE = "application/vnd.google-apps.spreadsheet";
+const GOOGLE_DRIVE_ABOUT_USER_URL = "https://www.googleapis.com/drive/v3/about?fields=user(me,permissionId)";
 
 function authorizationError(code: string, message: string) {
   return new ConnectorError({
@@ -26,6 +28,16 @@ function safeMetadata(value: Json): Record<string, Json | undefined> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, Json | undefined>
     : {};
+}
+
+async function driveBearerAccount(accessToken: string): Promise<unknown> {
+  const response = await fetch(GOOGLE_DRIVE_ABOUT_USER_URL, {
+    headers: { authorization: `Bearer ${accessToken}`, accept: "application/json" },
+    cache: "no-store",
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!response.ok) return null;
+  return response.json().catch(() => null) as Promise<unknown>;
 }
 
 export async function assertSelectedGoogleSpreadsheet(input: {
@@ -122,7 +134,7 @@ export async function registerPickerSelectedSpreadsheet(input: {
     .eq("id", input.connectionId)
     .eq("user_id", input.userId)
     .eq("provider_family", "google");
-  const { data: connection, error: connectionError } = await (input.workspaceId
+  const { data: connection } = await (input.workspaceId
     ? connectionQuery.eq("workspace_id", input.workspaceId)
     : connectionQuery).maybeSingle();
   if (
@@ -130,27 +142,35 @@ export async function registerPickerSelectedSpreadsheet(input: {
     connection.status !== "connected" ||
     !connection.granted_scopes.includes(GOOGLE_SCOPES.driveFile) ||
     connection.granted_scopes.includes(GOOGLE_LEGACY_SHEETS_SCOPE) ||
-    !pickerAccessTokenMatchesConnection({
-      tokenInfo, expectedAudience, externalAccountId: connection.external_account_id ?? "",
-    })
+    !pickerAccessTokenHasRequiredGrant({ tokenInfo, expectedAudience })
   ) {
+    throw authorizationError("GOOGLE_RECONNECT_REQUIRED", "Reconnect the selected Google account to continue.");
+  }
+  const tokenAccount = pickerTokenAccountIdsMatchIfPresent({
+    tokenInfo, externalAccountId: connection.external_account_id ?? "",
+  });
+  if (tokenAccount.present && !tokenAccount.match) {
+    throw authorizationError("GOOGLE_RECONNECT_REQUIRED", "Reconnect the selected Google account to continue.");
+  }
+  if (!tokenAccount.present) {
+    const storedAccessToken = await getGoogleAccessToken({
+      userId: input.userId, connectionId: input.connectionId, requiredScopes: [GOOGLE_SCOPES.driveFile],
+    });
+    const [storedAbout, pickerAbout] = await Promise.all([
+      driveBearerAccount(storedAccessToken), driveBearerAccount(accessToken),
+    ]);
+    const sameDriveAccount = pickerDriveAccountMatches(storedAbout, pickerAbout);
     if (googleSheetsLiveAcceptanceEnabled()) {
       console.info(JSON.stringify({
-        event: "google_sheets_picker_validation_rejected",
-        connectionQuerySucceeded: !connectionError,
-        connectionExists: !!connection,
-        connectionConnected: connection?.status === "connected",
-        storedDriveFilePresent: connection?.granted_scopes.includes(GOOGLE_SCOPES.driveFile) ?? false,
-        storedLegacySheetsScopeAbsent: !connection?.granted_scopes.includes(GOOGLE_LEGACY_SHEETS_SCOPE),
-        currentValidatorPassed: connection ? pickerAccessTokenMatchesConnection({
-          tokenInfo, expectedAudience, externalAccountId: connection.external_account_id ?? "",
-        }) : false,
-        ...pickerTokenValidationDiagnostics({
-          tokenInfo, expectedAudience, externalAccountId: connection?.external_account_id ?? "",
-        }),
+        event: "google_sheets_picker_drive_account_check",
+        storedIdentityAvailable: !!storedAbout,
+        pickerIdentityAvailable: !!pickerAbout,
+        accountMatched: sameDriveAccount,
       }));
     }
-    throw authorizationError("GOOGLE_RECONNECT_REQUIRED", "Reconnect the selected Google account to continue.");
+    if (!sameDriveAccount) {
+      throw authorizationError("GOOGLE_RECONNECT_REQUIRED", "Reconnect the selected Google account to continue.");
+    }
   }
 
   const fileResponse = await fetch(

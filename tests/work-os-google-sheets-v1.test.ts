@@ -4,7 +4,7 @@ import test from "node:test";
 
 import { runGroundedAsk, selectAskTools, type AskToolResult } from "../lib/ask-core";
 import { parseSheetWriteIntent } from "../lib/connectors/google/sheets-action-intent";
-import { pickerAccessTokenMatchesConnection, pickerTokenValidationDiagnostics } from "../lib/connectors/google/picker-token";
+import { pickerAccessTokenHasRequiredGrant, pickerAccessTokenMatchesConnection, pickerDriveAccountMatches, pickerTokenAccountIdsMatchIfPresent } from "../lib/connectors/google/picker-token";
 import { readBoundedSheetJson, sheetResponseRows } from "../lib/connectors/google/sheets-response";
 import {
   acknowledgedSheetAppendRange,
@@ -90,11 +90,13 @@ test("Picker access-token tokeninfo is bound to the exact OAuth client, account,
   assert.equal(check(valid), true);
   assert.equal(check(current), true);
   assert.equal(check({ ...valid, ...current }), true);
-  assert.equal(check({ ...valid, audience: "another-client" }), false);
+  assert.equal(check({ ...valid, audience: "another-audience" }), true);
   assert.equal(check({ ...valid, user_id: "another-user" }), false);
-  assert.equal(check({ ...current, aud: "another-client" }), false);
+  assert.equal(check({ ...current, aud: "another-client" }), true);
+  assert.equal(check({ ...current, azp: "another-client" }), false);
+  assert.equal(check({ ...current, issued_to: "another-presented-audience" }), true);
   assert.equal(check({ ...current, sub: "another-user" }), false);
-  assert.equal(check({ ...valid, aud: "another-client" }), false);
+  assert.equal(check({ ...valid, aud: "another-client" }), true);
   assert.equal(check({ ...valid, sub: "another-user" }), false);
   assert.equal(check({ ...current, aud: 1 }), false);
   assert.equal(check({ ...current, sub: 1 }), false);
@@ -105,20 +107,23 @@ test("Picker access-token tokeninfo is bound to the exact OAuth client, account,
   assert.equal(check({ aud: "client-1", scope: valid.scope, expires_in: 100 }), false);
 });
 
-test("staging Picker diagnostics contain only fixed boolean fields, never tokeninfo values", () => {
-  const tokenInfo = { azp: "sensitive-client", aud: "another-audience", sub: "sensitive-account",
-    scope: "https://www.googleapis.com/auth/drive.file", expires_in: 100, access_token: "sensitive-token" };
-  const diagnostic = pickerTokenValidationDiagnostics({
-    tokenInfo, expectedAudience: "sensitive-client", externalAccountId: "sensitive-account",
-  });
-  assert.equal(Object.values(diagnostic).every((value) => typeof value === "boolean"), true);
-  assert.equal(diagnostic.azpMatchesExpectedClient, true);
-  assert.equal(diagnostic.audMatchesExpectedClient, false);
-  assert.equal(diagnostic.subMatchesStoredAccount, true);
-  const serialized = JSON.stringify(diagnostic);
-  for (const sensitive of ["sensitive-client", "sensitive-account", "sensitive-token", tokenInfo.scope]) {
-    assert.equal(serialized.includes(sensitive), false);
-  }
+test("drive.file-only Picker token without sub requires a matching Drive bearer principal", () => {
+  const tokenInfo = { azp: "client-1", aud: "different-audience",
+    scope: "https://www.googleapis.com/auth/drive.file", expires_in: 100 };
+  assert.equal(pickerAccessTokenHasRequiredGrant({ tokenInfo, expectedAudience: "client-1" }), true);
+  assert.deepEqual(pickerTokenAccountIdsMatchIfPresent({ tokenInfo, externalAccountId: "google-user-1" }),
+    { present: false, match: false });
+  assert.equal(pickerAccessTokenMatchesConnection({ tokenInfo, expectedAudience: "client-1", externalAccountId: "google-user-1" }), false);
+  const stored = { user: { me: true, permissionId: "drive-user-1" } };
+  assert.equal(pickerDriveAccountMatches(stored, { user: { me: true, permissionId: "drive-user-1" } }), true);
+  assert.equal(pickerDriveAccountMatches(stored, { user: { me: true, permissionId: "drive-user-2" } }), false);
+  assert.equal(pickerDriveAccountMatches(stored, { user: { permissionId: "drive-user-1" } }), false);
+  assert.equal(pickerDriveAccountMatches(stored, { user: { me: true } }), false);
+  assert.equal(pickerDriveAccountMatches(null, { user: { me: true, permissionId: "drive-user-1" } }), false);
+  assert.equal(pickerAccessTokenHasRequiredGrant({ tokenInfo: { ...tokenInfo, azp: "other-client" }, expectedAudience: "client-1" }), false);
+  assert.equal(pickerAccessTokenHasRequiredGrant({ tokenInfo: { ...tokenInfo, scope: "openid email" }, expectedAudience: "client-1" }), false);
+  assert.equal(pickerAccessTokenHasRequiredGrant({ tokenInfo: { ...tokenInfo, scope: `${tokenInfo.scope} https://www.googleapis.com/auth/spreadsheets` }, expectedAudience: "client-1" }), false);
+  assert.equal(pickerAccessTokenHasRequiredGrant({ tokenInfo: { ...tokenInfo, expires_in: 0 }, expectedAudience: "client-1" }), false);
 });
 
 test("Sheets read context is bounded and advertises truncation", () => {
