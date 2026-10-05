@@ -5,8 +5,9 @@ import { ConnectorError } from "@/lib/connectors/errors";
 import { stopGmailWatch } from "@/lib/connectors/google/gmail-push";
 import { revokeGoogleToken } from "@/lib/connectors/google/oauth-provider";
 import { GOOGLE_LEGACY_SHEETS_SCOPE, GOOGLE_SCOPES } from "@/lib/connectors/google/scopes";
-import { pickerAccessTokenMatchesConnection } from "@/lib/connectors/google/picker-token";
+import { pickerAccessTokenMatchesConnection, pickerTokenValidationDiagnostics } from "@/lib/connectors/google/picker-token";
 import { normalizeSpreadsheetId } from "@/lib/connectors/google/sheets-values";
+import { googleSheetsLiveAcceptanceEnabled } from "@/lib/google-sheets-live-acceptance";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Json } from "@/lib/supabase/types";
 
@@ -121,7 +122,7 @@ export async function registerPickerSelectedSpreadsheet(input: {
     .eq("id", input.connectionId)
     .eq("user_id", input.userId)
     .eq("provider_family", "google");
-  const { data: connection } = await (input.workspaceId
+  const { data: connection, error: connectionError } = await (input.workspaceId
     ? connectionQuery.eq("workspace_id", input.workspaceId)
     : connectionQuery).maybeSingle();
   if (
@@ -133,6 +134,22 @@ export async function registerPickerSelectedSpreadsheet(input: {
       tokenInfo, expectedAudience, externalAccountId: connection.external_account_id ?? "",
     })
   ) {
+    if (googleSheetsLiveAcceptanceEnabled()) {
+      console.info(JSON.stringify({
+        event: "google_sheets_picker_validation_rejected",
+        connectionQuerySucceeded: !connectionError,
+        connectionExists: !!connection,
+        connectionConnected: connection?.status === "connected",
+        storedDriveFilePresent: connection?.granted_scopes.includes(GOOGLE_SCOPES.driveFile) ?? false,
+        storedLegacySheetsScopeAbsent: !connection?.granted_scopes.includes(GOOGLE_LEGACY_SHEETS_SCOPE),
+        currentValidatorPassed: connection ? pickerAccessTokenMatchesConnection({
+          tokenInfo, expectedAudience, externalAccountId: connection.external_account_id ?? "",
+        }) : false,
+        ...pickerTokenValidationDiagnostics({
+          tokenInfo, expectedAudience, externalAccountId: connection?.external_account_id ?? "",
+        }),
+      }));
+    }
     throw authorizationError("GOOGLE_RECONNECT_REQUIRED", "Reconnect the selected Google account to continue.");
   }
 

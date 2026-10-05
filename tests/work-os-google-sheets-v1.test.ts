@@ -4,7 +4,7 @@ import test from "node:test";
 
 import { runGroundedAsk, selectAskTools, type AskToolResult } from "../lib/ask-core";
 import { parseSheetWriteIntent } from "../lib/connectors/google/sheets-action-intent";
-import { pickerAccessTokenMatchesConnection } from "../lib/connectors/google/picker-token";
+import { pickerAccessTokenMatchesConnection, pickerTokenValidationDiagnostics } from "../lib/connectors/google/picker-token";
 import { readBoundedSheetJson, sheetResponseRows } from "../lib/connectors/google/sheets-response";
 import {
   acknowledgedSheetAppendRange,
@@ -103,6 +103,22 @@ test("Picker access-token tokeninfo is bound to the exact OAuth client, account,
   assert.equal(check({ ...valid, scope: `${valid.scope} https://www.googleapis.com/auth/spreadsheets` }), false);
   assert.equal(check({ sub: "google-user-1", scope: valid.scope, expires_in: 100 }), false);
   assert.equal(check({ aud: "client-1", scope: valid.scope, expires_in: 100 }), false);
+});
+
+test("staging Picker diagnostics contain only fixed boolean fields, never tokeninfo values", () => {
+  const tokenInfo = { azp: "sensitive-client", aud: "another-audience", sub: "sensitive-account",
+    scope: "https://www.googleapis.com/auth/drive.file", expires_in: 100, access_token: "sensitive-token" };
+  const diagnostic = pickerTokenValidationDiagnostics({
+    tokenInfo, expectedAudience: "sensitive-client", externalAccountId: "sensitive-account",
+  });
+  assert.equal(Object.values(diagnostic).every((value) => typeof value === "boolean"), true);
+  assert.equal(diagnostic.azpMatchesExpectedClient, true);
+  assert.equal(diagnostic.audMatchesExpectedClient, false);
+  assert.equal(diagnostic.subMatchesStoredAccount, true);
+  const serialized = JSON.stringify(diagnostic);
+  for (const sensitive of ["sensitive-client", "sensitive-account", "sensitive-token", tokenInfo.scope]) {
+    assert.equal(serialized.includes(sensitive), false);
+  }
 });
 
 test("Sheets read context is bounded and advertises truncation", () => {
