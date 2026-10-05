@@ -31,6 +31,7 @@ const contentSecurityPolicy = [
 ].join("; ");
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   serverExternalPackages: ["pdfjs-dist"],
   turbopack: {
     root: process.cwd(),
