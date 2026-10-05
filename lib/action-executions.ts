@@ -11,6 +11,7 @@ import {
 import { AskResponseMetadataSchema } from "@/lib/ask-core";
 import { getAuthenticatedContext } from "@/lib/auth";
 import { getCapability } from "@/lib/capability-registry";
+import { googleSheetsAcceptanceCapability } from "@/lib/google-sheets-live-acceptance";
 import { getConnectorOperation } from "@/lib/connectors/registry";
 import { connectorConnectionIds } from "@/lib/connectors/connection-matching";
 import type { ConnectorActionHandler } from "@/lib/connectors/types";
@@ -46,7 +47,7 @@ function isExecutableCapability(preview: ActionPreview) {
     || operation.operationVersion !== preview.operationVersion) return false;
   if (capability.internalOnly) return preview.capabilityId === "internal.action_acknowledge"
     && capability.availableInTest && acceptanceHarnessEnabled();
-  return capability.availableInProduction;
+  return capability.availableInProduction || googleSheetsAcceptanceCapability(capability.id);
 }
 
 async function assertUsableConnection(execution: ActionExecution) {
@@ -84,7 +85,9 @@ async function assertUsableConnection(execution: ActionExecution) {
 
 function executionInput(preview: ActionPreview) {
   const registered = getConnectorOperation(preview.connectorId, "action", preview.operationKey, preview.operationVersion);
-  if (!registered?.handler || !registered.operation.production && !acceptanceHarnessEnabled()) {
+  if (!registered?.handler || !registered.operation.production
+    && !acceptanceHarnessEnabled()
+    && !googleSheetsAcceptanceCapability(preview.capabilityId)) {
     throw new Error("The approved connector action is unavailable.");
   }
   const allowed = new Map(registered.operation.input.map((field) => [field.key, field]));

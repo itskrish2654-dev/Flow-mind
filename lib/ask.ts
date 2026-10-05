@@ -17,6 +17,7 @@ import {
   type AskResponseMetadata,
 } from "@/lib/ask-core";
 import { callAskModel } from "@/lib/ask-model";
+import { googleSheetsAcceptanceCapability } from "@/lib/google-sheets-live-acceptance";
 import { planAskAction } from "@/lib/ask-action-planner";
 import {
   AskReliabilityError,
@@ -314,7 +315,7 @@ async function generateResponse(auth: AuthContext, question: string, history: As
   const externalCapabilityId = isKnowledgeRead ? null : requestedExternalCapability(question);
   if (externalCapabilityId) {
     const capability = getCapability(externalCapabilityId);
-    if (!capability?.supported || !capability.availableInProduction) {
+    if (!capability?.supported || !(capability.availableInProduction || googleSheetsAcceptanceCapability(externalCapabilityId))) {
       return unsupportedAskResponse(capability?.displayName ?? "that external capability");
     }
     // Only the deterministic action planner can construct an executable Ask

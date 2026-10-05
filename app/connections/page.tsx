@@ -11,6 +11,7 @@ import {
 import { ConnectionsList } from "@/components/connections-list";
 import { getAuthenticatedContext } from "@/lib/auth";
 import { listConnectionViews } from "@/lib/connectors/connection-view";
+import { googleSheetsLiveAcceptanceEnabled } from "@/lib/google-sheets-live-acceptance";
 import { oauthReturnWorkflowId, safeOAuthReturnPath } from "@/lib/connectors/oauth-return";
 
 const builtInCapabilities = [
@@ -75,7 +76,7 @@ export default async function ConnectionsPage({
           </p>
           <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-950">Connections</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
-            Connect Gmail to bring work into CrazyLoops and send exact approved emails. Other integrations remain unavailable until their live-provider checks are complete.
+            Connect Gmail to bring work into CrazyLoops and send exact approved emails. {googleSheetsLiveAcceptanceEnabled() ? "Google Sheets is temporarily available in this isolated staging environment for live acceptance." : "Other integrations remain unavailable until their live-provider checks are complete."}
           </p>
         </div>
         <p className="max-w-xs text-xs leading-5 text-slate-500">
@@ -88,6 +89,7 @@ export default async function ConnectionsPage({
         successConnector={connected}
         errorCode={error}
         providerAvailability={{ slack: slackAvailable, notion: notionAvailable, google: googleAvailable }}
+        sheetsAcceptanceEnabled={googleSheetsLiveAcceptanceEnabled()}
         returnPath={returnPath}
       />
 

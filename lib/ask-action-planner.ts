@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { ActionPreviewSchema, type ActionPreview } from "@/lib/action-execution-core";
 import type { AskGroundedResponse } from "@/lib/ask-core";
 import { getCapability } from "@/lib/capability-registry";
+import { googleSheetsAcceptanceCapability } from "@/lib/google-sheets-live-acceptance";
 import { connectorConnectionIds } from "@/lib/connectors/connection-matching";
 import { getConnector } from "@/lib/connectors/registry";
 import { parseGmailSendIntent } from "@/lib/connectors/google/gmail-action-intent";
@@ -109,7 +110,7 @@ async function planSheetsAction(scope: Scope, question: string): Promise<AskGrou
   if (!intent) return null;
   if (intent === "clarification") return clarification("Specify a Google spreadsheet, worksheet, and exact existing column values such as Status = Qualified. Nothing was changed.");
   const capability = getCapability(intent.kind === "add" ? "google_sheets_add_row" : "google_sheets_update_row");
-  if (!capability?.supported || !capability.availableInProduction || !capability.connectorOperation) return null;
+  if (!capability?.supported || !(capability.availableInProduction || googleSheetsAcceptanceCapability(capability.id)) || !capability.connectorOperation) return null;
   const resolved = await resolveSelectedSheetForQuestion({ userId: scope.userId, workspaceId: scope.workspaceId, question });
   if (resolved.status === "connection_required" || resolved.status === "reconnect_required") return connectionRequired("Google Sheets");
   if (resolved.status !== "ok") return clarification(resolved.message + " Nothing was changed.");

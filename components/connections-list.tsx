@@ -185,12 +185,14 @@ export function ConnectionsList({
   successConnector,
   errorCode,
   providerAvailability,
+  sheetsAcceptanceEnabled,
   returnPath,
 }: {
   connections: ConnectionView[];
   successConnector: string | null;
   errorCode: string | null;
   providerAvailability: ProviderAvailability;
+  sheetsAcceptanceEnabled: boolean;
   returnPath: string;
 }) {
   const router = useRouter();
@@ -220,7 +222,7 @@ export function ConnectionsList({
   const availableProviders = (["airtable", "slack", "notion", "google"] as const).filter(
     (provider) => providerReadyForPilot(provider) && !byProvider.has(provider) && providerOnboarding(provider)?.available,
   );
-  const sheetsReadyForPilot = Boolean(getConnectorOnboarding("google_sheets")?.available);
+  const sheetsReadyForPilot = Boolean(getConnectorOnboarding("google_sheets")?.available) || sheetsAcceptanceEnabled;
 
   async function submitAirtable(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

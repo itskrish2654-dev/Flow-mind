@@ -3,6 +3,7 @@ import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 
 import { getConnectorOnboarding } from "@/lib/capability-registry";
+import { googleSheetsAcceptanceConnector } from "@/lib/google-sheets-live-acceptance";
 import { getConnector } from "@/lib/connectors/registry";
 import {
   GMAIL_LIVE_ACCEPTANCE_MARKER,
@@ -53,7 +54,8 @@ export async function createOAuthAuthorization(input: { userId: string; connecto
   if (!registered || registered.manifest.auth.type !== "oauth2") {
     throw new Error("OAuth is not available for this connector.");
   }
-  if (!getConnectorOnboarding(input.connectorId)?.available) throw new Error("This connector is not available.");
+  if (!getConnectorOnboarding(input.connectorId)?.available
+    && !googleSheetsAcceptanceConnector(input.connectorId)) throw new Error("This connector is not available.");
   return createOAuthAuthorizationState(input);
 }
 
