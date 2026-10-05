@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { runGroundedAsk, selectAskTools, type AskToolResult } from "../lib/ask-core";
+import { askGoogleSourceSignals, runGroundedAsk, selectAskTools, type AskToolResult } from "../lib/ask-core";
 import { parseSheetWriteIntent } from "../lib/connectors/google/sheets-action-intent";
 import { pickerAccessTokenHasRequiredGrant, pickerAccessTokenMatchesConnection, pickerDriveAccountMatches, pickerTokenAccountIdsMatchIfPresent } from "../lib/connectors/google/picker-token";
 import { readBoundedSheetJson, sheetResponseRows } from "../lib/connectors/google/sheets-response";
@@ -158,6 +158,12 @@ test("Ask routes selected-sheet questions but cannot select Sheets from model te
   assert.ok(selectAskTools("Find Acme in the pipeline spreadsheet").includes("sheets_search"));
   assert.equal(selectAskTools("Mark Acme's Status as Won in the sheet").includes("sheets_search"), false);
   assert.equal(selectAskTools("What needs my attention?").includes("sheets_search"), false);
+  const exactEmailLookup = "In my selected spreadsheet, Leads worksheet, which lead has email beta.20261005@example.com and what is the status?";
+  assert.deepEqual(askGoogleSourceSignals(exactEmailLookup), { sheets: true, gmail: false });
+  assert.ok(selectAskTools(exactEmailLookup).includes("sheets_search"));
+  assert.equal(selectAskTools(exactEmailLookup).includes("gmail_search"), false);
+  assert.deepEqual(askGoogleSourceSignals("Find the email in Gmail"), { sheets: false, gmail: true });
+  assert.ok(selectAskTools("Find the email in Gmail").includes("gmail_search"));
 });
 
 test("malicious spreadsheet cell text remains evidence, never authority for an action", async () => {

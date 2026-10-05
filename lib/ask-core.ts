@@ -191,6 +191,16 @@ export function isAskActionOutcomeQuestion(question: string): boolean {
   return /\b(?:did|has|have|was|were)\b[^?.!]{0,100}\b(?:perform|performed|send|sent|post|posted|create|created|execute|executed|action)\b|\baction (?:status|outcome|result)\b/.test(text);
 }
 
+/** An email address is a Sheet column value when the question explicitly names Sheets. */
+export function askGoogleSourceSignals(question: string) {
+  const text = question.toLowerCase();
+  const sheets = /\b(?:google sheets?|spreadsheets?|worksheets?|sheets?)\b/.test(text);
+  const explicitGmail = /\b(?:gmail|inbox|mailbox)\b/.test(text);
+  const gmail = explicitGmail || (/\b(?:email|emails|mail|sender|thread)\b/.test(text)
+    && (!sheets || /\b(?:send|reply)\b/.test(text)));
+  return { sheets, gmail };
+}
+
 export function selectAskTools(question: string): AskToolId[] {
   const text = question.toLowerCase();
   const tools: AskToolId[] = [];
@@ -200,9 +210,9 @@ export function selectAskTools(question: string): AskToolId[] {
   const employeeApprovalAction = hasEmployeeApprovalActionIntent(text);
   const historicalApprovalFact = hasHistoricalApprovalFactIntent(text);
   const directEmailSend = /^\s*(?:(?:using|from)\s+[^\s,;]+@[^\s,;]+\s*,\s*)?(?:please\s+)?(?:send\s+(?:an?\s+)?email\s+to|email)\s+[^\s,;]+@[^\s,;]+\s+(?:that|saying|with)\b/.test(text);
-  if (/\b(?:gmail|inbox|email|emails|mail|sender|thread)\b/.test(text)
-    && !directEmailSend) tools.push("gmail_search");
-  if (/\b(?:google sheets?|spreadsheets?|worksheets?|sheets?|rows?|columns?)\b/.test(text)
+  const googleSources = askGoogleSourceSignals(question);
+  if (googleSources.gmail && !directEmailSend) tools.push("gmail_search");
+  if (googleSources.sheets || /\b(?:rows?|columns?)\b/.test(text)
     || (/\b(?:deals?|customers?|clients?|pipeline)\b/.test(text)
       && /\b(?:how many|which|find|listed|status|open)\b/.test(text))) {
     if (!/\b(?:add|append|update|change|write|mark|set)\b/.test(text)) tools.push("sheets_search");

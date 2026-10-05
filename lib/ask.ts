@@ -7,6 +7,7 @@ import {
   AskInputSchema,
   AskRequestReferenceSchema,
   AskResponseMetadataSchema,
+  askGoogleSourceSignals,
   deterministicThreadTitle,
   isAskActionOutcomeQuestion,
   selectAskTools,
@@ -175,9 +176,10 @@ function requestedExternalCapability(question: string): string | null {
   const text = question.toLowerCase();
   const asksForExternalUse = /\b(send|reply|email|post|message|notify|update|change|write|add|create|read|show|find|search|fetch|check)\b/.test(text);
   if (!asksForExternalUse) return null;
-  if (/\b(gmail|email|inbox)\b/.test(text)) return /\b(send|reply)\b/.test(text) || /^email\b/.test(text) ? "gmail_send_email" : "gmail_new_email";
+  const googleSources = askGoogleSourceSignals(question);
+  if (googleSources.gmail) return /\b(send|reply)\b/.test(text) || /^email\b/.test(text) ? "gmail_send_email" : "gmail_new_email";
   if (/\b(slack|channel)\b/.test(text)) return /\b(send|post|message|notify|reply)\b/.test(text) ? "slack_send_channel_message" : "slack_new_channel_message";
-  if (/\b(sheet|sheets|spreadsheet|worksheet)\b/.test(text)) return /\b(update|change|write|mark|set)\b/.test(text)
+  if (googleSources.sheets) return /\b(update|change|write|mark|set)\b/.test(text)
     ? "google_sheets_update_row" : /\b(add|append|create)\b/.test(text)
       ? "google_sheets_add_row" : "google_sheets_find_row";
   if (/\bnotion\b/.test(text)) return /\b(update|change|write)\b/.test(text) ? "notion_update_item" : "notion_find_item";
