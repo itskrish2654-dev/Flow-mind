@@ -8,10 +8,14 @@ const dockerignore = readFileSync(new URL("../.dockerignore", import.meta.url), 
 const compose = readFileSync(new URL("../compose.self-host.yml", import.meta.url), "utf8");
 
 test("self-hosting uses the traced standalone server and copies its static assets", () => {
-  assert.match(nextConfig, /output:\s*["']standalone["']/);
+  assert.match(nextConfig, /output:\s*process\.env\.VERCEL\s*\?\s*undefined\s*:\s*["']standalone["']/);
   assert.match(dockerfile, /\/app\/\.next\/standalone/);
   assert.match(dockerfile, /\/app\/\.next\/static/);
   assert.match(dockerfile, /CMD \["node", "server\.js"\]/);
+});
+
+test("Vercel builds use standard Next.js output instead of standalone", () => {
+  assert.match(nextConfig, /output:\s*process\.env\.VERCEL\s*\?\s*undefined\s*:\s*["']standalone["']/);
 });
 
 test("image build accepts only browser-safe arguments and excludes local secrets", () => {

@@ -31,7 +31,7 @@ const contentSecurityPolicy = [
 ].join("; ");
 
 const nextConfig: NextConfig = {
-  output: "standalone",
+  output: process.env.VERCEL ? undefined : "standalone",
   serverExternalPackages: ["pdfjs-dist"],
   turbopack: {
     root: process.cwd(),
