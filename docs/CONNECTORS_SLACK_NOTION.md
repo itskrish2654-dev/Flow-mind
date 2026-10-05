@@ -1,30 +1,44 @@
 # Slack and Notion connector configuration
 
 The implementation pins Slack OAuth v2/Web API/Events API and Notion API
-`2026-03-11`. Notion requests use the first-class `/v1/data_sources` model. Both
-connectors remain `BETA` until the live acceptance scenarios are completed.
+`2026-03-11`. Notion requests use the first-class `/v1/data_sources` model.
+The Slack Work OS v1 branch is an acceptance candidate deployed only to the
+separate `crazyloops-staging` Vercel project. It must not be merged or deployed
+to the customer production project until live acceptance passes.
 
 ## Slack owner actions
 
-1. Create or open the CrazyLoops Slack app and enable distribution.
+1. Use a dedicated staging-only Slack app and disposable workspace. Do not
+   enable commercial distribution merely for this acceptance run.
 2. Add this OAuth redirect URL exactly:
-   `https://www.crazy-loops.com/api/connectors/oauth/slack/callback`
-3. Enable OAuth PKCE.
+   `https://staging.crazy-loops.com/api/connectors/oauth/slack/callback`
+   Do not use the customer production URL for this gate.
+3. Keep OAuth PKCE disabled for this confidential server-side web application.
+   OAuth state remains random,
+   short-lived, encrypted-at-rest, owner-bound, and single-use.
 4. Add only these bot scopes:
    - `channels:read` — list accessible public channels and retain their IDs.
    - `channels:history` — receive `message.channels` events from channels where
      the app is a member.
    - `chat:write` — send acknowledged channel messages and thread replies.
-5. Under Event Subscriptions, set the Request URL exactly to:
-   `https://www.crazy-loops.com/api/connectors/events/slack`
+5. Under Event Subscriptions, set the Request URL exactly to
+   `https://staging.crazy-loops.com/api/connectors/events/slack`.
+   Do not point this acceptance app at production.
 6. Subscribe the bot to `message.channels`. Do not add reaction or DM events;
    those operations are not advertised by this release.
 7. Install/reinstall the app to the disposable acceptance workspace and invite
-   the app to each test channel used by a trigger or action.
-8. Set these Vercel Production and active Preview variables, then redeploy:
+   it to the disposable public channel used by the test. No private/DM scope.
+8. Configure these server-only values in the separate `crazyloops-staging`
+   Vercel project only; do not change the customer production project:
    - `FLOWMIND_CONNECTOR_SLACK_CLIENT_ID`
    - `FLOWMIND_CONNECTOR_SLACK_CLIENT_SECRET`
    - `FLOWMIND_CONNECTOR_SLACK_SIGNING_SECRET`
+
+Signed Events API messages are the sole inbound Work OS context. There is no
+historical channel crawl. New commercially distributed non-Marketplace Slack
+installs have especially tight `conversations.history`/`replies` limits, so
+those APIs must not be used as a bulk fallback. A Slack `429` is surfaced with
+its Retry-After classification; ambiguous writes are never retried blindly.
 
 ## Notion owner actions
 
@@ -59,7 +73,7 @@ connectors remain `BETA` until the live acceptance scenarios are completed.
 
 ## Live acceptance gate
 
-Do not change either registry status from `BETA` to `AVAILABLE` until real Slack
-and Notion installations pass the Phase 7B-2 OAuth, inbound event, outbound
-acknowledgement, duplicate, reconnect, disconnect, A/B isolation, and cleanup
-scenarios. No test-auth bypass or acceptance-only HTTP endpoint is permitted.
+Do not merge or deploy the Slack availability change until its real OAuth,
+signed inbound event, grounded Ask, approval-backed send, duplicate,
+ownership, and cleanup chain passes. Notion remains reviewed/unavailable.
+No test-auth bypass or acceptance-only HTTP endpoint is permitted.

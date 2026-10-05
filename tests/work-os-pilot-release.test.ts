@@ -32,7 +32,8 @@ test("pilot exposes Gmail but keeps each unaccepted Sheets action engineering-on
   assert.equal(getConnectorOnboarding("google_gmail")?.available, true);
   assert.equal(getConnectorOnboarding("google_sheets")?.available, false);
   assert.ok(getConnector("google_sheets")?.manifest.actions.every((action) => action.testMode && !action.production));
-  for (const id of ["slack", "notion", "hubspot"]) {
+  assert.equal(getConnectorOnboarding("slack")?.available, true);
+  for (const id of ["notion", "hubspot"]) {
     assert.equal(getConnectorOnboarding(id)?.available, false);
   }
 });

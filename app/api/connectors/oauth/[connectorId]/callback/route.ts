@@ -135,10 +135,11 @@ export async function GET(
             .eq("connector_id", canonicalConnectorId)
             .eq("external_account_id", tokens.externalAccountId)
             .maybeSingle();
-      const grantedScopes = Array.from(new Set([
-        ...(existing?.granted_scopes ?? []),
-        ...tokens.scopes,
-      ]));
+      // A Slack reinstall may remove a bot grant. The latest provider token is
+      // authoritative; unioning old scopes would falsely retain permission.
+      const grantedScopes = connector.manifest.providerFamily === "slack"
+        ? tokens.scopes
+        : Array.from(new Set([...(existing?.granted_scopes ?? []), ...tokens.scopes]));
       const { data: connection, error } = await admin
         .from("connector_connections")
         .upsert({
@@ -160,21 +161,28 @@ export async function GET(
         .select("id")
         .single();
       if (error || !connection) throw new Error("Connection metadata could not be stored.");
-      await storeConnectionSecret({
-        userId: user.id,
-        connectionId: connection.id,
-        credentialKey: "access_token",
-        credentialType: "oauth_access_token",
-        plaintext: tokens.accessToken,
-      });
-      if (tokens.refreshToken) {
+      try {
         await storeConnectionSecret({
           userId: user.id,
           connectionId: connection.id,
-          credentialKey: "refresh_token",
-          credentialType: "oauth_refresh_token",
-          plaintext: tokens.refreshToken,
+          credentialKey: "access_token",
+          credentialType: "oauth_access_token",
+          plaintext: tokens.accessToken,
         });
+        if (tokens.refreshToken) {
+          await storeConnectionSecret({
+            userId: user.id,
+            connectionId: connection.id,
+            credentialKey: "refresh_token",
+            credentialType: "oauth_refresh_token",
+            plaintext: tokens.refreshToken,
+          });
+        }
+      } catch {
+        await admin.from("connector_connections").update({
+          status: "error", last_error_category: "credential_storage", updated_at: new Date().toISOString(),
+        }).eq("id", connection.id).eq("user_id", user.id).eq("workspace_id", auth.workspace.id);
+        throw new Error("Connection credentials could not be stored.");
       }
       if (connectorId === "google_gmail") {
         try {

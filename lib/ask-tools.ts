@@ -22,6 +22,7 @@ import { findSelectedGoogleSpreadsheetRow, inspectSelectedGoogleWorksheet, readS
 import { resolveSelectedSheetForQuestion } from "@/lib/connectors/google/sheets-work-context";
 import { searchCompanyKnowledge } from "@/lib/knowledge";
 import { getWorkspaceGoal, listWorkspaceGoals } from "@/lib/goals";
+import { readSlackForAsk } from "@/lib/connectors/slack/read";
 
 export type AskTrustedScope = { userId: string; workspaceId: string };
 
@@ -398,6 +399,33 @@ async function loadGoals(scope: AskTrustedScope, question: string): Promise<AskT
   };
 }
 
+async function loadSlack(scope: AskTrustedScope, question: string): Promise<AskToolResult> {
+  await assertTrustedScope(scope);
+  const result = await readSlackForAsk({ ...scope, question });
+  return {
+    tool: "slack_search",
+    availability: result.status,
+    summary: result.status === "ok"
+      ? `${result.messages.length} message${result.messages.length === 1 ? "" : "s"} matched the bounded recent, owner-scoped Slack Events API history. Older or unreceived messages were not searched.`
+      : "Slack is not currently available for this employee.",
+    records: result.messages.map((message, index) => safeRecord({
+      key: `slack_message:${index}`,
+      kind: "slack_message",
+      id: message.id,
+      label: `Slack message in #${result.channelNames[message.channel_id] ?? message.channel_id}`,
+      href: `/dashboard/slack/${message.connection_id}/${message.id}`,
+      facts: {
+        channel: result.channelNames[message.channel_id] ?? message.channel_id,
+        senderId: message.sender_id,
+        messageAt: message.message_at,
+        text: message.message_text,
+        threadTs: message.thread_ts,
+        eventId: message.provider_event_id,
+      },
+    })),
+  };
+}
+
 /** Strict registry: callers cannot invent a tool name or provide query text. */
 export async function executeAskTool(tool: AskToolId, scope: AskTrustedScope, question = ""): Promise<AskToolResult> {
   switch (AskToolIdSchema.parse(tool)) {
@@ -411,5 +439,6 @@ export async function executeAskTool(tool: AskToolId, scope: AskTrustedScope, qu
     case "sheets_search": return loadSheets(scope, question);
     case "company_knowledge": return loadCompanyKnowledge(scope, question);
     case "goals": return loadGoals(scope, question);
+    case "slack_search": return loadSlack(scope, question);
   }
 }

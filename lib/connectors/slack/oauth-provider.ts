@@ -23,6 +23,7 @@ type SlackTokenResponse = {
   scope?: string;
   app_id?: string;
   bot_user_id?: string;
+  authed_user?: { id?: string };
   team?: { id?: string; name?: string };
 };
 
@@ -34,24 +35,28 @@ export async function exchangeSlackAuthorizationCode(input: { code: string; veri
       authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
       "content-type": "application/x-www-form-urlencoded",
     },
-    body: new URLSearchParams({ code: input.code, redirect_uri: input.redirectUri, code_verifier: input.verifier }),
+    // Keep the verifier in the encrypted OAuth state for the common state
+    // lifecycle, but do not send it to Slack for this confidential web app.
+    body: new URLSearchParams({ code: input.code, redirect_uri: input.redirectUri }),
     cache: "no-store",
     signal: AbortSignal.timeout(10_000),
   });
   const token = await response.json().catch(() => ({})) as SlackTokenResponse;
-  if (!response.ok || !token.ok || !token.access_token || !token.team?.id) {
+  if (!response.ok || !token.ok || !token.access_token || !token.team?.id || !token.scope) {
     throw new ConnectorError(response.ok ? { category: "authentication", code: `SLACK_${token.error ?? "OAUTH_REJECTED"}`.toUpperCase(), message: "Slack authorization was rejected.", retryable: false } : classifyConnectorHttpFailure(response.status, response.headers.get("retry-after")));
   }
   return {
     accessToken: token.access_token,
     ...(token.refresh_token ? { refreshToken: token.refresh_token } : {}),
     expiresAt: token.expires_in ? new Date(Date.now() + token.expires_in * 1_000).toISOString() : null,
-    scopes: Array.from(new Set(token.scope?.split(",").map((scope) => scope.trim()).filter(Boolean) ?? input.requestedScopes)),
+    scopes: Array.from(new Set(token.scope.split(",").map((scope) => scope.trim()).filter(Boolean))),
+    scopesConfirmedByProvider: true,
     externalAccountId: token.team.id,
     externalAccountLabel: token.team.name ?? token.team.id,
     safeMetadata: {
       ...(token.app_id ? { appId: token.app_id } : {}),
       ...(token.bot_user_id ? { botUserId: token.bot_user_id } : {}),
+      ...(token.authed_user?.id ? { installingUserId: token.authed_user.id } : {}),
     },
   };
 }

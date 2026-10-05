@@ -1,5 +1,6 @@
 import type { ConnectorActionHandler } from "@/lib/connectors/types";
 import { slackApiErrorResult, slackApiFetch } from "@/lib/connectors/slack/api";
+import { parseSlackPostAcknowledgement } from "@/lib/connectors/slack/acknowledgement";
 import { SLACK_SCOPES } from "@/lib/connectors/slack/scopes";
 import { captureOperationalEvent } from "@/lib/observability";
 import { ConnectorError, ambiguousAcknowledgement } from "@/lib/connectors/errors";
@@ -29,12 +30,13 @@ async function postSlackMessage(input: Record<string, unknown>, context: Paramet
       write: true,
       body: { channel, text: textValue(input.text), unfurl_links: false, unfurl_media: false, ...(thread ? { thread_ts: threadTs } : {}) },
     });
-    const ts = typeof body.ts === "string" ? body.ts : "";
-    const returnedChannel = typeof body.channel === "string" ? body.channel : "";
-    const returnedThread = typeof body.message === "object" && body.message && "thread_ts" in body.message ? String((body.message as { thread_ts?: unknown }).thread_ts ?? "") : threadTs;
-    if (!ts || returnedChannel !== channel || (thread && returnedThread !== threadTs)) throw new ConnectorError(ambiguousAcknowledgement("Slack did not acknowledge the requested destination and thread; delivery may have happened."));
+    const acknowledgement = parseSlackPostAcknowledgement(body, channel, thread ? threadTs : undefined);
+    if (!acknowledgement) throw new ConnectorError(ambiguousAcknowledgement("Slack did not acknowledge the requested destination and thread; delivery may have happened."));
     await captureOperationalEvent({ level: "info", event: "slack_action_success", userId: context.userId, workflowId: context.workflowId, executionId: context.executionId, stepId: context.stepId, status: "succeeded", metadata: { operation: thread ? "reply_in_thread" : "send_channel_message" } });
-    return { status: "succeeded" as const, acknowledged: true, externallyDelivered: true, providerReferenceId: ts, output: { messageId: ts, channelId: returnedChannel, ...(thread ? { threadTs: returnedThread } : {}) }, metadata: { operation: thread ? "reply_in_thread" : "send_channel_message" } };
+    return { status: "succeeded" as const, acknowledged: true, externallyDelivered: true,
+      providerReferenceId: `${acknowledgement.channelId}:${acknowledgement.messageTs}`,
+      output: { messageId: acknowledgement.messageTs, channelId: acknowledgement.channelId, ...(thread ? { threadTs: acknowledgement.threadTs } : {}) },
+      metadata: { operation: thread ? "reply_in_thread" : "send_channel_message" } };
   } catch (error) {
     await captureOperationalEvent({ level: "warn", event: "slack_action_failure", userId: context.userId, workflowId: context.workflowId, executionId: context.executionId, stepId: context.stepId, status: "failed", errorCategory: "provider" });
     return slackApiErrorResult(error);
@@ -44,12 +46,23 @@ async function postSlackMessage(input: Record<string, unknown>, context: Paramet
 export const slackSendChannelMessage: ConnectorActionHandler = (input, context) => postSlackMessage(input, context, false);
 export const slackReplyInThread: ConnectorActionHandler = (input, context) => postSlackMessage(input, context, true);
 
-export async function listSlackChannels(input: { userId: string; connectionId: string }) {
+export async function verifySlackThread(input: { userId: string; workspaceId: string; connectionId: string; channelId: string; threadTs: string }) {
+  if (!CHANNEL_ID.test(input.channelId) || !MESSAGE_TS.test(input.threadTs)) return false;
+  const query = new URLSearchParams({ channel: input.channelId, ts: input.threadTs, limit: "1" });
+  const result = await slackApiFetch({
+    userId: input.userId, workspaceId: input.workspaceId, connectionId: input.connectionId,
+    requiredScopes: [SLACK_SCOPES.channelsHistory], method: "conversations.replies", query,
+  });
+  const parent = Array.isArray(result.messages) ? result.messages[0] : null;
+  return !!parent && typeof parent === "object" && "ts" in parent && parent.ts === input.threadTs;
+}
+
+export async function listSlackChannels(input: { userId: string; workspaceId?: string; connectionId: string }) {
   const channels: Array<{ id: string; name: string; isMember: boolean }> = [];
   let cursor = "";
   do {
     const query = new URLSearchParams({ types: "public_channel", exclude_archived: "true", limit: "200", ...(cursor ? { cursor } : {}) });
-    const result = await slackApiFetch({ userId: input.userId, connectionId: input.connectionId, requiredScopes: [SLACK_SCOPES.channelsRead], method: "conversations.list", query });
+    const result = await slackApiFetch({ userId: input.userId, workspaceId: input.workspaceId, connectionId: input.connectionId, requiredScopes: [SLACK_SCOPES.channelsRead], method: "conversations.list", query });
     const items = Array.isArray(result.channels) ? result.channels : [];
     for (const item of items) {
       if (!item || typeof item !== "object") continue;

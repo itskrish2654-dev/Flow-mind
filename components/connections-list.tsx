@@ -36,9 +36,9 @@ const providerCopy: Record<ConnectionProvider, {
 }> = {
   slack: {
     name: "Slack",
-    description: "Trigger loops from channel messages and send updates back to your team.",
+    description: "Use signed messages from joined public channels in Ask and My Day. Send only after review and approval.",
     connectLabel: "Connect Slack",
-    operation: "send_channel_message",
+    operation: "",
   },
   notion: {
     name: "Notion",
@@ -145,7 +145,8 @@ function connectionFreshness(connection: ConnectionView) {
 
 function connectHref(provider: "slack" | "notion" | "google", returnPath: string, connectionId?: string) {
   const operation = providerCopy[provider].operation;
-  const query = new URLSearchParams({ operation, return: returnPath });
+  const query = new URLSearchParams({ return: returnPath });
+  if (operation) query.set("operation", operation);
   if (connectionId) query.set("connection", connectionId);
   else query.set("account", "add");
   const connectorId = provider === "google" ? "google_gmail" : provider;

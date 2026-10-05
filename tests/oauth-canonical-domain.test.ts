@@ -51,6 +51,11 @@ test("an explicitly configured staging deployment uses only the staging origin",
     vercelEnvironment: "production",
     deploymentRole: "staging",
   }));
+  assert.throws(() => resolveSiteOrigin({
+    siteUrl: "https://unexpected-deployment.example",
+    vercelEnvironment: "production",
+    deploymentRole: "staging",
+  }));
 });
 
 test("staging robots exclude crawlers without changing production robots", () => {

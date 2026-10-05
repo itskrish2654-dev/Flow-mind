@@ -30,7 +30,7 @@ test("7B2-2. Slack requests only operation-specific least privilege scopes", () 
 test("7B2-3. provider OAuth URL behavior preserves state and follows provider requirements", async () => {
   const exchange = await readFile("lib/connectors/oauth-exchange.ts", "utf8"); const notion = await readFile("lib/connectors/notion/oauth-provider.ts", "utf8"); const slack = await readFile("lib/connectors/slack/oauth-provider.ts", "utf8");
   assert.match(exchange, /url\.searchParams\.set\("state", input\.state\)/); assert.match(exchange, /auth\.pkceRequired/); assert.match(exchange, /providerFamily === "slack" \? "," : " "/);
-  assert.match(slack, /oauth\.v2\.access/); assert.match(slack, /code_verifier/); assert.match(notion, /owner", "user"/); assert.match(notion, /searchParams\.delete\("scope"\)/); assert.match(notion, /Authorization|authorization/);
+  assert.match(slack, /oauth\.v2\.access/); assert.doesNotMatch(slack, /code_verifier\s*:/); assert.equal(getConnector("slack")?.manifest.auth.pkceRequired, false); assert.match(notion, /owner", "user"/); assert.match(notion, /searchParams\.delete\("scope"\)/); assert.match(notion, /Authorization|authorization/);
 });
 
 test("7B2-4. Slack raw-body signature validates and replayed timestamps fail", () => {
@@ -54,16 +54,18 @@ test("7B2-4b. Slack URL verification echoes only a bounded challenge", async () 
 });
 
 test("7B2-5. Slack normalization rejects own bot/system events and bounds content", () => {
-  const base = { type: "event_callback", event_id: "Ev1", team_id: "T1", event_time: 1_800_000_000, event: { type: "message", channel: "C12345678", user: "U1", text: "hello", ts: "1800000000.1" } };
+  const base = { type: "event_callback", event_id: "Ev1", team_id: "T12345678", event_time: 1_800_000_000, event: { type: "message", channel_type: "channel", channel: "C12345678", user: "U12345678", text: "hello", ts: "1800000000.1" } };
   assert.equal(normalizeSlackMessage({ ...base, event: { ...base.event, bot_id: "B1" } }), null);
   assert.equal(normalizeSlackMessage({ ...base, event: { ...base.event, subtype: "message_changed" } }), null);
   assert.equal(normalizeSlackMessage(base)?.text, "hello");
-  assert.equal(normalizeSlackMessage({ ...base, event: { ...base.event, text: "x".repeat(50_000) } })?.text.length, 40_000);
+  assert.equal(normalizeSlackMessage({ ...base, event: { ...base.event, text: "x".repeat(50_000) } })?.text.length, 4_000);
+  assert.equal(normalizeSlackMessage({ ...base, event: { ...base.event, channel_type: "group" } }), null);
 });
 
 test("7B2-6. Slack actions require provider acknowledgement and preserve exact thread", async () => {
   const source = await readFile("lib/connectors/slack/messages.ts", "utf8");
-  assert.match(source, /body\.channel/); assert.match(source, /thread_ts: threadTs/); assert.match(source, /returnedThread !== threadTs/); assert.match(source, /externallyDelivered: true/); assert.match(source, /unfurl_links: false/);
+  const acknowledgement = await readFile("lib/connectors/slack/acknowledgement.ts", "utf8");
+  assert.match(source, /parseSlackPostAcknowledgement\(body, channel/); assert.match(source, /thread_ts: threadTs/); assert.match(acknowledgement, /returnedThread !== expectedThread/); assert.match(source, /externallyDelivered: true/); assert.match(source, /unfurl_links: false/);
 });
 
 test("7B2-7. Slack rate limit and reconnect states use normalized taxonomy", async () => {
@@ -136,17 +138,18 @@ test("7B2-13. webhook ingress persists durable deduplicated receipts before disp
   for (const source of [slack, notion]) { assert.match(source, /provider_event_key/); assert.match(source, /23505/); assert.match(source, /connection_id/); }
 });
 
-test("7B2-14. reviewed Slack and Notion operations remain unavailable to the product planner", () => {
+test("7B2-14. Slack public-channel operations and Notion review state follow registry truth", () => {
   const cases = [
     "When someone posts in #sales, summarize it and save it to Notion.",
     "When a new message is posted in Slack, summarize the message with AI and create a new page in Notion.",
     "When a Notion page is updated, send a message to Slack.",
     "When a public form is submitted, add it to Notion.",
-    "When an incoming webhook arrives, summarize it and send to Slack.",
-    "When I run this manually, send a message to Slack.",
     "When I run this manually, find a Notion item and update it.",
   ] as const;
   for (const prompt of cases) assert.equal(planWorkflow(prompt).status, "UNSUPPORTED", prompt);
+  for (const prompt of ["When an incoming webhook arrives, summarize it and send to Slack.", "When I run this manually, send a message to Slack."]) {
+    assert.equal(planWorkflow(prompt).status, "READY_TO_COMPILE", prompt);
+  }
 });
 
 test("7B2-15. exact connection ownership and secret boundaries are enforced server-side", async () => {

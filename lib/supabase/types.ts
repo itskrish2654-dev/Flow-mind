@@ -669,6 +669,12 @@ export type Database = {
         Update: { status?: "queued" | "processing" | "succeeded" | "failed" | "duplicate"; safe_metadata?: Json; execution_id?: string | null; processed_at?: string | null };
         Relationships: [];
       };
+      slack_message_events: {
+        Row: { id: string; connection_id: string; workspace_id: string; user_id: string; provider_event_id: string; team_id: string; channel_id: string; sender_id: string; message_ts: string; thread_ts: string | null; message_text: string; message_at: string; received_at: string };
+        Insert: { id?: string; connection_id: string; workspace_id: string; user_id: string; provider_event_id: string; team_id: string; channel_id: string; sender_id: string; message_ts: string; thread_ts?: string | null; message_text: string; message_at: string; received_at?: string };
+        Update: never;
+        Relationships: [];
+      };
       gmail_ingestion_states: {
         Row: { connection_id: string; user_id: string; processed_history_id: string; observed_history_id: string; status: "idle" | "pending" | "processing" | "resync_required" | "reconnect_required"; lease_token: string | null; lease_until: string | null; next_attempt_at: string; attempt_count: number; last_error_category: string | null; next_poll_at: string; last_polled_at: string | null; poll_lease_token: string | null; poll_lease_until: string | null; poll_error_category: string | null; created_at: string; updated_at: string };
         Insert: { connection_id: string; user_id: string; processed_history_id: string; observed_history_id: string; status?: "idle" | "pending" | "processing" | "resync_required" | "reconnect_required"; lease_token?: string | null; lease_until?: string | null; next_attempt_at?: string; attempt_count?: number; last_error_category?: string | null; next_poll_at?: string; last_polled_at?: string | null; poll_lease_token?: string | null; poll_lease_until?: string | null; poll_error_category?: string | null; created_at?: string; updated_at?: string };

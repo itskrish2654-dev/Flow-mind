@@ -18,7 +18,7 @@ export type SlackEventEnvelope = {
   event_id?: string;
   team_id?: string;
   event_time?: number;
-  event?: { type?: string; subtype?: string; channel?: string; user?: string; bot_id?: string; app_id?: string; text?: string; ts?: string; thread_ts?: string };
+  event?: { type?: string; subtype?: string; channel_type?: string; channel?: string; user?: string; bot_id?: string; app_id?: string; text?: string; ts?: string; thread_ts?: string };
 };
 
 export function getSlackUrlVerificationChallenge(payload: SlackEventEnvelope) {
@@ -28,15 +28,31 @@ export function getSlackUrlVerificationChallenge(payload: SlackEventEnvelope) {
 
 export function normalizeSlackMessage(payload: SlackEventEnvelope) {
   const event = payload.event;
-  if (payload.type !== "event_callback" || event?.type !== "message" || event.subtype || event.bot_id || event.app_id || !payload.event_id || !payload.team_id || !event.channel || !event.ts) return null;
+  const eventId = payload.event_id;
+  const teamId = payload.team_id;
+  const channelId = event?.channel;
+  const userId = event?.user;
+  const messageTs = event?.ts;
+  if (payload.type !== "event_callback" || event?.type !== "message" || event.subtype || event.bot_id || event.app_id
+    || (event.channel_type && event.channel_type !== "channel")
+    || !eventId || !/^[A-Za-z0-9_-]{1,200}$/.test(eventId)
+    || !teamId || !/^T[A-Z0-9]{7,20}$/.test(teamId)
+    || !channelId || !/^C[A-Z0-9]{7,20}$/.test(channelId)
+    || !userId || !/^[UW][A-Z0-9]{7,20}$/.test(userId)
+    || !messageTs || !/^\d{10,20}\.\d{1,10}$/.test(messageTs)
+    || (event.thread_ts && !/^\d{10,20}\.\d{1,10}$/.test(event.thread_ts))
+    || typeof event.text !== "string" || !event.text.trim()) return null;
+  const eventTime = payload.event_time && Number.isSafeInteger(payload.event_time)
+    ? payload.event_time : Number(messageTs.split(".")[0]);
+  if (!Number.isSafeInteger(eventTime) || eventTime < 1_000_000_000 || eventTime > 9_999_999_999) return null;
   return {
-    eventId: payload.event_id,
-    teamId: payload.team_id,
-    channelId: event.channel,
-    userId: event.user ?? "",
-    text: String(event.text ?? "").slice(0, 40_000),
+    eventId,
+    teamId,
+    channelId,
+    userId,
+    text: event.text.trim().slice(0, 4_000),
     threadTs: event.thread_ts ?? "",
-    messageTs: event.ts,
-    createdAt: payload.event_time ? new Date(payload.event_time * 1_000).toISOString() : new Date(Number(event.ts.split(".")[0]) * 1_000).toISOString(),
+    messageTs,
+    createdAt: new Date(eventTime * 1_000).toISOString(),
   };
 }

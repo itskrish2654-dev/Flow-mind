@@ -12,6 +12,8 @@ import { parseGmailSendIntent } from "@/lib/connectors/google/gmail-action-inten
 import { parseSheetWriteIntent } from "@/lib/connectors/google/sheets-action-intent";
 import { findSelectedGoogleSpreadsheetRow, inspectSelectedGoogleWorksheet, readSelectedGoogleSpreadsheetRow } from "@/lib/connectors/google/sheets";
 import { resolveSelectedSheetForQuestion } from "@/lib/connectors/google/sheets-work-context";
+import { parseSlackReplyIntent, parseSlackSendIntent } from "@/lib/connectors/slack/action-intent";
+import { listSlackChannels, verifySlackThread } from "@/lib/connectors/slack/messages";
 import type { Database } from "@/lib/supabase/types";
 
 type Scope = { userId: string; workspaceId: string; supabase: SupabaseClient<Database> };
@@ -53,6 +55,18 @@ async function ownedGmailSendConnection(scope: Scope, requiredScopes: readonly s
   if (error) throw new Error("Gmail sending account could not be checked.");
   const usable = (data ?? []).filter((item) => requiredScopes.every((scope) => item.granted_scopes.includes(scope)));
   if (fromAccount) return usable.find((item) => item.external_account_label?.toLowerCase() === fromAccount.toLowerCase()) ?? null;
+  if (usable.length > 1) return "selection_required" as const;
+  return usable[0] ?? null;
+}
+
+async function ownedSlackSendConnection(scope: Scope, requiredScopes: readonly string[]) {
+  const { data, error } = await scope.supabase.from("connector_connections")
+    .select("id,external_account_label,granted_scopes")
+    .eq("workspace_id", scope.workspaceId).eq("user_id", scope.userId)
+    .eq("provider_family", "slack").eq("connector_id", "slack")
+    .eq("status", "connected").order("created_at", { ascending: false }).limit(6);
+  if (error) throw new Error("Slack sending account could not be checked.");
+  const usable = (data ?? []).filter((item) => requiredScopes.every((required) => item.granted_scopes.includes(required)));
   if (usable.length > 1) return "selection_required" as const;
   return usable[0] ?? null;
 }
@@ -262,6 +276,67 @@ export async function planAskAction(scope: Scope, question: string): Promise<Ask
     if (!preview.success) {
       return clarification("The email cannot be safely prepared within the approval limits. Shorten the message or remove credential-like text. Nothing was sent.");
     }
+    return response(preview.data);
+  }
+
+  const slackReply = parseSlackReplyIntent(question);
+  if (slackReply) {
+    if (slackReply === "clarification") return clarification("Name one joined public Slack channel, the exact parent thread timestamp, and the reply text. Nothing was sent.");
+    const capability = getCapability("slack_reply_in_thread");
+    if (!capability?.supported || !capability.availableInProduction || !capability.connectorOperation) return null;
+    const connection = await ownedSlackSendConnection(scope, capability.requiredScopes);
+    if (connection === "selection_required") return clarification("More than one Slack workspace is connected. Select one connection in your workflow or disconnect the unused installation before replying through Ask. Nothing was sent.");
+    if (!connection) return connectionRequired("Slack");
+    const channels = (await listSlackChannels({ userId: scope.userId, workspaceId: scope.workspaceId, connectionId: connection.id }))
+      .filter((channel) => channel.isMember && channel.name.toLowerCase() === slackReply.channelName);
+    if (channels.length !== 1) return clarification(`I could not identify one joined public Slack channel named #${slackReply.channelName}. Nothing was sent.`);
+    const channel = channels[0];
+    if (!await verifySlackThread({ userId: scope.userId, workspaceId: scope.workspaceId, connectionId: connection.id, channelId: channel.id, threadTs: slackReply.threadTs })) {
+      return clarification("I could not verify that exact Slack parent message in the selected channel. Nothing was sent.");
+    }
+    const preview = ActionPreviewSchema.safeParse({
+      version: 1,
+      capabilityId: capability.id,
+      connectorId: capability.connectorOperation.connectorId,
+      operationKey: capability.connectorOperation.operationKey,
+      operationVersion: capability.connectorOperation.operationVersion,
+      connectionId: connection.id,
+      actionTitle: `Reply in #${channel.name} on Slack`,
+      actionSummary: `Reply to the exact thread ${slackReply.threadTs} in #${channel.name} in ${connection.external_account_label ?? "the selected Slack workspace"}.`,
+      approvalReason: "Replying in a Slack thread is an external side effect and requires approval.",
+      target: { kind: "external_resource", label: `#${channel.name} thread ${slackReply.threadTs}`, reference: `${channel.id}:${slackReply.threadTs}` },
+      parameters: [parameter("channel", "Channel", channel.id), parameter("threadTs", "Parent message", slackReply.threadTs), parameter("text", "Reply", slackReply.text)],
+    });
+    if (!preview.success) return clarification("The Slack reply cannot be safely prepared within approval limits. Shorten it or remove credential-like text. Nothing was sent.");
+    return response(preview.data);
+  }
+
+  const slackSend = parseSlackSendIntent(question);
+  if (slackSend) {
+    if (slackSend === "clarification") return clarification("Name one exact public Slack channel and the exact message, for example: ‘Tell #sales that the proposal is ready.’ Nothing was sent.");
+    const capability = getCapability("slack_send_channel_message");
+    if (!capability?.supported || !capability.availableInProduction || !capability.connectorOperation) return null;
+    const connection = await ownedSlackSendConnection(scope, capability.requiredScopes);
+    if (connection === "selection_required") return clarification("More than one Slack workspace is connected. Select one connection in your workflow or disconnect the unused installation before sending through Ask. Nothing was sent.");
+    if (!connection) return connectionRequired("Slack");
+    const channels = (await listSlackChannels({ userId: scope.userId, workspaceId: scope.workspaceId, connectionId: connection.id }))
+      .filter((channel) => channel.isMember && channel.name.toLowerCase() === slackSend.channelName);
+    if (channels.length !== 1) return clarification(`I could not identify one joined public Slack channel named #${slackSend.channelName}. Invite the CrazyLoops app to the channel or specify a different one. Nothing was sent.`);
+    const channel = channels[0];
+    const preview = ActionPreviewSchema.safeParse({
+      version: 1,
+      capabilityId: capability.id,
+      connectorId: capability.connectorOperation.connectorId,
+      operationKey: capability.connectorOperation.operationKey,
+      operationVersion: capability.connectorOperation.operationVersion,
+      connectionId: connection.id,
+      actionTitle: `Post to #${channel.name} in Slack`,
+      actionSummary: `Post the exact message to #${channel.name} in ${connection.external_account_label ?? "the selected Slack workspace"}.`,
+      approvalReason: "Posting a Slack message is an external side effect and requires approval.",
+      target: { kind: "external_resource", label: `#${channel.name}`, reference: channel.id },
+      parameters: [parameter("channel", "Channel", channel.id), parameter("text", "Message", slackSend.text)],
+    });
+    if (!preview.success) return clarification("The Slack message cannot be safely prepared within approval limits. Shorten it or remove credential-like text. Nothing was sent.");
     return response(preview.data);
   }
 

@@ -178,7 +178,11 @@ function requestedExternalCapability(question: string): string | null {
   if (!asksForExternalUse) return null;
   const googleSources = askGoogleSourceSignals(question);
   if (googleSources.gmail) return /\b(send|reply)\b/.test(text) || /^email\b/.test(text) ? "gmail_send_email" : "gmail_new_email";
-  if (/\b(slack|channel)\b/.test(text)) return /\b(send|post|message|notify|reply)\b/.test(text) ? "slack_send_channel_message" : "slack_new_channel_message";
+  // A question about a Slack message is a read, never an outbound action.
+  if (/\b(slack|channel)\b|#[a-z0-9_-]+\b/.test(text)) {
+    if (/^(?:please\s+)?reply\b/.test(text)) return "slack_reply_in_thread";
+    return /^(?:please\s+)?(?:send|post|tell|notify)\b/.test(text) ? "slack_send_channel_message" : null;
+  }
   if (googleSources.sheets) return /\b(update|change|write|mark|set)\b/.test(text)
     ? "google_sheets_update_row" : /\b(add|append|create)\b/.test(text)
       ? "google_sheets_add_row" : "google_sheets_find_row";
@@ -324,7 +328,9 @@ async function generateResponse(auth: AuthContext, question: string, history: As
     // preview. A supported workflow action is not automatically an Ask action.
     if (externalCapabilityId === "gmail_send_email"
       || externalCapabilityId === "google_sheets_add_row"
-      || externalCapabilityId === "google_sheets_update_row") {
+      || externalCapabilityId === "google_sheets_update_row"
+      || externalCapabilityId === "slack_send_channel_message"
+      || externalCapabilityId === "slack_reply_in_thread") {
       return unsupportedAskResponse("this request without an exact approved action preview");
     }
   }

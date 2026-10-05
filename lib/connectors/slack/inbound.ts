@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import { normalizeSlackMessage, type SlackEventEnvelope, verifySlackRequest } from "@/lib/connectors/slack/events";
+import { SLACK_SCOPES } from "@/lib/connectors/slack/scopes";
+import { classifySlackWork, slackWorkItemDedupeKey } from "@/lib/connectors/slack/work-items-core";
 import { captureOperationalEvent } from "@/lib/observability";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Json } from "@/lib/supabase/types";
@@ -11,13 +13,52 @@ export async function queueSlackEvent(request: Request, raw: Uint8Array, payload
   const message = normalizeSlackMessage(payload);
   if (!message) return { receiptIds: [] };
   const admin = createAdminClient();
-  const { data: connections } = await admin.from("connector_connections").select("id,user_id,safe_metadata")
+  const { data: connections, error: connectionError } = await admin.from("connector_connections")
+    .select("id,user_id,workspace_id,granted_scopes,safe_metadata")
     .eq("provider_family", "slack").eq("external_account_id", message.teamId).eq("status", "connected");
+  if (connectionError) throw new Error("SLACK_CONNECTION_LOOKUP_FAILED");
   const eligible = (connections ?? []).filter((connection) => {
     const metadata = connection.safe_metadata && typeof connection.safe_metadata === "object" && !Array.isArray(connection.safe_metadata) ? connection.safe_metadata as Record<string, unknown> : {};
-    return message.userId !== metadata.botUserId;
+    return message.userId !== metadata.botUserId
+      && connection.granted_scopes.includes(SLACK_SCOPES.channelsHistory);
   });
   if (!eligible.length) return { receiptIds: [] };
+  for (const connection of eligible) {
+    const { error: eventError } = await admin.from("slack_message_events").insert({
+      connection_id: connection.id,
+      workspace_id: connection.workspace_id,
+      user_id: connection.user_id,
+      provider_event_id: message.eventId,
+      team_id: message.teamId,
+      channel_id: message.channelId,
+      sender_id: message.userId,
+      message_ts: message.messageTs,
+      thread_ts: message.threadTs || null,
+      message_text: message.text,
+      message_at: message.createdAt,
+    });
+    if (eventError && eventError.code !== "23505") throw new Error("SLACK_WORK_EVENT_STORE_FAILED");
+    const metadata = connection.safe_metadata && typeof connection.safe_metadata === "object" && !Array.isArray(connection.safe_metadata)
+      ? connection.safe_metadata as Record<string, unknown> : {};
+    const installingUserId = typeof metadata.installingUserId === "string" ? metadata.installingUserId : null;
+    if (classifySlackWork(message.text, installingUserId) === "ACTIONABLE") {
+      const { error: itemError } = await admin.from("work_items").insert({
+        workspace_id: connection.workspace_id,
+        assignee_user_id: connection.user_id,
+        title: `Slack request in channel ${message.channelId}`,
+        summary: message.text.replace(/\s+/g, " ").slice(0, 1_000),
+        why_it_matters: "This public-channel message explicitly mentions you and asks for an action.",
+        suggested_action: "Review the Slack message and decide how to respond.",
+        status: "needs_you",
+        priority: "normal",
+        source_type: "connector_event",
+        source_id: connection.id,
+        source_label: "Slack",
+        dedupe_key: slackWorkItemDedupeKey(message.eventId),
+      });
+      if (itemError && itemError.code !== "23505") throw new Error("SLACK_WORK_ITEM_STORE_FAILED");
+    }
+  }
   const { data: subscriptions } = await admin.from("connector_subscriptions").select("id,user_id,workflow_id,workflow_version_id,connection_id,safe_metadata")
     .in("connection_id", eligible.map((connection) => connection.id)).eq("connector_id", "slack").eq("operation_key", "new_channel_message").eq("status", "active");
   const receiptIds: string[] = [];

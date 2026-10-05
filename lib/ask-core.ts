@@ -39,6 +39,7 @@ export const AskToolIdSchema = z.enum([
   "sheets_search",
   "company_knowledge",
   "goals",
+  "slack_search",
 ]);
 export type AskToolId = z.infer<typeof AskToolIdSchema>;
 
@@ -54,6 +55,7 @@ export const AskReferenceKindSchema = z.enum([
   "sheet_range",
   "knowledge_chunk",
   "goal",
+  "slack_message",
 ]);
 export type AskReferenceKind = z.infer<typeof AskReferenceKindSchema>;
 
@@ -99,7 +101,7 @@ export type AskResponseMetadata = z.infer<typeof AskResponseMetadataSchema>;
 export const AskModelOutputSchema = z.object({
   responseType: z.enum(ASK_MODEL_RESPONSE_TYPES),
   answer: z.string().trim().min(1).max(ASK_LIMITS.modelAnswerCharacters),
-  referenceKeys: z.array(z.string().regex(/^(?:work_item|approval|workflow|execution|action_execution|activity|gmail_message|sheet_row|sheet_range|knowledge_chunk|goal):\d+$/)).max(12),
+  referenceKeys: z.array(z.string().regex(/^(?:work_item|approval|workflow|execution|action_execution|activity|gmail_message|sheet_row|sheet_range|knowledge_chunk|goal|slack_message):\d+$/)).max(12),
   clarificationRequired: z.boolean(),
   suggestedAction: AskSuggestedActionSchema.optional(),
 }).strict();
@@ -219,6 +221,8 @@ export function selectAskTools(question: string): AskToolId[] {
   }
   if (/\b(?:handbook|polic(?:y|ies)|sop|procedure|documents?|onboard(?:ing)?|annual leave|refund|reimbursement|qualif(?:y|ied) (?:sales )?lead|purchases?|company knowledge)\b/.test(text)
     || /\b(?:our|company)\b[^?.!]{0,80}\b(?:process|rule|guideline)\b/.test(text)) tools.push("company_knowledge");
+  const directSlackSend = /^\s*(?:please\s+)?(?:tell|post(?: a message)? to|send(?: a message)? to|notify)\s+#/i.test(question);
+  if (!directSlackSend && (/\bslack\b|#[a-z0-9_-]+\b|\b(?:team say|team said|discussed|discussion|anyone reply|anyone replied)\b/.test(text))) tools.push("slack_search");
   if (employeeApprovalAction) tools.push("pending_approvals");
   if (historicalApprovalFact) tools.push("work_items");
   if (/waiting|handled|task|work item|needs you/.test(text)) tools.push("work_items");
@@ -407,6 +411,7 @@ function emptyAnswer(tools: readonly AskToolId[]): string {
   if (tools.includes("company_knowledge")) return "The uploaded company documents do not specify that. Ask an owner or admin to add the relevant source if it should be available.";
   if (tools.includes("sheets_search")) return "I found no matching rows in the bounded selected spreadsheet range. Ask about a narrower range if the sheet has more data.";
   if (tools.includes("gmail_search")) return "I found no matching Gmail messages in the bounded recent mailbox search.";
+  if (tools.includes("slack_search")) return "I found no matching Slack messages among the recently captured, permitted public-channel events.";
   if (tools.includes("my_day")) return "There is nothing in CrazyLoops that needs your attention right now.";
   if (tools.includes("pending_approvals")) return "You have no pending approvals in CrazyLoops right now.";
   if (tools.includes("recent_activity")) return "I found no matching Activity in the bounded recent history I checked.";
@@ -424,10 +429,13 @@ export async function runGroundedAsk(input: {
   const tools = selectAskTools(input.question);
   const toolResults = await Promise.all(tools.map((tool) => input.loadTool(AskToolIdSchema.parse(tool))));
   const unavailable = toolResults.find((result) => result.availability && result.availability !== "ok");
-  const hasDurableActionOutcome = isAskActionOutcomeQuestion(input.question)
+  const hasDurableGmailOutcome = isAskActionOutcomeQuestion(input.question)
     && toolResults.some((result) => result.tool === "action_activity"
       && result.records.some((record) => record.facts.capability === "gmail_send_email"));
-  if (unavailable?.tool === "gmail_search" && !hasDurableActionOutcome) {
+  const hasDurableSlackOutcome = isAskActionOutcomeQuestion(input.question)
+    && toolResults.some((result) => result.tool === "action_activity"
+      && result.records.some((record) => record.facts.capability === "slack_send_channel_message"));
+  if (unavailable?.tool === "gmail_search" && !hasDurableGmailOutcome) {
     if (unavailable.availability === "account_selection_required") {
       return {
         answer: "Which connected Gmail account should I search? Include that account's email address in your question. No mailbox was searched.",
@@ -469,6 +477,14 @@ export async function runGroundedAsk(input: {
     metadata: { version: 1, responseType: "clarification", clarificationRequired: true,
       references: [ambiguousSheet.reference] },
   };
+  if (unavailable?.tool === "slack_search" && !hasDurableSlackOutcome) {
+    if (unavailable.availability === "account_selection_required") {
+      return { answer: "Which connected Slack workspace should I search? Name it in your question. No messages were searched.", metadata: { version: 1, responseType: "clarification", clarificationRequired: true, references: [] } };
+    }
+    const reconnect = unavailable.availability === "reconnect_required";
+    const answer = reconnect ? "Reconnect Slack before CrazyLoops can search its captured messages." : "Connect Slack before CrazyLoops can search captured messages.";
+    return { answer, metadata: { version: 1, responseType: "unsupported", clarificationRequired: false, references: [], unsupportedReason: answer, suggestedAction: { label: reconnect ? "Reconnect Slack" : "Connect Slack", href: "/connections" } } };
+  }
   if (toolResults.every((result) => result.records.length === 0)) {
     return {
       answer: emptyAnswer(tools),

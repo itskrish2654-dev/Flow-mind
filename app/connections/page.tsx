@@ -56,7 +56,8 @@ export default async function ConnectionsPage({
     : typeof params.error === "string" ? params.error : null;
   const slackAvailable = Boolean(
     process.env.FLOWMIND_CONNECTOR_SLACK_CLIENT_ID
-    && process.env.FLOWMIND_CONNECTOR_SLACK_CLIENT_SECRET,
+    && process.env.FLOWMIND_CONNECTOR_SLACK_CLIENT_SECRET
+    && process.env.FLOWMIND_CONNECTOR_SLACK_SIGNING_SECRET,
   );
   const notionAvailable = Boolean(
     process.env.FLOWMIND_CONNECTOR_NOTION_CLIENT_ID

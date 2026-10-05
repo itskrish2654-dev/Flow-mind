@@ -673,7 +673,7 @@ test("provider boundary is server-only and tells the model retrieved records are
   assert.match(source, /never invent or infer.*dependency.*blocker.*causal.*sequencing requirement.*deadline.*ownership/i);
   assert.match(source, /recommend.*explicit retrieved facts.*priority.*due date.*status.*whyItMatters.*suggestedAction/i);
   assert.match(source, /recommendation.*recorded dependency/i);
-  assert.match(source, /Never claim to read or change Gmail, Slack, Calendar, Sheets, Notion/);
+  assert.match(source, /Never claim to read or change an external service unless a current retrieved record or acknowledged action outcome explicitly proves it/);
   assert.doesNotMatch(source, /GROQ_API_KEY|process\.env/);
 });
 

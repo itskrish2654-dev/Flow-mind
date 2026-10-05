@@ -29,7 +29,7 @@ const providerDetails: Record<ConnectionProvider, {
   slack: {
     name: "Slack",
     fallbackLabel: "Connected Slack workspace",
-    permissionSummary: "Read selected public channel activity and send the messages you configure.",
+    permissionSummary: "Capture new messages from joined public channels. Send exact approved messages to joined public channels. No historical channel crawl.",
   },
   notion: {
     name: "Notion",
