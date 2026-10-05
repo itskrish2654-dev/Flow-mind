@@ -323,8 +323,10 @@ test("7B-33. Picker selection is verified and persisted server-side", async () =
   const actions = await readFile("app/actions/connections.ts", "utf8");
   assert.match(selected, /pickerAccessTokenMatchesConnection/);
   assert.match(selected, /externalAccountId: connection\.external_account_id/);
-  assert.match(token, /info\.audience, info\.issued_to/);
-  assert.match(token, /info\.user_id !== input\.externalAccountId/);
+  assert.match(token, /info\.audience, info\.issued_to, info\.aud, info\.azp/);
+  assert.match(token, /audiences\.some\(\(value\) => value !== input\.expectedAudience\)/);
+  assert.match(token, /info\.user_id, info\.sub/);
+  assert.match(token, /accountIds\.some\(\(value\) => value !== input\.externalAccountId\)/);
   assert.match(token, /scopes\.has\(GOOGLE_SCOPES\.driveFile\)/);
   assert.match(selected, /file\.mimeType !== GOOGLE_SPREADSHEET_MIME_TYPE/);
   assert.match(selected, /google_selected_spreadsheets/);

@@ -82,16 +82,27 @@ test("append acknowledgement identifies exactly one inserted data row", () => {
 test("Picker access-token tokeninfo is bound to the exact OAuth client, account, scope, and expiry", () => {
   const valid = { audience: "client-1", issued_to: "client-1", user_id: "google-user-1",
     scope: "openid email https://www.googleapis.com/auth/drive.file", expires_in: 100 };
+  const current = { aud: "client-1", azp: "client-1", sub: "google-user-1",
+    scope: "https://www.googleapis.com/auth/drive.file", expires_in: 100 };
   const check = (tokenInfo: unknown) => pickerAccessTokenMatchesConnection({
     tokenInfo, expectedAudience: "client-1", externalAccountId: "google-user-1",
   });
   assert.equal(check(valid), true);
+  assert.equal(check(current), true);
+  assert.equal(check({ ...valid, ...current }), true);
   assert.equal(check({ ...valid, audience: "another-client" }), false);
   assert.equal(check({ ...valid, user_id: "another-user" }), false);
+  assert.equal(check({ ...current, aud: "another-client" }), false);
+  assert.equal(check({ ...current, sub: "another-user" }), false);
+  assert.equal(check({ ...valid, aud: "another-client" }), false);
+  assert.equal(check({ ...valid, sub: "another-user" }), false);
+  assert.equal(check({ ...current, aud: 1 }), false);
+  assert.equal(check({ ...current, sub: 1 }), false);
   assert.equal(check({ ...valid, scope: "openid email" }), false);
   assert.equal(check({ ...valid, expires_in: 0 }), false);
   assert.equal(check({ ...valid, scope: `${valid.scope} https://www.googleapis.com/auth/spreadsheets` }), false);
-  assert.equal(check({ aud: "client-1", sub: "google-user-1", scope: valid.scope, expires_in: 100 }), false);
+  assert.equal(check({ sub: "google-user-1", scope: valid.scope, expires_in: 100 }), false);
+  assert.equal(check({ aud: "client-1", scope: valid.scope, expires_in: 100 }), false);
 });
 
 test("Sheets read context is bounded and advertises truncation", () => {
