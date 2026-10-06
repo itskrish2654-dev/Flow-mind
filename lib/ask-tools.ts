@@ -17,6 +17,7 @@ import { loadMyDayData } from "@/lib/my-day";
 import { listCurrentUserPendingApprovals } from "@/lib/approvals";
 import { listCurrentUserWorkItems } from "@/lib/work-items";
 import { listCurrentUserActionExecutions } from "@/lib/action-executions";
+import { slackActionProposalEvidence } from "@/lib/action-execution-core";
 import { readGmailForAsk } from "@/lib/connectors/google/gmail-read";
 import { findSelectedGoogleSpreadsheetRow, inspectSelectedGoogleWorksheet, readSelectedGoogleSpreadsheetRows } from "@/lib/connectors/google/sheets";
 import { resolveSelectedSheetForQuestion } from "@/lib/connectors/google/sheets-work-context";
@@ -195,30 +196,45 @@ async function loadRecentActivity(scope: AskTrustedScope, question: string): Pro
 }
 
 async function loadActionActivity(scope: AskTrustedScope): Promise<AskToolResult> {
-  await assertTrustedScope(scope);
+  const auth = await assertTrustedScope(scope);
   const actions = await listCurrentUserActionExecutions(ASK_LIMITS.recordsPerTool);
+  const slackApprovalIds = actions.filter((action) =>
+    action.capability_id === "slack_send_channel_message" || action.capability_id === "slack_reply_in_thread",
+  ).map((action) => action.approval_request_id);
+  const approvalResult = slackApprovalIds.length
+    ? await auth.supabase.from("approval_requests").select("id,action_snapshot")
+        .eq("workspace_id", scope.workspaceId).eq("approver_user_id", scope.userId)
+        .in("id", slackApprovalIds)
+    : { data: [], error: null };
+  if (approvalResult.error) throw new Error("Action approval evidence is unavailable.");
+  const snapshots = new Map((approvalResult.data ?? []).map((approval) => [approval.id, approval.action_snapshot]));
   return {
     tool: "action_activity",
     summary: `${actions.length} approval-backed action result${actions.length === 1 ? "" : "s"} belong to this employee.`,
-    records: actions.map((action, index) => safeRecord({
-      key: `action_execution:${index}`,
-      kind: "action_execution",
-      id: action.id,
-      label: action.capability_id,
-      href: `/my-day#work-item-${action.work_item_id}`,
-      facts: {
-        capability: action.capability_id,
-        status: action.status.replaceAll("_", " "),
-        acknowledged: action.acknowledged ? "yes" : "no",
-        externallyDelivered: action.externally_delivered ? "yes" : "no",
-        result: action.result_summary,
-        failureCategory: action.failure_category,
-        failureMessage: action.failure_message,
-        providerReference: action.provider_reference_id,
-        createdAt: action.created_at,
-        completedAt: action.completed_at,
-      },
-    })),
+    records: actions.map((action, index) => {
+      const proposal = slackActionProposalEvidence(snapshots.get(action.approval_request_id), action.capability_id);
+      return safeRecord({
+        key: `action_execution:${index}`,
+        kind: "action_execution",
+        id: action.id,
+        label: action.capability_id,
+        href: `/my-day#work-item-${action.work_item_id}`,
+        facts: {
+          capability: action.capability_id,
+          proposalMessageText: proposal?.messageText,
+          proposalTarget: proposal?.target,
+          status: action.status.replaceAll("_", " "),
+          acknowledged: action.acknowledged ? "yes" : "no",
+          externallyDelivered: action.externally_delivered ? "yes" : "no",
+          result: action.result_summary,
+          failureCategory: action.failure_category,
+          failureMessage: action.failure_message,
+          providerReference: action.provider_reference_id,
+          createdAt: action.created_at,
+          completedAt: action.completed_at,
+        },
+      });
+    }),
   };
 }
 

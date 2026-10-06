@@ -77,3 +77,13 @@ export function actionApprovalDisposition(
   if (status === "queued" && decision === "approved") return "resume_queued";
   return "already_decided";
 }
+
+/** Only the immutable, validated Slack proposal text may identify a specific action in Ask. */
+export function slackActionProposalEvidence(snapshot: unknown, capabilityId: string) {
+  if (capabilityId !== "slack_send_channel_message" && capabilityId !== "slack_reply_in_thread") return null;
+  const parsed = ApprovalActionSnapshotSchema.safeParse(snapshot);
+  if (!parsed.success || parsed.data.operationKey !== capabilityId) return null;
+  const messageText = parsed.data.parameters.find((parameter) => parameter.name === "text")?.value;
+  if (!messageText) return null;
+  return { messageText, target: parsed.data.target.label };
+}

@@ -340,17 +340,24 @@ test("persisted Slack outcome remains truthful in My Day and Ask", async ({ page
   if (ownerError || !owner.user?.email || owner.user.user_metadata?.acceptance_run !== "work-os-slack-v1") {
     throw new Error("Marked disposable Slack owner is unavailable.");
   }
-  const { data: action, error: actionError } = await admin.from("action_executions").select("*")
+  const { data: candidates, error: actionError } = await admin.from("action_executions").select("*")
     .eq("requester_user_id", userId).eq("capability_id", "slack_send_channel_message")
-    .order("created_at", { ascending: false }).limit(1).single();
-  if (actionError || !action || action.status !== "succeeded" || !action.acknowledged || !action.externally_delivered) {
+    .eq("status", "succeeded").order("created_at", { ascending: false }).limit(10);
+  if (actionError || !candidates?.length) {
     throw new Error("The real acknowledged Slack action is missing.");
   }
-  const { data: approval, error: approvalError } = await admin.from("approval_requests")
-    .select("action_snapshot").eq("id", action.approval_request_id).single();
-  if (approvalError || !approval) throw new Error("The approved Slack action snapshot is missing.");
-  const snapshot = approval.action_snapshot as { parameters?: Array<{ name?: string; value?: string }> };
-  expect(snapshot.parameters?.find((item) => item.name === "text")?.value).toBe(MARKER);
+  const { data: approvals, error: approvalError } = await admin.from("approval_requests")
+    .select("id,action_snapshot").in("id", candidates.map((item) => item.approval_request_id));
+  if (approvalError || !approvals) throw new Error("The approved Slack snapshots are unavailable.");
+  const matching = candidates.filter((item) => {
+    const snapshot = approvals.find((approval) => approval.id === item.approval_request_id)?.action_snapshot as
+      | { parameters?: Array<{ name?: string; value?: string }> } | undefined;
+    return snapshot?.parameters?.find((parameter) => parameter.name === "text")?.value === MARKER;
+  });
+  if (matching.length !== 1 || !matching[0].acknowledged || !matching[0].externally_delivered) {
+    throw new Error("Exactly one provider-acknowledged Slack action did not match the acceptance marker.");
+  }
+  const action = matching[0];
   const { count: initialActionCount } = await admin.from("action_executions").select("id", { count: "exact", head: true })
     .eq("requester_user_id", userId).eq("capability_id", "slack_send_channel_message");
   const password = `Ac!${randomBytes(24).toString("base64url")}7z`;

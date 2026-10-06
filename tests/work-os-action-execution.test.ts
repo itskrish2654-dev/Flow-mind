@@ -6,6 +6,7 @@ import {
   ActionPreviewSchema,
   actionApprovalDisposition,
   actionOutcomeSummary,
+  slackActionProposalEvidence,
   approvalSnapshotFromPreview,
 } from "../lib/action-execution-core";
 import { AskResponseMetadataSchema, selectAskTools } from "../lib/ask-core";
@@ -52,6 +53,25 @@ test("stale approval decisions are denied while a queued approved action can saf
   }
   const service = readFileSync("lib/action-executions.ts", "utf8");
   assert.match(service, /if \(disposition === "already_decided"\) throw new Error/);
+});
+
+test("Ask can identify the exact reviewed Slack message without trusting an arbitrary snapshot", () => {
+  const snapshot = approvalSnapshotFromPreview({
+    ...preview,
+    capabilityId: "slack_send_channel_message",
+    target: { kind: "external_resource", label: "#test-crazyloops", reference: "C0BR8V8MKDW" },
+    parameters: [{ name: "text", label: "Message", value: "CrazyLoops exact Slack acceptance marker" }],
+  });
+  assert.deepEqual(slackActionProposalEvidence(snapshot, "slack_send_channel_message"), {
+    messageText: "CrazyLoops exact Slack acceptance marker", target: "#test-crazyloops",
+  });
+  assert.equal(slackActionProposalEvidence(snapshot, "slack_reply_in_thread"), null);
+  assert.equal(slackActionProposalEvidence(snapshot, "gmail_send_email"), null);
+  assert.equal(slackActionProposalEvidence({ ...snapshot, extra: "unreviewed" }, "slack_send_channel_message"), null);
+  assert.equal(slackActionProposalEvidence({ ...snapshot, parameters: [{ name: "text", label: "Message", value: "Bearer abcdefghijklmnopqrstuvwxyz" }] }, "slack_send_channel_message"), null);
+  const tools = readFileSync("lib/ask-tools.ts", "utf8");
+  assert.match(tools, /\.eq\("workspace_id", scope\.workspaceId\)\.eq\("approver_user_id", scope\.userId\)/);
+  assert.match(tools, /proposalMessageText: proposal\?\.messageText/);
 });
 
 test("Ask metadata accepts only a validated action preview and routes outcome questions to durable action activity", () => {
