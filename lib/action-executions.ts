@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import {
   ActionPreviewSchema,
+  actionApprovalDisposition,
   actionOutcomeSummary,
   approvalSnapshotFromPreview,
   type ActionPreview,
@@ -282,7 +283,9 @@ export async function decideAndExecuteCurrentUserAction(input: {
   if (!existing) return null;
 
   let action = existing;
-  if (action.status === "pending_approval") {
+  const disposition = actionApprovalDisposition(action.status, input.decision);
+  if (disposition === "already_decided") throw new Error("Action approval was already decided.");
+  if (disposition === "decide") {
     const { data, error } = await admin.rpc("decide_action_execution", {
       p_approval_id: approvalId,
       p_actor_user_id: auth.user.id,

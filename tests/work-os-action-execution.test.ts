@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   ActionPreviewSchema,
+  actionApprovalDisposition,
   actionOutcomeSummary,
   approvalSnapshotFromPreview,
 } from "../lib/action-execution-core";
@@ -38,6 +39,19 @@ test("action previews and stored approval snapshots are strict, bounded, and sec
   assert.equal(ActionPreviewSchema.safeParse({ ...preview, arbitraryUrl: "https://attacker.invalid" }).success, false);
   assert.equal(ActionPreviewSchema.safeParse({ ...preview, parameters: [{ name: "api_key", label: "Key", value: "value" }] }).success, false);
   assert.equal(ActionPreviewSchema.safeParse({ ...preview, parameters: [{ name: "body", label: "Body", value: "Bearer abcdefghijklmnopqrstuvwxyz" }] }).success, false);
+});
+
+test("stale approval decisions are denied while a queued approved action can safely resume", () => {
+  assert.equal(actionApprovalDisposition("pending_approval", "approved"), "decide");
+  assert.equal(actionApprovalDisposition("pending_approval", "rejected"), "decide");
+  assert.equal(actionApprovalDisposition("queued", "approved"), "resume_queued");
+  assert.equal(actionApprovalDisposition("queued", "rejected"), "already_decided");
+  for (const status of ["executing", "succeeded", "failed", "ambiguous", "rejected", "cancelled"] as const) {
+    assert.equal(actionApprovalDisposition(status, "approved"), "already_decided");
+    assert.equal(actionApprovalDisposition(status, "rejected"), "already_decided");
+  }
+  const service = readFileSync("lib/action-executions.ts", "utf8");
+  assert.match(service, /if \(disposition === "already_decided"\) throw new Error/);
 });
 
 test("Ask metadata accepts only a validated action preview and routes outcome questions to durable action activity", () => {

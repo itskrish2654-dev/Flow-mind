@@ -66,3 +66,14 @@ export function actionOutcomeSummary(status: ActionExecutionStatus): string {
 export function isTerminalActionStatus(status: ActionExecutionStatus) {
   return ["succeeded", "failed", "ambiguous", "rejected", "cancelled"].includes(status);
 }
+
+export function actionApprovalDisposition(
+  status: ActionExecutionStatus,
+  decision: "approved" | "rejected",
+): "decide" | "resume_queued" | "already_decided" {
+  if (status === "pending_approval") return "decide";
+  // An approved action can be resumed after an interrupted request. The
+  // database claim still permits only one provider execution.
+  if (status === "queued" && decision === "approved") return "resume_queued";
+  return "already_decided";
+}
