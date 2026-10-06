@@ -374,27 +374,35 @@ test("persisted Slack outcome remains truthful in My Day and Ask", async ({ page
   await expect(page.getByText("Approved action completed").first()).toBeVisible({ timeout: 30_000 });
 
   const question = `Did CrazyLoops send the approved Slack test message "${MARKER}"?`;
+  const previousTurn = await admin.from("ask_turns").select("id").eq("user_id", userId).eq("question", question)
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (previousTurn.error) throw previousTurn.error;
   await page.goto("/ask");
   await page.getByLabel("Ask CrazyLoops").fill(question);
   await page.getByRole("button", { name: "Send message" }).click();
   await expect(page.getByRole("region", { name: "Ask conversation" }).getByText(question, { exact: true }))
     .toBeVisible({ timeout: 30_000 });
+  let submittedTurnId: string | null = null;
   await expect.poll(async () => {
-    const turn = await admin.from("ask_turns").select("state").eq("user_id", userId).eq("question", question)
+    const turn = await admin.from("ask_turns").select("id").eq("user_id", userId).eq("question", question)
       .order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (turn.error) throw turn.error;
-    return turn.data?.state ?? null;
-  }, { timeout: 60_000 }).toBe("completed");
-  const turn = await admin.from("ask_turns").select("id").eq("user_id", userId).eq("question", question)
-    .order("created_at", { ascending: false }).limit(1).single();
-  if (turn.error) throw turn.error;
+    if (turn.data?.id && turn.data.id !== previousTurn.data?.id) submittedTurnId = turn.data.id;
+    return Boolean(submittedTurnId);
+  }, { timeout: 30_000 }).toBe(true);
+  if (!submittedTurnId) throw new Error("The new Ask turn was not created.");
   await expect.poll(async () => {
-    const result = await admin.from("ask_messages").select("id").eq("turn_id", turn.data.id)
+    const turn = await admin.from("ask_turns").select("state").eq("id", submittedTurnId).single();
+    if (turn.error) throw turn.error;
+    return turn.data.state;
+  }, { timeout: 60_000 }).toBe("completed");
+  await expect.poll(async () => {
+    const result = await admin.from("ask_messages").select("id").eq("turn_id", submittedTurnId)
       .eq("role", "assistant").maybeSingle();
     if (result.error) throw result.error;
     return Boolean(result.data);
   }, { timeout: 30_000 }).toBe(true);
-  const answer = await admin.from("ask_messages").select("content,response_metadata").eq("turn_id", turn.data.id)
+  const answer = await admin.from("ask_messages").select("content,response_metadata").eq("turn_id", submittedTurnId)
     .eq("role", "assistant").single();
   if (answer.error) throw answer.error;
   expect(answer.data.content).toMatch(/sent|posted|completed|succeeded/i);
