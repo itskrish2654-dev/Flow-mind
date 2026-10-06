@@ -179,7 +179,7 @@ function providerOnboarding(provider: ConnectionProvider) {
 }
 
 function providerReadyForPilot(provider: ConnectionProvider) {
-  return provider === "google";
+  return provider === "google" || provider === "slack";
 }
 
 export function ConnectionsList({
@@ -320,7 +320,7 @@ export function ConnectionsList({
               const items = byProvider.get(provider) ?? [];
               const canAddAnother = providerReadyForPilot(provider)
                 && Boolean(providerOnboarding(provider)?.available)
-                && providerAvailability.google;
+                && (provider === "slack" ? providerAvailability.slack : provider === "google" ? providerAvailability.google : false);
               return (
                 <div key={provider} className="overflow-hidden rounded-2xl border border-[#ded6ca] bg-[#fffdfa] shadow-[0_10px_32px_rgba(39,37,54,.035)]">
                   <div className="flex items-center gap-3 border-b border-[#eee8de] px-4 py-3.5 sm:px-5">
@@ -345,7 +345,8 @@ export function ConnectionsList({
                   <div className="divide-y divide-[#eee8de]">
                     {items.map((connection) => {
                       const details = statusDetails(connection.status, connection.verification);
-                      const pilotReady = providerReadyForPilot(provider) && connection.providerName === "Gmail";
+                      const pilotReady = provider === "slack" ? providerAvailability.slack
+                        : provider === "google" && connection.providerName === "Gmail";
                       return (
                         <article key={connection.id} className="flex flex-col gap-3 px-4 py-4 transition hover:bg-[#fffaf0] sm:flex-row sm:items-center sm:px-5">
                           <div className="min-w-0 flex-1">

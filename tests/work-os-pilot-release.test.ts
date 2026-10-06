@@ -64,7 +64,7 @@ test("staging-production runtime cannot activate D2 owner-only acceptance even w
 
 test("Connections labels unaccepted Sheets as deferred and excludes unaccepted connect choices", () => {
   const connections = source("components/connections-list.tsx");
-  assert.match(connections, /return provider === "google"/);
+  assert.match(connections, /return provider === "google" \|\| provider === "slack"/);
   assert.match(connections, /providerReadyForPilot\(provider\) && !byProvider\.has\(provider\)/);
   assert.match(connections, /getConnectorOnboarding\("google_sheets"\)\?\.available/);
   assert.match(connections, /Google Sheets is not available in this pilot while live-provider acceptance is pending/);

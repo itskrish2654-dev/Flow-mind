@@ -131,3 +131,11 @@ test("Slack storage and action boundaries remain server-owned and deny browser m
   assert.match(provider, /parseSlackPostAcknowledgement\(body, channel/);
   assert.match(provider, /providerReferenceId: `\$\{acknowledgement\.channelId\}:\$\{acknowledgement\.messageTs\}`/);
 });
+
+test("Connections exposes Slack only when the staging server has its app configuration", async () => {
+  const source = await readFile("components/connections-list.tsx", "utf8");
+  assert.match(source, /return provider === "google" \|\| provider === "slack"/);
+  assert.match(source, /provider === "slack" \? providerAvailability\.slack/);
+  assert.match(source, /provider === "slack" \? providerAvailability\.slack\s*:\s*provider === "google"/);
+  assert.match(source, /providerReadyForPilot\(provider\) && !byProvider\.has\(provider\)/);
+});
