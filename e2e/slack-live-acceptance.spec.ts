@@ -256,6 +256,75 @@ test("one approved Slack thread reply is acknowledged and a stale second decisio
   expect(await countProviderMessages({ admin, userId, connectionId, marker: replyMarker, threadTs: parentTs })).toBe(1);
 });
 
+test("a rejected Slack proposal denies a stale approval without contacting Slack", async ({ page, baseURL }) => {
+  test.setTimeout(150_000);
+  if (process.env.WORK_OS_SLACK_LIVE_ACCEPTANCE_ENABLED !== "true") test.skip();
+  requireStagingOrigin(baseURL);
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const secret = process.env.SUPABASE_SECRET_KEY;
+  const userId = process.env.WORK_OS_SLACK_ACCEPTANCE_USER_ID;
+  const marker = process.env.WORK_OS_SLACK_REJECT_MARKER;
+  if (!url || !secret || !userId || !marker || new URL(url).hostname.split(".")[0] !== ACCEPTANCE_REF) {
+    throw new Error("The isolated rejection fixture is unavailable.");
+  }
+  const admin = createClient<Database>(url, secret, { auth: { persistSession: false, autoRefreshToken: false } });
+  const { data: owner, error: ownerError } = await admin.auth.admin.getUserById(userId);
+  if (ownerError || !owner.user?.email || owner.user.user_metadata?.acceptance_run !== "work-os-slack-v1") {
+    throw new Error("The marked disposable Slack owner is unavailable.");
+  }
+  const { data: connections, error: connectionError } = await admin.from("connector_connections")
+    .select("id,status").eq("user_id", userId).eq("provider_family", "slack");
+  if (connectionError || connections?.length !== 1 || connections[0].status !== "connected") {
+    throw new Error("The disposable Slack connection is unavailable.");
+  }
+  expect(await countProviderMessages({ admin, userId, connectionId: connections[0].id, marker })).toBe(0);
+  const { data: previousActions, error: baselineError } = await admin.from("action_executions")
+    .select("id").eq("requester_user_id", userId).eq("capability_id", "slack_send_channel_message");
+  if (baselineError || !previousActions) throw new Error("The action baseline is unavailable.");
+  const previousIds = new Set(previousActions.map((action) => action.id));
+
+  const password = `Ac!${randomBytes(24).toString("base64url")}7z`;
+  if ((await admin.auth.admin.updateUserById(userId, { password })).error) {
+    throw new Error("Disposable test login could not be refreshed.");
+  }
+  await page.goto("/login?next=/ask", { waitUntil: "networkidle" });
+  await page.getByLabel("Email address").fill(owner.user.email);
+  await page.getByLabel("Password").fill(password);
+  await page.getByRole("button", { name: "Log in securely" }).click();
+  await page.waitForURL((value) => value.pathname === "/ask", { timeout: 30_000 });
+  const preview = await ask(page, `Tell #${CHANNEL_NAME} that ${marker}`);
+  await expect(preview).toContainText(marker);
+  await preview.getByRole("button", { name: /Review and request approval/ }).click();
+  await page.waitForURL(/\/my-day\?action=pending_approval/, { timeout: 30_000 });
+  const { data: actions, error: actionError } = await admin.from("action_executions").select("*")
+    .eq("requester_user_id", userId).eq("capability_id", "slack_send_channel_message");
+  const newActions = actions?.filter((action) => !previousIds.has(action.id));
+  if (actionError || newActions?.length !== 1 || newActions[0].status !== "pending_approval") {
+    throw new Error("Exactly one rejection proposal was not persisted.");
+  }
+  const action = newActions[0];
+  const stalePage = await page.context().newPage();
+  await stalePage.goto("/my-day", { waitUntil: "networkidle" });
+  const staleCard = stalePage.locator("article").filter({ hasText: marker });
+  await expect(staleCard.getByRole("button", { name: "Approve" })).toBeVisible();
+
+  await page.locator("article").filter({ hasText: marker }).getByRole("button", { name: "Reject" }).click();
+  await expect.poll(async () => {
+    const result = await admin.from("action_executions").select("status").eq("id", action.id).single();
+    if (result.error) throw result.error;
+    return result.data.status;
+  }, { timeout: 30_000 }).toBe("rejected");
+  await staleCard.getByRole("button", { name: "Approve" }).click();
+  await expect(stalePage.getByText("That approval could not be decided.", { exact: false })).toBeVisible({ timeout: 30_000 });
+  const after = await admin.from("action_executions").select("status,attempt_count,provider_reference_id")
+    .eq("id", action.id).single();
+  if (after.error) throw after.error;
+  expect(after.data.status).toBe("rejected");
+  expect(after.data.attempt_count).toBe(0);
+  expect(after.data.provider_reference_id).toBeNull();
+  expect(await countProviderMessages({ admin, userId, connectionId: connections[0].id, marker })).toBe(0);
+});
+
 test("persisted Slack outcome remains truthful in My Day and Ask", async ({ page, baseURL }) => {
   test.setTimeout(120_000);
   if (process.env.WORK_OS_SLACK_LIVE_ACCEPTANCE_ENABLED !== "true") test.skip();
