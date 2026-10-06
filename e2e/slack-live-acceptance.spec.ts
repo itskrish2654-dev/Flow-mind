@@ -4,6 +4,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { expect, test, type Page } from "@playwright/test";
 
 import { decryptCredential } from "../lib/security/credential-crypto";
+import { classifySlackWork, slackWorkItemDedupeKey } from "../lib/connectors/slack/work-items-core";
 import type { Database } from "../lib/supabase/types";
 
 test.use({ trace: "off", video: "off", screenshot: "off" });
@@ -436,17 +437,28 @@ test("a real signed Slack message becomes one Work Item and a grounded Ask sourc
   const { data: matchingEvents, error: eventError } = await admin.from("slack_message_events")
     .select("id,connection_id,channel_id,message_text,provider_event_id")
     .eq("user_id", userId).like("message_text", `%${inboundMarker}%`);
-  if (eventError || matchingEvents?.length !== 1 || matchingEvents[0].channel_id !== "C0BR8V8MKDW"
-    || !matchingEvents[0].message_text.includes("please review")) {
-    throw new Error("Exactly one real, actionable test-channel Slack event was not captured.");
+  if (eventError || !matchingEvents?.length || matchingEvents.some((event) => event.channel_id !== CHANNEL_ID)
+    || new Set(matchingEvents.map((event) => `${event.connection_id}:${event.provider_event_id}`)).size !== matchingEvents.length) {
+    throw new Error("Real test-channel Slack events are missing or duplicated per connection.");
   }
-  const inbound = matchingEvents[0];
+  const { data: connection, error: connectionError } = await admin.from("connector_connections")
+    .select("safe_metadata").eq("id", matchingEvents[0].connection_id).eq("user_id", userId).single();
+  if (connectionError || !connection) throw new Error("The owner-bound Slack connection is unavailable.");
+  const metadata = connection.safe_metadata && typeof connection.safe_metadata === "object" && !Array.isArray(connection.safe_metadata)
+    ? connection.safe_metadata as Record<string, unknown> : {};
+  const installingUserId = typeof metadata.installingUserId === "string" ? metadata.installingUserId : null;
+  const actionable = matchingEvents.filter((event) =>
+    event.connection_id === matchingEvents[0].connection_id
+    && classifySlackWork(event.message_text, installingUserId) === "ACTIONABLE");
+  if (actionable.length !== 1) throw new Error("Exactly one owner-mentioned actionable Slack event is required.");
+  const inbound = actionable[0];
   const { data: matchingWork, error: workError } = await admin.from("work_items")
     .select("id,status,source_type,source_id,source_label,dedupe_key,summary")
     .eq("assignee_user_id", userId).eq("source_type", "connector_event")
     .eq("source_id", inbound.connection_id).like("summary", `%${inboundMarker}%`);
   if (workError || matchingWork?.length !== 1 || matchingWork[0].status !== "needs_you"
-    || matchingWork[0].source_label !== "Slack" || !matchingWork[0].dedupe_key?.startsWith("slack-event:")) {
+    || matchingWork[0].source_label !== "Slack"
+    || matchingWork[0].dedupe_key !== slackWorkItemDedupeKey(inbound.provider_event_id)) {
     throw new Error("The signed actionable message did not create exactly one sourced Work Item.");
   }
 
@@ -462,27 +474,41 @@ test("a real signed Slack message becomes one Work Item and a grounded Ask sourc
   await expect(page.locator(`#work-item-${matchingWork[0].id}`)).toContainText(inboundMarker);
 
   const question = `What did the Slack message in #${CHANNEL_NAME} ask me to review? Its marker was ${inboundMarker}.`;
+  const previousTurn = await admin.from("ask_turns").select("id").eq("user_id", userId).eq("question", question)
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (previousTurn.error) throw previousTurn.error;
   await page.goto("/ask");
   await page.getByLabel("Ask CrazyLoops").fill(question);
   await page.getByRole("button", { name: "Send message" }).click();
   await expect(page.getByRole("region", { name: "Ask conversation" }).getByText(question, { exact: true }))
     .toBeVisible({ timeout: 30_000 });
+  let submittedTurnId: string | null = null;
   await expect.poll(async () => {
-    const turn = await admin.from("ask_turns").select("state").eq("user_id", userId).eq("question", question)
+    const turn = await admin.from("ask_turns").select("id").eq("user_id", userId).eq("question", question)
       .order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (turn.error) throw turn.error;
-    return turn.data?.state ?? null;
+    if (turn.data?.id && turn.data.id !== previousTurn.data?.id) submittedTurnId = turn.data.id;
+    return Boolean(submittedTurnId);
+  }, { timeout: 30_000 }).toBe(true);
+  if (!submittedTurnId) throw new Error("The new Slack Ask turn was not created.");
+  await expect.poll(async () => {
+    const turn = await admin.from("ask_turns").select("state").eq("id", submittedTurnId).single();
+    if (turn.error) throw turn.error;
+    return turn.data.state;
   }, { timeout: 60_000 }).toBe("completed");
-  const turn = await admin.from("ask_turns").select("id").eq("user_id", userId).eq("question", question)
-    .order("created_at", { ascending: false }).limit(1).single();
-  if (turn.error) throw turn.error;
+  await expect.poll(async () => {
+    const result = await admin.from("ask_messages").select("id").eq("turn_id", submittedTurnId)
+      .eq("role", "assistant").maybeSingle();
+    if (result.error) throw result.error;
+    return Boolean(result.data);
+  }, { timeout: 30_000 }).toBe(true);
   const answer = await admin.from("ask_messages").select("content,response_metadata")
-    .eq("turn_id", turn.data.id).eq("role", "assistant").single();
+    .eq("turn_id", submittedTurnId).eq("role", "assistant").single();
   if (answer.error) throw answer.error;
   expect(answer.data.content).toMatch(/review/i);
-  const metadata = answer.data.response_metadata as { references?: Array<{ kind?: string; entityId?: string; href?: string }> } | null;
+  const answerMetadata = answer.data.response_metadata as { references?: Array<{ kind?: string; entityId?: string; href?: string }> } | null;
   const sourceHref = `/dashboard/slack/${inbound.connection_id}/${inbound.id}`;
-  expect(metadata?.references?.some((reference) => reference.kind === "slack_message"
+  expect(answerMetadata?.references?.some((reference) => reference.kind === "slack_message"
     && reference.entityId === inbound.id && reference.href === sourceHref)).toBe(true);
   await page.reload();
   const source = page.locator(`a[href="${sourceHref}"]`);
@@ -492,4 +518,12 @@ test("a real signed Slack message becomes one Work Item and a grounded Ask sourc
   await expect(page.getByRole("region", { name: "Slack message text" })).toContainText(inboundMarker);
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+  const { data: otherOwnerEvent, error: otherOwnerError } = await admin.from("slack_message_events")
+    .select("id,connection_id").eq("provider_event_id", inbound.provider_event_id)
+    .neq("user_id", userId).limit(1).maybeSingle();
+  if (otherOwnerError || !otherOwnerEvent) throw new Error("A separate owner-scoped Slack event is required for isolation proof.");
+  const crossOwner = await page.goto(`/dashboard/slack/${otherOwnerEvent.connection_id}/${otherOwnerEvent.id}`);
+  expect(crossOwner?.status()).toBe(404);
+  await expect(page.getByRole("region", { name: "Slack message text" })).toHaveCount(0);
 });

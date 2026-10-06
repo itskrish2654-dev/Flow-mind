@@ -8,10 +8,27 @@ import { getConnector } from "../lib/connectors/registry";
 import { parseSlackReplyIntent, parseSlackSendIntent } from "../lib/connectors/slack/action-intent";
 import { parseSlackPostAcknowledgement } from "../lib/connectors/slack/acknowledgement";
 import { normalizeSlackMessage } from "../lib/connectors/slack/events";
+import { personalSlackMessages, slackQuestionTargetsConnectedUser } from "../lib/connectors/slack/read-core";
 import { SLACK_SCOPES, slackScopesForOperation } from "../lib/connectors/slack/scopes";
 import { classifySlackWork, slackWorkItemDedupeKey } from "../lib/connectors/slack/work-items-core";
 
 const OWNER = "U12345678";
+
+test("self-directed Slack Ask retrieval excludes other people's mentions without weakening general channel search", async () => {
+  const messages = [
+    { id: "other", message_text: "<@U87654321> please review the proposal" },
+    { id: "mine", message_text: `<@${OWNER}> please review the proposal` },
+  ];
+  const personalQuestion = "What did the Slack message ask me to review?";
+  assert.equal(slackQuestionTargetsConnectedUser(personalQuestion), true);
+  assert.deepEqual(personalSlackMessages(messages, personalQuestion, OWNER).map((message) => message.id), ["mine"]);
+  assert.deepEqual(personalSlackMessages(messages, personalQuestion, null), []);
+  assert.deepEqual(personalSlackMessages(messages, personalQuestion, "U87654321").map((message) => message.id), ["other"]);
+  assert.deepEqual(personalSlackMessages(messages, "What did the team discuss?", OWNER).map((message) => message.id), ["other", "mine"]);
+  const read = await readFile("lib/connectors/slack/read.ts", "utf8");
+  assert.match(read, /\.eq\("user_id", input\.userId\)\.eq\("workspace_id", input\.workspaceId\)/);
+  assert.match(read, /personalSlackMessages\(data \?\? \[\], input\.question, metadata\.installingUserId\)/);
+});
 
 test("Slack v1 connects with confirmed bot scopes without desktop PKCE", async () => {
   const manifest = getConnector("slack")!.manifest;

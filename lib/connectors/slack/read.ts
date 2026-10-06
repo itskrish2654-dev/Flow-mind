@@ -1,6 +1,7 @@
 import "server-only";
 
 import { listSlackChannels } from "@/lib/connectors/slack/messages";
+import { personalSlackMessages } from "@/lib/connectors/slack/read-core";
 import { SLACK_SCOPES } from "@/lib/connectors/slack/scopes";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Database } from "@/lib/supabase/types";
@@ -18,7 +19,7 @@ function searchTerms(question: string): string[] {
 
 async function ownedConnections(userId: string, workspaceId: string) {
   const { data, error } = await createAdminClient().from("connector_connections")
-    .select("id,status,external_account_label,granted_scopes")
+    .select("id,status,external_account_label,granted_scopes,safe_metadata")
     .eq("user_id", userId).eq("workspace_id", workspaceId)
     .eq("provider_family", "slack").eq("connector_id", "slack")
     .neq("status", "revoked").order("created_at", { ascending: false }).limit(6);
@@ -58,7 +59,9 @@ export async function readSlackForAsk(input: { userId: string; workspaceId: stri
   const { data, error } = await query;
   if (error) throw new Error("Slack context is unavailable.");
   const terms = searchTerms(input.question);
-  const messages = (data ?? []).filter((message) =>
+  const metadata = selected.safe_metadata && typeof selected.safe_metadata === "object" && !Array.isArray(selected.safe_metadata)
+    ? selected.safe_metadata as Record<string, unknown> : {};
+  const messages = personalSlackMessages(data ?? [], input.question, metadata.installingUserId).filter((message) =>
     terms.length === 0 || terms.some((term) => message.message_text.toLowerCase().includes(term)),
   ).slice(0, 5);
   return { status: "ok", connectionId: selected.id, messages, channelNames };
