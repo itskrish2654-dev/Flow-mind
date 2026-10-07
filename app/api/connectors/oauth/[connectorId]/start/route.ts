@@ -10,13 +10,14 @@ import { slackScopesForOperation } from "@/lib/connectors/slack/scopes";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getSiteOrigin, getSiteUrl } from "@/lib/site-origin";
 import { googleSheetsAcceptanceConnector } from "@/lib/google-sheets-live-acceptance";
+import { notionAcceptanceConnector } from "@/lib/notion-live-acceptance";
 
 export async function GET(request: Request, { params }: { params: Promise<{ connectorId: string }> }) {
   const { connectorId } = await params; const auth = await getAuthenticatedContext();
   if (!auth) return NextResponse.redirect(getSiteUrl("/login?next=/connections", new URL(request.url).origin));
   const { user } = auth;
   const connector = getConnector(connectorId);
-  if (!connector || !(getConnectorOnboarding(connectorId)?.available || googleSheetsAcceptanceConnector(connectorId)) || connector.manifest.auth.type !== "oauth2" || connector.manifest.status === "COMING_SOON" || (connector.manifest.status === "INTERNAL" && process.env.NODE_ENV === "production")) return NextResponse.json({ error: "Connector not found." }, { status: 404 });
+  if (!connector || !(getConnectorOnboarding(connectorId)?.available || googleSheetsAcceptanceConnector(connectorId) || notionAcceptanceConnector(connectorId)) || connector.manifest.auth.type !== "oauth2" || connector.manifest.status === "COMING_SOON" || (connector.manifest.status === "INTERNAL" && process.env.NODE_ENV === "production")) return NextResponse.json({ error: "Connector not found." }, { status: 404 });
   const requestUrl = new URL(request.url);
   let returnPath = "/connections";
   try {

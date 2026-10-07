@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getAuthenticatedContext } from "@/lib/auth";
 import { getConnectorOnboarding } from "@/lib/capability-registry";
 import { googleSheetsAcceptanceConnector } from "@/lib/google-sheets-live-acceptance";
+import { notionAcceptanceConnector } from "@/lib/notion-live-acceptance";
 import { storeConnectionSecret } from "@/lib/connectors/connection-vault";
 import { finalizeGoogleOAuthConnection } from "@/lib/connectors/google/connection-finalization";
 import { revokeGoogleToken } from "@/lib/connectors/google/oauth-provider";
@@ -43,7 +44,7 @@ export async function GET(
   const providerError = url.searchParams.get("error");
   const oauthCancelled = providerError === "access_denied" || providerError === "user_cancelled";
   const connector = getConnector(connectorId);
-  const ordinaryOnboardingAvailable = Boolean(getConnectorOnboarding(connectorId)?.available || googleSheetsAcceptanceConnector(connectorId));
+  const ordinaryOnboardingAvailable = Boolean(getConnectorOnboarding(connectorId)?.available || googleSheetsAcceptanceConnector(connectorId) || notionAcceptanceConnector(connectorId));
   const mayBeGmailAcceptance = connectorId === "google_gmail";
 
   if (

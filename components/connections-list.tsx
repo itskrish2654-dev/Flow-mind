@@ -42,9 +42,9 @@ const providerCopy: Record<ConnectionProvider, {
   },
   notion: {
     name: "Notion",
-    description: "Create and update workspace content from your loops.",
+    description: "Connect only the pages and data sources you select. Notion workflows remain unavailable during live acceptance.",
     connectLabel: "Connect Notion",
-    operation: "update_item",
+    operation: "",
   },
   google: {
     name: "Google accounts",
@@ -195,6 +195,7 @@ export function ConnectionsList({
   errorCode,
   providerAvailability,
   sheetsAcceptanceEnabled,
+  notionAcceptanceEnabled,
   returnPath,
 }: {
   connections: ConnectionView[];
@@ -202,6 +203,7 @@ export function ConnectionsList({
   errorCode: string | null;
   providerAvailability: ProviderAvailability;
   sheetsAcceptanceEnabled: boolean;
+  notionAcceptanceEnabled: boolean;
   returnPath: string;
 }) {
   const router = useRouter();
@@ -235,7 +237,8 @@ export function ConnectionsList({
       : successProvider ? `${providerCopy[successProvider].name} connected` : "";
   const providers = (["airtable", "hubspot", "slack", "notion", "google"] as const).filter((provider) => byProvider.has(provider));
   const availableProviders = (["airtable", "slack", "notion", "google"] as const).filter(
-    (provider) => providerReadyForPilot(provider) && !byProvider.has(provider) && providerOnboarding(provider)?.available,
+    (provider) => (providerReadyForPilot(provider) && !byProvider.has(provider) && providerOnboarding(provider)?.available)
+      || (provider === "notion" && notionAcceptanceEnabled && !byProvider.has(provider)),
   );
   const sheetsReadyForPilot = Boolean(getConnectorOnboarding("google_sheets")?.available) || sheetsAcceptanceEnabled;
 
@@ -400,7 +403,7 @@ export function ConnectionsList({
           <h2 id="available-apps-title" className="mt-1 text-lg font-semibold tracking-[-0.02em] text-slate-950">Connect an app</h2>
           <div className="mt-4 divide-y divide-[#e8e1d7] overflow-hidden rounded-2xl border border-[#ded6ca] bg-[#fffdfa]">
             {availableProviders.map((provider) => {
-              const available = Boolean(providerOnboarding(provider)?.available)
+              const available = Boolean(providerOnboarding(provider)?.available || (provider === "notion" && notionAcceptanceEnabled))
                 && (provider === "airtable" || providerAvailability[provider]);
               return (
                 <article key={provider} className="flex flex-col gap-4 px-4 py-4 transition hover:bg-[#fffaf0] sm:flex-row sm:items-center sm:px-5">

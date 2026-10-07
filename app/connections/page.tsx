@@ -12,6 +12,7 @@ import { ConnectionsList } from "@/components/connections-list";
 import { getAuthenticatedContext } from "@/lib/auth";
 import { listConnectionViews } from "@/lib/connectors/connection-view";
 import { googleSheetsLiveAcceptanceEnabled } from "@/lib/google-sheets-live-acceptance";
+import { notionLiveAcceptanceEnabled } from "@/lib/notion-live-acceptance";
 import { oauthReturnWorkflowId, safeOAuthReturnPath } from "@/lib/connectors/oauth-return";
 
 const builtInCapabilities = [
@@ -91,6 +92,7 @@ export default async function ConnectionsPage({
         errorCode={error}
         providerAvailability={{ slack: slackAvailable, notion: notionAvailable, google: googleAvailable }}
         sheetsAcceptanceEnabled={googleSheetsLiveAcceptanceEnabled()}
+        notionAcceptanceEnabled={notionLiveAcceptanceEnabled()}
         returnPath={returnPath}
       />
 
