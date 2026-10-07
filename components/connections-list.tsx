@@ -290,9 +290,11 @@ export function ConnectionsList({
           <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-white text-emerald-600 shadow-sm"><Check className="size-4" aria-hidden="true" /></span>
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-emerald-950">{successHeading}</p>
-            <p className="mt-0.5 truncate text-xs text-emerald-800">{successConnection?.accountLabel ?? "Your account"} is ready to use in your loops.</p>
+            <p className="mt-0.5 truncate text-xs text-emerald-800">{successProvider === "notion"
+              ? `${successConnection?.accountLabel ?? "Your workspace"} is connected for staging verification; Notion workflows are not enabled yet.`
+              : `${successConnection?.accountLabel ?? "Your account"} is ready to use in your loops.`}</p>
           </div>
-           <Link href={returnPath.startsWith("/dashboard/projects/") ? returnPath : "/dashboard"} className="inline-flex min-h-11 items-center gap-1.5 text-xs font-semibold text-emerald-900 hover:text-emerald-700">{returnPath.startsWith("/dashboard/projects/") ? "Continue workflow" : "Use it in a workflow"} <ArrowRight className="size-3.5" aria-hidden="true" /></Link>
+          <Link href={successProvider === "notion" ? "/connections#connected-title" : returnPath.startsWith("/dashboard/projects/") ? returnPath : "/dashboard"} className="inline-flex min-h-11 items-center gap-1.5 text-xs font-semibold text-emerald-900 hover:text-emerald-700">{successProvider === "notion" ? "Review connection" : returnPath.startsWith("/dashboard/projects/") ? "Continue workflow" : "Use it in a workflow"} <ArrowRight className="size-3.5" aria-hidden="true" /></Link>
         </div>
       )}
 

@@ -53,6 +53,8 @@ test("Notion OAuth is gated at every server boundary without enabling unaccepted
   ]) assert.match(read(file), /notionAcceptanceConnector\(/);
   assert.match(read("app/connections/page.tsx"), /notionAcceptanceEnabled=\{notionLiveAcceptanceEnabled\(\)\}/);
   assert.match(read("components/connections-list.tsx"), /provider === "notion" && notionAcceptanceEnabled/);
+  assert.match(read("components/connections-list.tsx"), /Notion workflows are not enabled yet/);
+  assert.match(read("components/connections-list.tsx"), /successProvider === "notion" \? "Review connection"/);
   assert.equal(getConnectorOnboarding("notion")?.available, false);
   for (const id of [
     "notion_page_created_or_added", "notion_page_updated", "notion_create_page",
