@@ -187,7 +187,11 @@ function requestedExternalCapability(question: string): string | null {
     ? "google_sheets_update_row" : /\b(add|append|create)\b/.test(text)
       ? "google_sheets_add_row" : "google_sheets_find_row";
   if (/\bnotion\b/.test(text)) return /\b(update|change|write)\b/.test(text) ? "notion_update_item" : "notion_find_item";
-  if (/\bcalendar|event\b/.test(text)) return "google_calendar";
+  if (/\b(?:google calendar|calendar event)\b/.test(text)) {
+    if (/^(?:please\s+)?(?:create|schedule)\b/.test(text)) return "google_calendar_create_event";
+    if (/^(?:please\s+)?(?:update|change)\b/.test(text)) return "google_calendar_update_event";
+    return null;
+  }
   const registryMatch = Object.values(CAPABILITY_REGISTRY)
     .filter((capability) => capability.category === "destination" && capability.intentRecognizable)
     .flatMap((capability) => capability.aliases.map((alias) => ({ capability, alias: alias.toLowerCase() })))
@@ -329,6 +333,8 @@ async function generateResponse(auth: AuthContext, question: string, history: As
     if (externalCapabilityId === "gmail_send_email"
       || externalCapabilityId === "google_sheets_add_row"
       || externalCapabilityId === "google_sheets_update_row"
+      || externalCapabilityId === "google_calendar_create_event"
+      || externalCapabilityId === "google_calendar_update_event"
       || externalCapabilityId === "slack_send_channel_message"
       || externalCapabilityId === "slack_reply_in_thread") {
       return unsupportedAskResponse("this request without an exact approved action preview");

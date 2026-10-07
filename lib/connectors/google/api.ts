@@ -115,7 +115,7 @@ export async function googleApiFetch(input: {
   connectionId: string;
   requiredScopes: string[];
   url: string;
-  method?: "GET" | "POST" | "PUT";
+  method?: "GET" | "POST" | "PUT" | "PATCH";
   body?: unknown;
   headers?: Record<string, string>;
   dispatchMode?: "read" | "side_effect";

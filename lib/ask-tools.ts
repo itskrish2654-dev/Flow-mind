@@ -19,6 +19,7 @@ import { listCurrentUserWorkItems } from "@/lib/work-items";
 import { listCurrentUserActionExecutions } from "@/lib/action-executions";
 import { slackActionProposalEvidence } from "@/lib/action-execution-core";
 import { readGmailForAsk } from "@/lib/connectors/google/gmail-read";
+import { readCalendarForAsk } from "@/lib/connectors/google/calendar";
 import { findSelectedGoogleSpreadsheetRow, inspectSelectedGoogleWorksheet, readSelectedGoogleSpreadsheetRows } from "@/lib/connectors/google/sheets";
 import { resolveSelectedSheetForQuestion } from "@/lib/connectors/google/sheets-work-context";
 import { searchCompanyKnowledge } from "@/lib/knowledge";
@@ -270,6 +271,23 @@ async function loadGmail(scope: AskTrustedScope, question: string): Promise<AskT
   };
 }
 
+async function loadCalendar(scope: AskTrustedScope, question: string): Promise<AskToolResult> {
+  await assertTrustedScope(scope);
+  const result = await readCalendarForAsk({ ...scope, question });
+  return {
+    tool: "calendar_events", availability: result.status,
+    summary: result.status === "ok"
+      ? `${result.events.length} events were read from the connected account's owned primary calendar in the next 30 days.${result.complete ? "" : " This is only the first bounded page."}`
+      : "Google Calendar is not currently available for this employee.",
+    records: result.events.slice(0, ASK_LIMITS.recordsPerTool).map((event, index) => safeRecord({
+      key: `calendar_event:${index}`, kind: "calendar_event", id: result.connectionId!,
+      label: event.summary, href: `/dashboard/calendar/${result.connectionId}/${event.id}`,
+      facts: { eventId: event.id, title: event.summary, startAt: event.startAt, endAt: event.endAt,
+        timeZone: event.timeZone, coverage: result.complete ? "Next 30 days, bounded to 20 events" : "Only first 20 events in next 30 days" },
+    })),
+  };
+}
+
 async function loadSheets(scope: AskTrustedScope, question: string): Promise<AskToolResult> {
   await assertTrustedScope(scope);
   const resolved = await resolveSelectedSheetForQuestion({ ...scope, question });
@@ -452,6 +470,7 @@ export async function executeAskTool(tool: AskToolId, scope: AskTrustedScope, qu
     case "recent_activity": return loadRecentActivity(scope, question);
     case "action_activity": return loadActionActivity(scope);
     case "gmail_search": return loadGmail(scope, question);
+    case "calendar_events": return loadCalendar(scope, question);
     case "sheets_search": return loadSheets(scope, question);
     case "company_knowledge": return loadCompanyKnowledge(scope, question);
     case "goals": return loadGoals(scope, question);

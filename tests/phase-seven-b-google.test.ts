@@ -26,19 +26,22 @@ import { deriveGmailSearch, planWorkflow } from "../lib/workflow-planner";
 
 const b64url = (value: string) => Buffer.from(value).toString("base64url");
 
-test("7B-1. Google provider family exposes only Gmail and Sheets as beta", () => {
+test("7B-1. Google provider family retains Gmail and Sheets alongside scoped Calendar beta", () => {
   const gmail = getConnector("google_gmail")!;
   const sheets = getConnector("google_sheets")!;
+  const calendar = getConnector("google_calendar")!;
   assert.equal(gmail.manifest.providerFamily, "google");
   assert.equal(sheets.manifest.providerFamily, "google");
+  assert.equal(calendar.manifest.providerFamily, "google");
   assert.equal(gmail.manifest.status, "BETA");
   assert.equal(sheets.manifest.status, "BETA");
+  assert.equal(calendar.manifest.status, "BETA");
   assert.deepEqual(gmail.manifest.triggers.map((item) => item.key), ["new_email", "new_email_matching_search"]);
   assert.deepEqual(gmail.manifest.actions.map((item) => item.key), ["send_email", "reply_to_email"]);
   assert.deepEqual(sheets.manifest.actions.map((item) => item.key), ["add_row", "find_row", "update_row"]);
 });
 
-test("7B-2. Calendar and Drive remain explicitly unsupported", () => {
+test("7B-2. general Calendar workflow planning and Drive remain explicitly unsupported", () => {
   assert.equal(assessCapability("google_calendar", "production").available, false);
   assert.equal(assessCapability("google_drive", "production").available, false);
   assert.equal(planWorkflow("Connect Google Calendar and create an event.").status, "UNSUPPORTED");

@@ -6,6 +6,7 @@ export function matchesConnectorSuccess(
     providerName: string;
     status: string;
     sheetsAccess?: boolean;
+    calendarAccess?: boolean;
   },
 ): boolean {
   if (!connectorId || connection.status !== "connected") return false;
@@ -14,6 +15,9 @@ export function matchesConnectorSuccess(
   }
   if (connectorId === "google_sheets") {
     return connection.provider === "google" && connection.sheetsAccess === true;
+  }
+  if (connectorId === "google_calendar") {
+    return connection.provider === "google" && connection.calendarAccess === true;
   }
   if (connectorId === "google") return connection.provider === "google";
   return connection.provider === connectorId;

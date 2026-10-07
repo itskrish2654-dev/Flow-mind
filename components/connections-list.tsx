@@ -160,6 +160,13 @@ function sheetsConnectHref(returnPath: string, connectionId?: string) {
   return `/api/connectors/oauth/google_sheets/start?${query.toString()}`;
 }
 
+function calendarConnectHref(returnPath: string, connectionId?: string) {
+  const query = new URLSearchParams({ operation: "create_event", return: returnPath });
+  if (connectionId) query.set("connection", connectionId);
+  else query.set("account", "add");
+  return `/api/connectors/oauth/google_calendar/start?${query.toString()}`;
+}
+
 function withConnectionResult(returnPath: string, connector: string) {
   const target = new URL(returnPath, "https://crazyloops.invalid");
   target.searchParams.set("connected", connector);
@@ -224,6 +231,7 @@ export function ConnectionsList({
   const successConnection = successItems.length === 1 ? successItems[0] : null;
   const successHeading = successConnector === "google_gmail" ? "Gmail connected"
     : successConnector === "google_sheets" ? "Google Sheets connected"
+      : successConnector === "google_calendar" ? "Google Calendar connected"
       : successProvider ? `${providerCopy[successProvider].name} connected` : "";
   const providers = (["airtable", "hubspot", "slack", "notion", "google"] as const).filter((provider) => byProvider.has(provider));
   const availableProviders = (["airtable", "slack", "notion", "google"] as const).filter(
@@ -346,7 +354,7 @@ export function ConnectionsList({
                     {items.map((connection) => {
                       const details = statusDetails(connection.status, connection.verification);
                       const pilotReady = provider === "slack" ? providerAvailability.slack
-                        : provider === "google" && connection.providerName === "Gmail";
+                        : provider === "google" && (connection.providerName === "Gmail" || connection.calendarAccess === true);
                       return (
                         <article key={connection.id} className="flex flex-col gap-3 px-4 py-4 transition hover:bg-[#fffaf0] sm:flex-row sm:items-center sm:px-5">
                           <div className="min-w-0 flex-1">
@@ -483,6 +491,28 @@ export function ConnectionsList({
         <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Google Sheets is not available in this pilot while live-provider acceptance is pending. Gmail remains available separately.</p>
       </section>}
 
+      <section id="google-calendar" className="mt-10 rounded-2xl border border-[#ded6ca] bg-[#fffdfa] p-5" aria-labelledby="google-calendar-title">
+        <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500">Owned primary calendar</p>
+        <h2 id="google-calendar-title" className="mt-1 text-lg font-semibold text-slate-950">Google Calendar</h2>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Ask about upcoming events. Creating or changing an event needs an exact preview and your approval. Calendar permission is separate from Gmail and Sheets.</p>
+        <div className="mt-4 space-y-3">
+          {connections.filter((connection) => connection.provider === "google").map((connection) => (
+            <div key={connection.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#e8e1d7] bg-white p-4">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-slate-900">{connection.accountLabel}</p>
+                <p className="mt-1 text-xs text-slate-600">{connection.calendarAccess && connection.status === "connected" ? "Calendar event access connected" : "Calendar event permission needed"}</p>
+              </div>
+              <a href={calendarConnectHref(returnPath, connection.id)} className="inline-flex min-h-11 items-center rounded-xl border border-[#d7aa2f] bg-[#fff7dc] px-4 text-xs font-semibold text-[#6f5100]">
+                {connection.calendarAccess && connection.status === "connected" ? "Reconnect Calendar" : "Add Calendar access"}
+              </a>
+            </div>
+          ))}
+          {providerAvailability.google && <a href={calendarConnectHref(returnPath)} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-[#d7aa2f] bg-[#fff7dc] px-4 text-xs font-semibold text-[#6f5100]">
+            <Plus className="size-4" aria-hidden="true" /> Connect Google Calendar
+          </a>}
+        </div>
+      </section>
+
       <AccessibleDialog
         open={Boolean(managed)}
         onOpenChange={(open) => { if (!open && !disconnecting) setManaged(null); }}
@@ -525,7 +555,7 @@ export function ConnectionsList({
 
               {(managed.provider === "slack" || managed.provider === "notion" || managed.provider === "google") && providerAvailability[managed.provider] && (
                 <a
-                  href={managed.providerName === "Google Sheets" ? sheetsConnectHref(returnPath, managed.id) : connectHref(managed.provider, returnPath, managed.id)}
+                  href={managed.providerName === "Google Sheets" ? sheetsConnectHref(returnPath, managed.id) : managed.providerName === "Google Calendar" ? calendarConnectHref(returnPath, managed.id) : connectHref(managed.provider, returnPath, managed.id)}
                   aria-label={`Reconnect ${managed.providerName} account ${managed.accountLabel}`}
                   className="mt-6 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#d8caa8] bg-white px-4 text-xs font-semibold text-slate-700 transition hover:bg-[#fff8e3]"
                 >

@@ -19,6 +19,7 @@ export type ConnectionView = {
   verification: "provider_verified" | "locally_configured";
   gmailIntakeStatus?: "active" | "setting_up" | "needs_attention";
   sheetsAccess?: boolean;
+  calendarAccess?: boolean;
 };
 
 const providerDetails: Record<ConnectionProvider, {
@@ -139,6 +140,7 @@ export async function listConnectionViews(userId: string): Promise<ConnectionVie
     const gmailRead = provider === "google" && row.granted_scopes.includes(GOOGLE_SCOPES.gmailReadonly);
     const gmailSend = provider === "google" && row.granted_scopes.includes(GOOGLE_SCOPES.gmailSend);
     const sheets = provider === "google" && row.granted_scopes.includes(GOOGLE_SCOPES.driveFile);
+    const calendar = provider === "google" && row.granted_scopes.includes(GOOGLE_SCOPES.calendarEventsOwned);
     const status = row.status === "connected"
       ? "connected"
       : row.status === "expired"
@@ -147,18 +149,20 @@ export async function listConnectionViews(userId: string): Promise<ConnectionVie
     return [{
       id: row.id,
       provider,
-      providerName: provider === "google" ? gmailRead || gmailSend ? "Gmail" : sheets ? "Google Sheets" : "Google" : details.name,
+      providerName: provider === "google" ? gmailRead || gmailSend ? "Gmail" : sheets ? "Google Sheets" : calendar ? "Google Calendar" : "Google" : details.name,
       accountLabel: safeAccountLabel(provider, row.external_account_label),
       status,
       lastCheckedAt: row.last_refreshed_at ?? row.updated_at,
       usedByWorkflows: workflowCounts.get(row.id) ?? 0,
       permissionSummary: provider === "google"
         ? [gmailRead ? "Read the connected mailbox." : "", gmailSend ? "Send exact approved emails." : "",
-          sheets ? "Use spreadsheets explicitly selected through Google Picker." : ""].filter(Boolean).join(" ")
+          sheets ? "Use spreadsheets explicitly selected through Google Picker." : "",
+          calendar ? "Read and change events on the owned primary calendar only after approval." : ""].filter(Boolean).join(" ")
           || "This Google account needs permission review before use."
         : details.permissionSummary,
       verification: provider === "airtable" ? "locally_configured" : "provider_verified",
       ...(sheets ? { sheetsAccess: true } : {}),
+      ...(calendar ? { calendarAccess: true } : {}),
       ...(provider === "google" && gmailRead ? {
         gmailIntakeStatus: row.last_error_category === "gmail_intake_setup"
           ? "needs_attention" as const

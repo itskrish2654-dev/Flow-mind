@@ -248,6 +248,23 @@ const googleSheetsManifest: ConnectorManifest = {
   documentationUrl: "https://developers.google.com/sheets/api",
 };
 
+const googleCalendarManifest: ConnectorManifest = {
+  id: "google_calendar",
+  providerFamily: "google",
+  displayName: "Google Calendar",
+  description: "Reads owned calendar events and performs exact, approval-backed event changes.",
+  status: "BETA",
+  version: 1,
+  auth: { type: "oauth2", authorizationUrl: GOOGLE_AUTHORIZATION_URL, tokenUrl: GOOGLE_TOKEN_URL, defaultScopes: ["openid", "email"], pkceRequired: true },
+  triggers: [],
+  actions: [
+    { key: "create_event", version: 1, kind: "action", displayName: "Create Google Calendar event", description: "Creates one event on the primary calendar after exact approval.", input: [{ key: "summary", label: "Title", type: "string", required: true }, { key: "start", label: "Start with UTC offset", type: "datetime", required: true }, { key: "end", label: "End with UTC offset", type: "datetime", required: true }, { key: "timeZone", label: "IANA time zone", type: "string", required: true }], output: [{ key: "eventId", label: "Google event ID", type: "string", required: true }], requiredScopes: [GOOGLE_SCOPES.calendarEventsOwned], connectionRequired: true, testMode: true, production: true, deliverySemantics: "acknowledged_external" },
+    { key: "update_event", version: 1, kind: "action", displayName: "Update Google Calendar event", description: "Conditionally updates one reviewed primary-calendar event.", input: [{ key: "eventId", label: "Event ID", type: "string", required: true }, { key: "expectedEtag", label: "Reviewed ETag", type: "string", required: true }, { key: "summary", label: "New title", type: "string", required: true }], output: [{ key: "eventId", label: "Google event ID", type: "string", required: true }], requiredScopes: [GOOGLE_SCOPES.calendarEventsOwned], connectionRequired: true, testMode: true, production: true, deliverySemantics: "acknowledged_external" },
+  ],
+  limitations: ["Only the account's owned primary calendar can be changed.", "Events require explicit approval and a provider acknowledgement."],
+  documentationUrl: "https://developers.google.com/workspace/calendar/api/v3/reference",
+};
+
 const slackManifest: ConnectorManifest = {
   id: "slack",
   providerFamily: "slack",
@@ -307,6 +324,10 @@ const sheetsFindHandler: ConnectorActionHandler = async (input, context) =>
   (await import("@/lib/connectors/google/sheets")).sheetsFindRow(input, context);
 const sheetsUpdateHandler: ConnectorActionHandler = async (input, context) =>
   (await import("@/lib/connectors/google/sheets")).sheetsUpdateRow(input, context);
+const calendarCreateHandler: ConnectorActionHandler = async (input, context) =>
+  (await import("@/lib/connectors/google/calendar")).calendarCreateEvent(input, context);
+const calendarUpdateHandler: ConnectorActionHandler = async (input, context) =>
+  (await import("@/lib/connectors/google/calendar")).calendarUpdateEvent(input, context);
 const slackSendHandler: ConnectorActionHandler = async (input, context) =>
   (await import("@/lib/connectors/slack/messages")).slackSendChannelMessage(input, context);
 const slackReplyHandler: ConnectorActionHandler = async (input, context) =>
@@ -405,6 +426,7 @@ const connectors: RegisteredConnector[] = [
     manifest: googleSheetsManifest,
     runtime: { actionHandlers: { "add_row@1": sheetsAddHandler, "find_row@1": sheetsFindHandler, "update_row@1": sheetsUpdateHandler }, triggerHandlers: {} },
   },
+  { manifest: googleCalendarManifest, runtime: { actionHandlers: { "create_event@1": calendarCreateHandler, "update_event@1": calendarUpdateHandler }, triggerHandlers: {} } },
   {
     manifest: slackManifest,
     runtime: { actionHandlers: { "send_channel_message@1": slackSendHandler, "reply_in_thread@1": slackReplyHandler }, triggerHandlers: { "new_channel_message@1": providerManagedTrigger } },

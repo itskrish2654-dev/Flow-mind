@@ -37,6 +37,7 @@ export const AskToolIdSchema = z.enum([
   "action_activity",
   "gmail_search",
   "sheets_search",
+  "calendar_events",
   "company_knowledge",
   "goals",
   "slack_search",
@@ -53,6 +54,7 @@ export const AskReferenceKindSchema = z.enum([
   "gmail_message",
   "sheet_row",
   "sheet_range",
+  "calendar_event",
   "knowledge_chunk",
   "goal",
   "slack_message",
@@ -101,7 +103,7 @@ export type AskResponseMetadata = z.infer<typeof AskResponseMetadataSchema>;
 export const AskModelOutputSchema = z.object({
   responseType: z.enum(ASK_MODEL_RESPONSE_TYPES),
   answer: z.string().trim().min(1).max(ASK_LIMITS.modelAnswerCharacters),
-  referenceKeys: z.array(z.string().regex(/^(?:work_item|approval|workflow|execution|action_execution|activity|gmail_message|sheet_row|sheet_range|knowledge_chunk|goal|slack_message):\d+$/)).max(12),
+  referenceKeys: z.array(z.string().regex(/^(?:work_item|approval|workflow|execution|action_execution|activity|gmail_message|sheet_row|sheet_range|calendar_event|knowledge_chunk|goal|slack_message):\d+$/)).max(12),
   clarificationRequired: z.boolean(),
   suggestedAction: AskSuggestedActionSchema.optional(),
 }).strict();
@@ -214,6 +216,8 @@ export function selectAskTools(question: string): AskToolId[] {
   const directEmailSend = /^\s*(?:(?:using|from)\s+[^\s,;]+@[^\s,;]+\s*,\s*)?(?:please\s+)?(?:send\s+(?:an?\s+)?email\s+to|email)\s+[^\s,;]+@[^\s,;]+\s+(?:that|saying|with)\b/.test(text);
   const googleSources = askGoogleSourceSignals(question);
   if (googleSources.gmail && !directEmailSend) tools.push("gmail_search");
+  if (/\b(?:google calendar|calendar|meetings?)\b/.test(text)
+    && !/^\s*(?:please\s+)?(?:create|schedule|update|change|delete|cancel)\b/.test(text)) tools.push("calendar_events");
   if (googleSources.sheets || /\b(?:rows?|columns?)\b/.test(text)
     || (/\b(?:deals?|customers?|clients?|pipeline)\b/.test(text)
       && /\b(?:how many|which|find|listed|status|open)\b/.test(text))) {
@@ -410,6 +414,7 @@ function emptyAnswer(tools: readonly AskToolId[]): string {
   if (tools.includes("goals")) return "I found no workspace goals matching the bounded current goal list.";
   if (tools.includes("company_knowledge")) return "The uploaded company documents do not specify that. Ask an owner or admin to add the relevant source if it should be available.";
   if (tools.includes("sheets_search")) return "I found no matching rows in the bounded selected spreadsheet range. Ask about a narrower range if the sheet has more data.";
+  if (tools.includes("calendar_events")) return "I found no matching events in the next 30 days of the connected primary calendar; older or more distant events were not searched.";
   if (tools.includes("gmail_search")) return "I found no matching Gmail messages in the bounded recent mailbox search.";
   if (tools.includes("slack_search")) return "I found no matching Slack messages among the recently captured, permitted public-channel events.";
   if (tools.includes("my_day")) return "There is nothing in CrazyLoops that needs your attention right now.";
@@ -469,6 +474,15 @@ export async function runGroundedAsk(input: {
       metadata: { version: 1, responseType: "clarification", clarificationRequired: true,
         references: [], suggestedAction: { label: "Open Connections", href: "/connections" } },
     };
+  }
+  if (unavailable?.tool === "calendar_events") {
+    const answer = unavailable.availability === "account_selection_required"
+      ? "Which connected Google Calendar account should I read? Include that account's email address in your question."
+      : unavailable.availability === "reconnect_required"
+        ? "Reconnect Google Calendar with its event permission before CrazyLoops can read it."
+        : "Connect Google Calendar before CrazyLoops can read events.";
+    return { answer, metadata: { version: 1, responseType: "clarification", clarificationRequired: true,
+      references: [], suggestedAction: { label: "Open Connections", href: "/connections" } } };
   }
   const ambiguousSheet = toolResults.flatMap((result) => result.tool === "sheets_search"
     ? result.records : []).find((record) => record.facts.ambiguousExactMatch === "yes");

@@ -9,6 +9,8 @@ import { googleSheetsAcceptanceCapability } from "@/lib/google-sheets-live-accep
 import { connectorConnectionIds } from "@/lib/connectors/connection-matching";
 import { getConnector } from "@/lib/connectors/registry";
 import { parseGmailSendIntent } from "@/lib/connectors/google/gmail-action-intent";
+import { parseCalendarActionIntent } from "@/lib/connectors/google/calendar-action-intent";
+import { listGoogleCalendars, readGoogleCalendarEvent } from "@/lib/connectors/google/calendar";
 import { parseSheetWriteIntent } from "@/lib/connectors/google/sheets-action-intent";
 import { findSelectedGoogleSpreadsheetRow, inspectSelectedGoogleWorksheet, readSelectedGoogleSpreadsheetRow } from "@/lib/connectors/google/sheets";
 import { resolveSelectedSheetForQuestion } from "@/lib/connectors/google/sheets-work-context";
@@ -219,8 +221,57 @@ async function planSheetsAction(scope: Scope, question: string): Promise<AskGrou
     : clarification("This update is too large or contains credential-like text for a safe approval preview. Nothing was changed.");
 }
 
+async function planCalendarAction(scope: Scope, question: string): Promise<AskGroundedResponse | null> {
+  const intent = parseCalendarActionIntent(question);
+  if (!intent) return null;
+  if (intent === "clarification") return clarification(
+    'For a safe Calendar preview, use: Create Google Calendar event "Title" from 2026-10-07T10:00:00+05:30 to 2026-10-07T10:30:00+05:30 in Asia/Kolkata. For an update, name the exact event ID and new title. Nothing was changed.',
+  );
+  const capability = getCapability(intent.kind === "create" ? "google_calendar_create_event" : "google_calendar_update_event");
+  if (!capability?.supported || !capability.availableInProduction || !capability.connectorOperation) return null;
+  const connection = await ownedConnection(scope, "google_calendar", capability.requiredScopes);
+  if (!connection) return connectionRequired("Google Calendar");
+  const listing = await listGoogleCalendars({ userId: scope.userId, workspaceId: scope.workspaceId, connectionId: connection.id });
+  if (!listing.calendars.some((calendar) => calendar.primary && calendar.owned)) {
+    return clarification("The connected account's primary calendar is not owned or is unavailable. Nothing was changed.");
+  }
+  const common = {
+    version: 1 as const, capabilityId: capability.id,
+    connectorId: capability.connectorOperation.connectorId,
+    operationKey: capability.connectorOperation.operationKey,
+    operationVersion: capability.connectorOperation.operationVersion,
+    connectionId: connection.id,
+  };
+  if (intent.kind === "create") {
+    const preview = ActionPreviewSchema.safeParse({ ...common,
+      actionTitle: "Create one Google Calendar event",
+      actionSummary: `Create “${intent.summary}” on the owned primary calendar, ${intent.start} to ${intent.end} (${intent.timeZone}). No invitations or notifications will be sent.`,
+      approvalReason: "Creating an external calendar event requires approval of its exact title and time.",
+      target: { kind: "external_resource", label: `${connection.external_account_label ?? "Google account"} / primary calendar`, reference: "primary" },
+      parameters: [parameter("summary", "Event title", intent.summary), parameter("start", "Start", intent.start),
+        parameter("end", "End", intent.end), parameter("timeZone", "Time zone", intent.timeZone)],
+    });
+    return preview.success ? response(preview.data) : clarification("The event cannot be safely previewed. Nothing was changed.");
+  }
+  const event = await readGoogleCalendarEvent({ userId: scope.userId, workspaceId: scope.workspaceId,
+    connectionId: connection.id, eventId: intent.eventId });
+  if (!event) return clarification("That exact event was not found on the owned primary calendar. Nothing was changed.");
+  if (event.summary === intent.summary) return clarification("The event already has that title. Nothing was changed.");
+  const preview = ActionPreviewSchema.safeParse({ ...common,
+    actionTitle: "Update one Google Calendar event",
+    actionSummary: `Change only the title of “${event.summary}” to “${intent.summary}” on the primary calendar. Its time remains ${event.startAt} to ${event.endAt}. If the event changes before execution, this update stops.`,
+    approvalReason: "Changing an existing calendar event requires approval of the exact event and new title.",
+    target: { kind: "external_resource", label: event.summary, reference: event.id },
+    parameters: [parameter("eventId", "Exact event ID", event.id), parameter("expectedEtag", "Reviewed event version", event.etag),
+      parameter("summary", "New title", intent.summary)],
+  });
+  return preview.success ? response(preview.data) : clarification("The update cannot be safely previewed. Nothing was changed.");
+}
+
 /** Deterministic allowlist. The model cannot name or construct executable capabilities. */
 export async function planAskAction(scope: Scope, question: string): Promise<AskGroundedResponse | null> {
+  const calendar = await planCalendarAction(scope, question);
+  if (calendar) return calendar;
   const sheets = await planSheetsAction(scope, question);
   if (sheets) return sheets;
   const internal = question.match(/^\[acceptance action\]\s*acknowledge:\s*(.{1,500})$/i);
