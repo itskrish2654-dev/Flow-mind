@@ -6,7 +6,7 @@ import { getCapability, getConnectorOnboarding } from "../lib/capability-registr
 import { selectAskTools } from "../lib/ask-core";
 import { matchesConnectorSuccess } from "../lib/connectors/connection-success";
 import { parseCalendarActionIntent } from "../lib/connectors/google/calendar-action-intent";
-import { calendarEventFromProvider, calendarEventIdForAction, validCalendarEventId, validateCalendarTime } from "../lib/connectors/google/calendar-core";
+import { calendarConnectionAllowsEventSource, calendarEventFromProvider, calendarEventIdForAction, validCalendarEventId, validateCalendarTime } from "../lib/connectors/google/calendar-core";
 import { GOOGLE_SCOPES, googleScopesForOperation } from "../lib/connectors/google/scopes";
 import { unionGoogleScopes } from "../lib/connectors/google/oauth-finalization-core";
 import { getConnector } from "../lib/connectors/registry";
@@ -71,6 +71,15 @@ test("provider event IDs are deterministic, valid, and acknowledgements require 
   assert.equal(calendarEventFromProvider({ ...event, status: "cancelled" }), null);
 });
 
+test("Calendar event source hides absent, disconnected, and unscoped connections", () => {
+  const connection = { id: "owner-connection", status: "connected", granted_scopes: [GOOGLE_SCOPES.calendarEventsOwned] };
+  assert.equal(calendarConnectionAllowsEventSource(connection, connection.id), true);
+  assert.equal(calendarConnectionAllowsEventSource(null, connection.id), false);
+  assert.equal(calendarConnectionAllowsEventSource(connection, "other-connection"), false);
+  assert.equal(calendarConnectionAllowsEventSource({ ...connection, status: "expired" }, connection.id), false);
+  assert.equal(calendarConnectionAllowsEventSource({ ...connection, granted_scopes: [GOOGLE_SCOPES.calendarListReadonly] }, connection.id), false);
+});
+
 test("Ask Calendar reads route to bounded source and OAuth success requires actual Calendar grant", () => {
   assert.ok(selectAskTools("What meetings are on my Google Calendar this week?").includes("calendar_events"));
   assert.ok(!selectAskTools("Show my Gmail messages").includes("calendar_events"));
@@ -89,5 +98,7 @@ test("Calendar server path remains owner/workspace-scoped and conditional withou
   assert.match(calendar, /calendarEventIdForAction\(context\.idempotencyKey\)/);
   assert.match(planner, /ActionPreviewSchema\.safeParse/);
   assert.match(source, /readGoogleCalendarEvent\(\{ userId: auth\.user\.id, workspaceId: auth\.workspace\.id/);
+  assert.match(calendar, /if \(!calendarConnectionAllowsEventSource\(connection, input\.connectionId\)\) return null;/);
+  assert.match(source, /if \(!event\) notFound\(\)/);
   assert.doesNotMatch(connections, /access_token|refresh_token|client_secret/i);
 });

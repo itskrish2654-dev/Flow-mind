@@ -1,11 +1,21 @@
 import { createHash } from "node:crypto";
 
+import { GOOGLE_SCOPES } from "@/lib/connectors/google/scopes";
+
 export const MAX_CALENDAR_RESPONSE_BYTES = 128 * 1024;
 const OFFSET_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})$/;
 const EVENT_ID = /^[A-Za-z0-9_-]{5,1024}$/;
 
 export function validCalendarEventId(value: unknown): value is string {
   return typeof value === "string" && EVENT_ID.test(value);
+}
+
+export function calendarConnectionAllowsEventSource(
+  connection: { id: string; status: string; granted_scopes: string[] } | null | undefined,
+  connectionId: string,
+): boolean {
+  return connection?.id === connectionId && connection.status === "connected"
+    && connection.granted_scopes.includes(GOOGLE_SCOPES.calendarEventsOwned);
 }
 
 export function calendarEventIdForAction(idempotencyKey: string): string {

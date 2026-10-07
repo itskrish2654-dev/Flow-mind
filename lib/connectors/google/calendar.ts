@@ -1,7 +1,7 @@
 import "server-only";
 
 import { googleApiErrorResult, googleApiFetch } from "@/lib/connectors/google/api";
-import { calendarEventFromProvider, calendarEventIdForAction, readBoundedCalendarJson, validCalendarEventId, validateCalendarTime } from "@/lib/connectors/google/calendar-core";
+import { calendarConnectionAllowsEventSource, calendarEventFromProvider, calendarEventIdForAction, readBoundedCalendarJson, validCalendarEventId, validateCalendarTime } from "@/lib/connectors/google/calendar-core";
 import { GOOGLE_SCOPES } from "@/lib/connectors/google/scopes";
 import { ConnectorError } from "@/lib/connectors/errors";
 import type { ConnectorActionHandler } from "@/lib/connectors/types";
@@ -92,7 +92,9 @@ export async function readCalendarForAsk(input: { userId: string; workspaceId: s
 
 export async function readGoogleCalendarEvent(input: { userId: string; workspaceId: string; connectionId: string; eventId: string }) {
   if (!validCalendarEventId(input.eventId)) return null;
-  await assertOwnedCalendarConnection(input);
+  const connection = (await ownedCalendarConnections(input.userId, input.workspaceId))
+    .find((item) => item.id === input.connectionId);
+  if (!calendarConnectionAllowsEventSource(connection, input.connectionId)) return null;
   const response = await googleApiFetch({ userId: input.userId, connectionId: input.connectionId,
     requiredScopes: EVENT_SCOPE, url: `${CALENDAR_API}/calendars/primary/events/${encodeURIComponent(input.eventId)}?fields=id,summary,etag,start,end,status,htmlLink`,
     allowNotFoundResponse: true });
