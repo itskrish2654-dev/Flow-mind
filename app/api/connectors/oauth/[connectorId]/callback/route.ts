@@ -11,6 +11,7 @@ import { GOOGLE_LEGACY_SHEETS_SCOPE } from "@/lib/connectors/google/scopes";
 import { consumeOAuthState, withOAuthResult } from "@/lib/connectors/oauth";
 import { exchangeAuthorizationCode } from "@/lib/connectors/oauth-exchange";
 import { getConnector } from "@/lib/connectors/registry";
+import { NotionVerificationError } from "@/lib/connectors/notion/oauth-provider";
 import {
   finalizeGmailLiveAcceptanceConnection,
   getGmailLiveAcceptanceCallbackContext,
@@ -58,8 +59,10 @@ export async function GET(
   }
 
   let returnPath = "/connections";
+  let callbackStage = "state_validation";
   try {
     const oauth = await consumeOAuthState({ userId: user.id, connectorId, state });
+    callbackStage = "provider_exchange";
     returnPath = oauth.returnPath;
     const acceptanceContext = getGmailLiveAcceptanceCallbackContext({
       connectorId,
@@ -111,6 +114,7 @@ export async function GET(
         }
       }
     } else {
+      callbackStage = "connection_lookup";
       const admin = createAdminClient();
       const canonicalConnectorId = connector.manifest.providerFamily;
       const { data: intended } = oauth.connectionId
@@ -141,6 +145,7 @@ export async function GET(
       const grantedScopes = connector.manifest.providerFamily === "slack" || connector.manifest.providerFamily === "notion"
         ? tokens.scopes
         : Array.from(new Set([...(existing?.granted_scopes ?? []), ...tokens.scopes]));
+      callbackStage = "connection_write";
       const { data: connection, error } = await admin
         .from("connector_connections")
         .upsert({
@@ -162,6 +167,7 @@ export async function GET(
         .select("id")
         .single();
       if (error || !connection) throw new Error("Connection metadata could not be stored.");
+      callbackStage = "credential_write";
       try {
         await storeConnectionSecret({
           userId: user.id,
@@ -210,7 +216,7 @@ export async function GET(
       metadata: { connector: connectorId },
     });
     return privateRedirect(withOAuthResult(returnPath, "connected", connectorId), url.origin);
-  } catch {
+  } catch (error) {
     const connectionFailureEvent = connector?.manifest.providerFamily === "google"
       ? "google_connection_failure"
       : connector?.manifest.providerFamily === "slack"
@@ -222,6 +228,9 @@ export async function GET(
       userId: user.id,
       status: "failed",
       errorCategory: "oauth",
+      ...(connector?.manifest.providerFamily === "notion" && notionAcceptanceConnector(connectorId)
+        ? { metadata: { failurePoint: error instanceof NotionVerificationError ? error.failurePoint : callbackStage } }
+        : {}),
     });
     return privateRedirect(
       withOAuthResult(returnPath, "connection_error", oauthCancelled ? "oauth_cancelled" : "oauth_callback_failed"),

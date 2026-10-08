@@ -7,6 +7,7 @@ import {
   addNotionAuthorizationParameters,
   exchangeNotionAuthorizationCode,
   introspectNotionAccessToken,
+  NotionVerificationError,
   parseNotionIntrospectedContentScopes,
   verifyNotionTokenBotIdentity,
 } from "../lib/connectors/notion/oauth-provider";
@@ -27,9 +28,18 @@ test("generic Connections-page Notion intent is limited to its content contract,
 test("Notion introspection maps only provider-confirmed content capabilities", () => {
   assert.deepEqual(parseNotionIntrospectedContentScopes("read_content insert_content update_content"), expected);
   assert.deepEqual(parseNotionIntrospectedContentScopes("read_content"), [NOTION_CAPABILITIES.readContent]);
-  assert.throws(() => parseNotionIntrospectedContentScopes("read_content read_comments"), /unsupported capability/);
+  assert.deepEqual(parseNotionIntrospectedContentScopes("read_user_without_email read_content insert_content update_content read_comments"), expected);
+  assert.deepEqual(parseNotionIntrospectedContentScopes("read_content unknown_provider_scope"), [NOTION_CAPABILITIES.readContent]);
   assert.throws(() => parseNotionIntrospectedContentScopes("insert_content update_content"), /read capability/);
+  assert.throws(() => parseNotionIntrospectedContentScopes("read_comments read_user_without_email"), /read capability/);
   assert.throws(() => parseNotionIntrospectedContentScopes(null), /could not be verified/);
+  for (const [value, failurePoint] of [
+    [null, "capabilities_missing"],
+    ["insert_content update_content", "read_capability_missing"],
+  ] as const) {
+    assert.throws(() => parseNotionIntrospectedContentScopes(value), (error) =>
+      error instanceof NotionVerificationError && error.failurePoint === failurePoint);
+  }
 });
 
 test("Notion OAuth persists introspected capabilities, not generic requested values", async () => {
@@ -47,7 +57,7 @@ test("Notion OAuth persists introspected capabilities, not generic requested val
       return Response.json({ access_token: "fake-access-token", workspace_id: "test-workspace", bot_id: "a0d4f0c6-6914-4d17-916a-c722cd9c24b6" });
     }
     assert.deepEqual(JSON.parse(String(init?.body)), { token: "fake-access-token" });
-    return Response.json({ active: true, scope: "read_content insert_content update_content" });
+    return Response.json({ active: true, scope: "read_user_without_email read_content insert_content update_content" });
   };
   try {
     const result = await exchangeNotionAuthorizationCode({ code: "test-code", redirectUri: "https://staging.crazy-loops.com/callback" });
@@ -73,7 +83,7 @@ test("inactive or unverified Notion introspection cannot claim grants", async ()
   process.env.FLOWMIND_CONNECTOR_NOTION_CLIENT_ID = "test-client";
   process.env.FLOWMIND_CONNECTOR_NOTION_CLIENT_SECRET = "test-secret";
   try {
-    for (const body of [{ active: false, scope: "read_content insert_content update_content" }, { active: true }, { active: true, scope: "read_content read_comments" }]) {
+    for (const body of [{ active: false, scope: "read_content insert_content update_content" }, { active: true }, { active: true, scope: "read_comments" }]) {
       globalThis.fetch = async () => Response.json(body);
       await assert.rejects(introspectNotionAccessToken("fake-access-token"));
     }
@@ -84,6 +94,13 @@ test("inactive or unverified Notion introspection cannot claim grants", async ()
     if (previousSecret === undefined) delete process.env.FLOWMIND_CONNECTOR_NOTION_CLIENT_SECRET;
     else process.env.FLOWMIND_CONNECTOR_NOTION_CLIENT_SECRET = previousSecret;
   }
+});
+
+test("Notion callback logs only bounded staging failure categories, never provider responses", () => {
+  const callback = readFileSync("app/api/connectors/oauth/[connectorId]/callback/route.ts", "utf8");
+  assert.match(callback, /notionAcceptanceConnector\(connectorId\)/);
+  assert.match(callback, /failurePoint: error instanceof NotionVerificationError \? error\.failurePoint : callbackStage/);
+  assert.doesNotMatch(callback, /error\.message|JSON\.stringify\(error\)/);
 });
 
 test("existing token reuse requires the originally recorded Notion bot identity", async () => {

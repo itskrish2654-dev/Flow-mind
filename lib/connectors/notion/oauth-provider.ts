@@ -2,6 +2,19 @@ import { ConnectorError, classifyConnectorHttpFailure } from "@/lib/connectors/e
 import { NOTION_API_VERSION, NOTION_CAPABILITIES, NOTION_TOKEN_URL } from "@/lib/connectors/notion/constants";
 
 const NOTION_INTROSPECTION_URL = "https://api.notion.com/v1/oauth/introspect";
+export type NotionVerificationFailure =
+  | "introspection_unavailable"
+  | "introspection_http_failure"
+  | "introspection_inactive"
+  | "capabilities_missing"
+  | "read_capability_missing";
+
+export class NotionVerificationError extends Error {
+  constructor(readonly failurePoint: NotionVerificationFailure, message: string) {
+    super(message);
+    this.name = "NotionVerificationError";
+  }
+}
 const NOTION_CONTENT_SCOPES = new Map([
   ["read_content", NOTION_CAPABILITIES.readContent],
   ["insert_content", NOTION_CAPABILITIES.insertContent],
@@ -39,15 +52,20 @@ type NotionTokenResponse = {
 
 /** Notion's OAuth token response has no scopes; introspection is authoritative. */
 export function parseNotionIntrospectedContentScopes(value: unknown): string[] {
-  if (typeof value !== "string" || !value.trim()) throw new Error("Notion capabilities could not be verified.");
+  if (typeof value !== "string" || !value.trim()) {
+    throw new NotionVerificationError("capabilities_missing", "Notion capabilities could not be verified.");
+  }
   const tokens = value.trim().split(/[\s,]+/);
   const scopes = new Set<string>();
   for (const token of tokens) {
     const capability = NOTION_CONTENT_SCOPES.get(token);
-    if (!capability) throw new Error("Notion returned an unsupported capability.");
-    scopes.add(capability);
+    // Introspection may include non-content capabilities. They are not part of
+    // CrazyLoops' Notion contract and must never become granted_scopes.
+    if (capability) scopes.add(capability);
   }
-  if (!scopes.has(NOTION_CAPABILITIES.readContent)) throw new Error("Notion read capability is unavailable.");
+  if (!scopes.has(NOTION_CAPABILITIES.readContent)) {
+    throw new NotionVerificationError("read_capability_missing", "Notion read capability is unavailable.");
+  }
   return [NOTION_CAPABILITIES.readContent, NOTION_CAPABILITIES.insertContent, NOTION_CAPABILITIES.updateContent]
     .filter((scope) => scopes.has(scope));
 }
@@ -69,10 +87,15 @@ export async function introspectNotionAccessToken(accessToken: string): Promise<
       signal: AbortSignal.timeout(10_000),
     });
   } catch {
-    throw new Error("Notion capability verification is unavailable.");
+    throw new NotionVerificationError("introspection_unavailable", "Notion capability verification is unavailable.");
   }
   const result = await response.json().catch(() => ({})) as { active?: unknown; scope?: unknown };
-  if (!response.ok || result.active !== true) throw new Error("Notion token could not be verified.");
+  if (!response.ok) {
+    throw new NotionVerificationError("introspection_http_failure", "Notion token could not be verified.");
+  }
+  if (result.active !== true) {
+    throw new NotionVerificationError("introspection_inactive", "Notion token could not be verified.");
+  }
   return parseNotionIntrospectedContentScopes(result.scope);
 }
 
