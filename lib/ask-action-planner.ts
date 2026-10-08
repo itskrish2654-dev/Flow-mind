@@ -285,8 +285,9 @@ export async function planAskAction(scope: Scope, question: string): Promise<Ask
     if (!connection) return connectionRequired("Notion");
     const resources = await listNotionResources({ userId: scope.userId, connectionId: connection.id });
     const sources = resources.filter((resource) => resource.type === "data_source" && resource.title.toLocaleLowerCase() === notion.dataSourceName.toLocaleLowerCase());
-    if (sources.length !== 1) return clarification("Name one exact, shared Notion data source. Nothing was changed.");
+    if (sources.length !== 1) return clarification("Name one exact, shared Notion data source. If names repeat, choose a recognizable target in Connections first. Nothing was changed.");
     const source = sources[0];
+    if (!source.canCreateItems || !source.containerTitle) return clarification("This Notion data source has no verified, recognizable database location. Choose a shared data source whose containing database is shown in Connections. Nothing was changed.");
     const inspected = await inspectNotionDataSource({ userId: scope.userId, connectionId: connection.id, dataSourceId: source.id });
     try { mapNotionProperties(inspected.properties, notion.values); }
     catch { return clarification("The requested fields do not exactly match supported properties of the selected Notion data source. Nothing was changed."); }
@@ -303,10 +304,10 @@ export async function planAskAction(scope: Scope, question: string): Promise<Ask
       connectionId: connection.id,
       actionTitle: notion.kind === "add" ? "Add one Notion data-source item" : "Update one Notion data-source item",
       actionSummary: notion.kind === "add"
-        ? `Create one item in the exact shared Notion data source “${source.title}” with the displayed properties.`
-        : `Update only item ${notion.pageId} in the exact shared Notion data source “${source.title}” with the displayed properties.`,
+        ? `Create one item in Notion data source “${source.title}” inside database “${source.containerTitle}” with the displayed properties.`
+        : `Update only item ${notion.pageId} in Notion data source “${source.title}” inside database “${source.containerTitle}” with the displayed properties.`,
       approvalReason: "Changing external Notion content requires approval of the exact item and values.",
-      target: { kind: "external_resource", label: source.title, reference: notion.kind === "add" ? source.id : notion.pageId },
+      target: { kind: "external_resource", label: `${source.title} · in ${source.containerTitle}`, reference: notion.kind === "add" ? source.id : notion.pageId },
       parameters: [parameter("dataSourceId", "Data source", source.id),
         ...(notion.kind === "update" ? [parameter("pageId", "Exact item", notion.pageId)] : []),
         parameter("values", "Exact property values", JSON.stringify(notion.values))],

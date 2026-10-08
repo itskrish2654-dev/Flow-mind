@@ -67,6 +67,7 @@ import { AiCustomizationBar } from "@/components/ai-customization-bar";
 import { WorkflowJourneyPanel } from "@/components/workflow-journey-panel";
 import { getPublicFormPath, getPublicFormUrl } from "@/lib/public-form";
 import { getCapability, getConnectorOnboarding } from "@/lib/capability-registry";
+import { notionResourceLabel, type NotionResource } from "@/lib/connectors/notion/resources";
 import { isSensitiveFieldName } from "@/lib/security/redaction";
 import type {
   CompiledWorkflow,
@@ -398,12 +399,7 @@ function Inspector({
   const [resourceOptionResult, setResourceOptionResult] = useState<{
     key: string;
     slackChannels: Array<{ id: string; name: string; isMember: boolean }>;
-    notionResources: Array<{
-      id: string;
-      type: "page" | "data_source";
-      title: string;
-      url?: string;
-    }>;
+    notionResources: NotionResource[];
     error: string | null;
   } | null>(null);
   const [resourceRefreshKey, setResourceRefreshKey] = useState(0);
@@ -514,7 +510,7 @@ function Inspector({
         onResourceAvailabilityChange(id, Boolean(value && !slackChannels.some((channel) => channel.id === value)));
       } else if (connectorId === "notion" && ["resourceId", "parentPageId", "dataSourceId", "pageId"].includes(input.key)) {
         const matchingResources = notionResources.filter((resource) => input.key === "dataSourceId"
-          ? resource.type === "data_source"
+          ? resource.type === "data_source" && resource.canCreateItems
           : input.key === "parentPageId" || input.key === "pageId"
             ? resource.type === "page"
             : true);
@@ -1010,7 +1006,7 @@ function Inspector({
               const id = inputId(step.id, input.key);
               const value = values[id] ?? input.value ?? "";
               const notionChoices = notionResources.filter((resource) => input.key === "dataSourceId"
-                ? resource.type === "data_source"
+                ? resource.type === "data_source" && resource.canCreateItems
                 : input.key === "parentPageId" || input.key === "pageId"
                   ? resource.type === "page"
                   : true);
@@ -1135,12 +1131,12 @@ function Inspector({
                               {staleNotionResource && <option value={value}>Previously selected resource — choose another</option>}
                               {notionChoices.map((resource) => (
                                 <option key={resource.id} value={resource.id}>
-                                  {resource.title} · {resource.type === "data_source" ? "data source" : "page"}
+                                  {notionResourceLabel(resource)}
                                 </option>
                               ))}
                             </select>
                             {staleNotionResource && <p role="alert" className="text-[9px] leading-4 text-amber-700">The selected Notion resource is no longer available. Choose another resource.</p>}
-                            {!resourceOptionsBusy && !resourceOptionsError && step.config.connector.connectionId && notionChoices.length === 0 && <p className="text-[9px] leading-4 text-slate-500">No matching Notion resources were found.</p>}
+                            {!resourceOptionsBusy && !resourceOptionsError && step.config.connector.connectionId && notionChoices.length === 0 && <p className="text-[9px] leading-4 text-slate-500">No matching Notion resources with a verified location were found.</p>}
                             {resourceOptionsError && <p role="alert" className="text-[9px] leading-4 text-rose-700">{resourceOptionsError}</p>}
                             <button type="button" disabled={resourceOptionsBusy || !step.config.connector.connectionId} onClick={() => setResourceRefreshKey((key) => key + 1)} className="inline-flex min-h-9 items-center gap-1.5 px-1 text-[9px] font-semibold text-[#795700] disabled:opacity-50">
                               <RefreshCw className={`size-3 ${resourceOptionsBusy ? "animate-spin" : ""}`} aria-hidden="true" /> Refresh resources

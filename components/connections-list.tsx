@@ -23,6 +23,7 @@ import { AccessibleDialog } from "@/components/accessible-dialog";
 import { getConnectorOnboarding } from "@/lib/capability-registry";
 import type { ConnectionProvider, ConnectionView } from "@/lib/connectors/connection-view";
 import { matchesConnectorSuccess } from "@/lib/connectors/connection-success";
+import { notionResourceLabel, type NotionResource } from "@/lib/connectors/notion/resources";
 
 const GoogleSpreadsheetPicker = dynamic(() => import("@/components/google-spreadsheet-picker").then((module) => module.GoogleSpreadsheetPicker));
 
@@ -212,8 +213,9 @@ export function ConnectionsList({
   const [verifyingNotion, setVerifyingNotion] = useState(false);
   const [readingNotion, setReadingNotion] = useState(false);
   const [listingNotion, setListingNotion] = useState(false);
-  const [notionResources, setNotionResources] = useState<Array<{ id: string; title: string; type: "page" | "data_source" }>>([]);
+  const [notionResources, setNotionResources] = useState<NotionResource[]>([]);
   const [selectedNotionResourceId, setSelectedNotionResourceId] = useState("");
+  const selectedNotionResource = notionResources.find((resource) => resource.id === selectedNotionResourceId);
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -625,9 +627,16 @@ export function ConnectionsList({
                       Choose the disposable resource to check
                       <select value={selectedNotionResourceId} onChange={(event) => setSelectedNotionResourceId(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-[#d8caa8] bg-white px-3 text-sm text-slate-900">
                         <option value="">Select a resource</option>
-                        {notionResources.map((resource) => <option key={resource.id} value={resource.id}>{resource.title} ({resource.type === "page" ? "page" : "data source"})</option>)}
+                        {notionResources.map((resource) => <option key={resource.id} value={resource.id}>{notionResourceLabel(resource)}</option>)}
                       </select>
                     </label>
+                  )}
+                  {selectedNotionResource?.type === "data_source" && (
+                    <p className="mt-2 text-xs leading-5 text-slate-600">
+                      {selectedNotionResource.canCreateItems
+                        ? "This data source has a verified containing database. New items still require an exact preview and approval."
+                        : "This data source can be read, but its containing database could not be verified. It is not available for new items."}
+                    </p>
                   )}
                   <button type="button" onClick={() => void confirmNotionContentRead()} disabled={readingNotion || !selectedNotionResourceId} className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-xl border border-[#d8caa8] px-4 text-xs font-semibold text-slate-700 transition hover:bg-[#fff8e3] disabled:opacity-60">
                     {readingNotion && <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />}

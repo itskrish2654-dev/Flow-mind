@@ -2,6 +2,7 @@ import type { ConnectorActionHandler } from "@/lib/connectors/types";
 import { NOTION_API_VERSION, NOTION_CAPABILITIES } from "@/lib/connectors/notion/constants";
 import { notionApiErrorResult, notionApiFetch } from "@/lib/connectors/notion/api";
 import { mapNotionProperties, normalizeNotionPage, notionExactMatchFilter, notionPageBelongsToDataSource } from "@/lib/connectors/notion/properties";
+import { describeNotionResources, notionContainingDatabaseId } from "@/lib/connectors/notion/resources";
 import { captureOperationalEvent } from "@/lib/observability";
 import { ConnectorError, ambiguousAcknowledgement } from "@/lib/connectors/errors";
 
@@ -78,22 +79,30 @@ export const notionUpdateItem: ConnectorActionHandler = async (input, context) =
   } catch (error) { await failure(context); return notionApiErrorResult(error); }
 };
 
-export async function listNotionResources(input: { userId: string; connectionId: string }) {
-  const resources: Array<{ id: string; type: "page" | "data_source"; title: string; url?: string }> = [];
+export async function listNotionResources(input: { userId: string; connectionId: string; resolveParentContext?: boolean }) {
+  const searchResults: unknown[] = [];
   let cursor: string | undefined;
   do {
     const result = await notionApiFetch({ userId: input.userId, connectionId: input.connectionId, requiredCapabilities: [NOTION_CAPABILITIES.readContent], path: "/search", method: "POST", body: { page_size: 100, ...(cursor ? { start_cursor: cursor } : {}) } });
-    for (const item of Array.isArray(result.results) ? result.results : []) {
-      if (!item || typeof item !== "object") continue; const resource = item as Record<string, unknown>;
-      if (resource.object === "page") resources.push({ id: String(resource.id ?? ""), type: "page", title: normalizeNotionPage(resource).page.title || "Untitled page", ...(resource.url ? { url: String(resource.url) } : {}) });
-      if (resource.object === "data_source") {
-        const title = Array.isArray(resource.title) ? resource.title.map((part) => part && typeof part === "object" && "plain_text" in part ? String((part as { plain_text?: unknown }).plain_text ?? "") : "").join("") : "";
-        resources.push({ id: String(resource.id ?? ""), type: "data_source", title: title || "Untitled data source", ...(resource.url ? { url: String(resource.url) } : {}) });
+    searchResults.push(...(Array.isArray(result.results) ? result.results : []));
+    cursor = result.has_more === true && typeof result.next_cursor === "string" ? result.next_cursor : undefined;
+  } while (cursor && searchResults.length < 1_000);
+
+  const databases = new Map<string, unknown>();
+  if (input.resolveParentContext !== false) {
+    // Parent lookups are bounded. A source without a verified containing database
+    // remains readable, but cannot be offered as a normal create target.
+    const ids = [...new Set(searchResults.map(notionContainingDatabaseId).filter((id): id is string => Boolean(id)))].slice(0, 12);
+    for (const id of ids) {
+      try {
+        databases.set(id, await notionApiFetch({ userId: input.userId, connectionId: input.connectionId,
+          requiredCapabilities: [NOTION_CAPABILITIES.readContent], path: `/databases/${id}` }));
+      } catch (error) {
+        if (error instanceof ConnectorError && error.details.category === "authentication") throw error;
       }
     }
-    cursor = result.has_more === true && typeof result.next_cursor === "string" ? result.next_cursor : undefined;
-  } while (cursor && resources.length < 1_000);
-  return resources;
+  }
+  return describeNotionResources(searchResults, databases);
 }
 
 export async function inspectNotionDataSource(input: { userId: string; connectionId: string; dataSourceId: string }) {

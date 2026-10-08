@@ -1,6 +1,7 @@
 import { readConnectionSecret } from "@/lib/connectors/connection-vault";
-import { ConnectorError, classifyConnectorHttpFailure } from "@/lib/connectors/errors";
+import { ConnectorError } from "@/lib/connectors/errors";
 import { NOTION_API_VERSION } from "@/lib/connectors/notion/constants";
+import { notionHttpFailure } from "@/lib/connectors/notion/provider-error";
 import { captureOperationalEvent } from "@/lib/observability";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -40,8 +41,8 @@ export async function notionApiFetch(input: { userId: string; connectionId: stri
     }
     const details = response.status === 404
       ? { category: "authorization" as const, code: "NOTION_RESOURCE_NOT_SHARED", message: "This Notion resource is not shared with the CrazyLoops connection.", retryable: false }
-      : classifyConnectorHttpFailure(response.status, response.headers.get("retry-after"));
-    throw new ConnectorError({ ...details, code: body.code ? `NOTION_${body.code.toUpperCase()}` : details.code });
+      : notionHttpFailure(response.status, body, response.headers.get("retry-after"));
+    throw new ConnectorError(details);
   }
   return body;
 }

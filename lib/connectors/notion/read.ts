@@ -27,7 +27,7 @@ export async function readNotionPage(input: { userId: string; workspaceId: strin
   const connections = await ownedConnection(input.userId, input.workspaceId, input.connectionId);
   const connection = connections.find((row) => row.status === "connected" && row.granted_scopes.includes(NOTION_CAPABILITIES.readContent));
   if (!connection) return null;
-  const resources = await listNotionResources({ userId: input.userId, connectionId: connection.id });
+  const resources = await listNotionResources({ userId: input.userId, connectionId: connection.id, resolveParentContext: false });
   const selected = resources.find((resource) => resource.type === "page"
     && resource.id.replace(/-/g, "").toLowerCase() === input.pageId.replace(/-/g, "").toLowerCase());
   if (!selected) return null;
@@ -48,7 +48,7 @@ export async function readNotionForAsk(input: { userId: string; workspaceId: str
   const usable = connections.filter((row) => row.status === "connected" && row.granted_scopes.includes(NOTION_CAPABILITIES.readContent));
   if (!usable.length) return { status: "reconnect_required" as const, page: null };
   const candidates = await Promise.all(usable.map(async (connection) => ({ connection,
-    resources: (await listNotionResources({ userId: input.userId, connectionId: connection.id })).filter((resource) => resource.type === "page"),
+    resources: (await listNotionResources({ userId: input.userId, connectionId: connection.id, resolveParentContext: false })).filter((resource) => resource.type === "page"),
   })));
   const pages = candidates.flatMap(({ connection, resources }) => resources.map((resource) => ({ connection, resource })));
   const named = pages.filter(({ resource }) => resource.title.length > 1 && input.question.toLocaleLowerCase().includes(resource.title.toLocaleLowerCase()));
