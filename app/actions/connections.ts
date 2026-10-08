@@ -15,8 +15,11 @@ import {
 import { GOOGLE_LEGACY_SHEETS_SCOPE, GOOGLE_SCOPES } from "@/lib/connectors/google/scopes";
 import { listSlackChannels } from "@/lib/connectors/slack/messages";
 import { inspectNotionDataSource, listNotionResources } from "@/lib/connectors/notion/actions";
+import { notionApiFetch } from "@/lib/connectors/notion/api";
+import { NOTION_CAPABILITIES } from "@/lib/connectors/notion/constants";
 import { introspectNotionAccessToken, verifyNotionTokenBotIdentity } from "@/lib/connectors/notion/oauth-provider";
 import { notionLiveAcceptanceEnabled } from "@/lib/notion-live-acceptance";
+import { captureOperationalEvent } from "@/lib/observability";
 import { CompiledWorkflowSchema } from "@/lib/schemas/workflow";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createImmutableWorkflowVersion, loadWorkflowSnapshot } from "@/lib/workflow-versioning";
@@ -121,7 +124,11 @@ export async function getSlackChannelOptions(connectionId: string) {
 
 export async function getNotionResourceOptions(connectionId: string) {
   const parsed = z.string().uuid().safeParse(connectionId); if (!parsed.success) return { ok: false as const, error: "Choose a valid Notion workspace.", resources: [] };
-  const auth = await getAuthenticatedContext(); const user = auth?.user; if (!user) return { ok: false as const, error: "Unauthorized", resources: [] };
+  const auth = await getAuthenticatedContext(); const user = auth?.user; if (!auth || !user) return { ok: false as const, error: "Unauthorized", resources: [] };
+  const { data: connection } = await createAdminClient().from("connector_connections")
+    .select("id,status").eq("id", parsed.data).eq("user_id", user.id).eq("workspace_id", auth.workspace.id)
+    .eq("connector_id", "notion").eq("provider_family", "notion").maybeSingle();
+  if (!connection || connection.status !== "connected") return { ok: false as const, error: "Notion connection is unavailable.", resources: [] };
   try { return { ok: true as const, resources: await listNotionResources({ userId: user.id, connectionId: parsed.data }) }; }
   catch (error) { return { ok: false as const, error: error instanceof Error ? error.message : "Accessible Notion resources could not be loaded.", resources: [] }; }
 }
@@ -161,6 +168,44 @@ export async function verifyNotionConnectionCapabilities(connectionId: string) {
     return { ok: true as const };
   } catch {
     return { ok: false as const, error: "Notion could not verify this connection's capabilities. No permissions were changed." };
+  }
+}
+
+/** Read-only, owner-bound staging proof; this does not enable Notion workflows. */
+export async function verifyNotionContentRead(connectionId: string, resourceId: string) {
+  const parsed = z.object({ connectionId: z.string().uuid(), resourceId: z.string().uuid() }).safeParse({ connectionId, resourceId });
+  if (!parsed.success || !notionLiveAcceptanceEnabled()) return { ok: false as const, error: "Notion verification is unavailable." };
+  const auth = await getAuthenticatedContext();
+  if (!auth) return { ok: false as const, error: "Unauthorized" };
+  const { data: connection, error } = await createAdminClient().from("connector_connections")
+    .select("id,status")
+    .eq("id", parsed.data.connectionId).eq("user_id", auth.user.id).eq("workspace_id", auth.workspace.id)
+    .eq("connector_id", "notion").eq("provider_family", "notion").maybeSingle();
+  if (error || !connection || connection.status !== "connected") {
+    return { ok: false as const, error: "Notion connection is unavailable." };
+  }
+  try {
+    const resources = await listNotionResources({ userId: auth.user.id, connectionId: connection.id });
+    const selected = resources.find((resource) => resource.id.replace(/-/g, "") === parsed.data.resourceId.replace(/-/g, ""));
+    if (!selected) {
+      return { ok: false as const, error: "The selected Notion resource is not accessible to this connection." };
+    }
+    const resource = await notionApiFetch({
+      userId: auth.user.id,
+      connectionId: connection.id,
+      requiredCapabilities: [NOTION_CAPABILITIES.readContent],
+      path: selected.type === "page" ? `/pages/${parsed.data.resourceId}` : `/data_sources/${parsed.data.resourceId}`,
+    });
+    if (String(resource.id ?? "").replace(/-/g, "") !== parsed.data.resourceId.replace(/-/g, "")) {
+      return { ok: false as const, error: "Notion content could not be verified." };
+    }
+    await captureOperationalEvent({
+      level: "info", event: "notion_live_content_read_success", userId: auth.user.id,
+      status: "succeeded", metadata: { resourceType: selected.type },
+    });
+    return { ok: true as const };
+  } catch {
+    return { ok: false as const, error: "Notion content could not be read with this connection." };
   }
 }
 

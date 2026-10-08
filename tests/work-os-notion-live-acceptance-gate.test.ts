@@ -65,3 +65,23 @@ test("Notion OAuth is gated at every server boundary without enabling unaccepted
     assert.equal(capability?.availableInProduction, false);
   }
 });
+
+test("staging Notion content read stays signed-in, workspace-bound and does not enable workflows", () => {
+  const actions = read("app/actions/connections.ts");
+  const ui = read("components/connections-list.tsx");
+  const section = actions.split("export async function verifyNotionContentRead(connectionId: string, resourceId: string)")[1]?.split("export async function inspectNotionSource")[0];
+  assert.ok(section);
+  assert.match(section, /notionLiveAcceptanceEnabled\(\)/);
+  assert.match(section, /getAuthenticatedContext\(\)/);
+  assert.match(section, /\.eq\("user_id", auth\.user\.id\)\.eq\("workspace_id", auth\.workspace\.id\)/);
+  assert.match(section, /listNotionResources\(/);
+  assert.match(section, /resources\.find\(/);
+  assert.match(section, /notionApiFetch\(/);
+  assert.match(section, /requiredCapabilities: \[NOTION_CAPABILITIES\.readContent\]/);
+  assert.match(section, /notion_live_content_read_success/);
+  assert.doesNotMatch(section, /return \{ ok: true as const, (?:resources|token):/);
+  assert.match(ui, /notionAcceptanceEnabled && managed\.status === "connected"/);
+  assert.match(ui, /Choose the disposable resource to check/);
+  assert.match(ui, /Read selected Notion resource/);
+  assert.equal(getCapability("notion_create_page")?.availableInProduction, false);
+});

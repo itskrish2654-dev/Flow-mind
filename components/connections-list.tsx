@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 
 import { connectAirtable } from "@/app/actions/airtable-connections";
-import { disconnectConnector, verifyNotionConnectionCapabilities } from "@/app/actions/connections";
+import { disconnectConnector, getNotionResourceOptions, verifyNotionConnectionCapabilities, verifyNotionContentRead } from "@/app/actions/connections";
 import { AccessibleDialog } from "@/components/accessible-dialog";
 import { getConnectorOnboarding } from "@/lib/capability-registry";
 import type { ConnectionProvider, ConnectionView } from "@/lib/connectors/connection-view";
@@ -210,6 +210,10 @@ export function ConnectionsList({
   const [managed, setManaged] = useState<ConnectionView | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
   const [verifyingNotion, setVerifyingNotion] = useState(false);
+  const [readingNotion, setReadingNotion] = useState(false);
+  const [listingNotion, setListingNotion] = useState(false);
+  const [notionResources, setNotionResources] = useState<Array<{ id: string; title: string; type: "page" | "data_source" }>>([]);
+  const [selectedNotionResourceId, setSelectedNotionResourceId] = useState("");
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -297,6 +301,36 @@ export function ConnectionsList({
     setMessage("Notion confirmed this connection's content permissions. Notion workflows remain unavailable during live acceptance.");
     setManaged(null);
     router.refresh();
+  }
+
+  async function confirmNotionContentRead() {
+    if (!managed || managed.provider !== "notion" || readingNotion || !selectedNotionResourceId) return;
+    setReadingNotion(true);
+    setError(null);
+    const result = await verifyNotionContentRead(managed.id, selectedNotionResourceId);
+    setReadingNotion(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setMessage("Notion confirmed a live read of the selected resource. Workflows remain unavailable during live acceptance.");
+    setManaged(null);
+  }
+
+  async function loadNotionResources() {
+    if (!managed || managed.provider !== "notion" || listingNotion) return;
+    setListingNotion(true);
+    setError(null);
+    setNotionResources([]);
+    setSelectedNotionResourceId("");
+    const result = await getNotionResourceOptions(managed.id);
+    setListingNotion(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setNotionResources(result.resources);
+    if (result.resources.length === 0) setError("No Notion resources are shared with this connection.");
   }
 
   return (
@@ -581,6 +615,23 @@ export function ConnectionsList({
                   <button type="button" onClick={() => void confirmNotionCapabilities()} disabled={verifyingNotion} className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-xl border border-[#d8caa8] px-4 text-xs font-semibold text-slate-700 transition hover:bg-[#fff8e3] disabled:opacity-60">
                     {verifyingNotion && <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />}
                     {verifyingNotion ? "Verifying…" : "Verify Notion permissions"}
+                  </button>
+                  <button type="button" onClick={() => void loadNotionResources()} disabled={listingNotion} className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-xl border border-[#d8caa8] px-4 text-xs font-semibold text-slate-700 transition hover:bg-[#fff8e3] disabled:opacity-60">
+                    {listingNotion && <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />}
+                    {listingNotion ? "Listing…" : "List shared Notion resources"}
+                  </button>
+                  {notionResources.length > 0 && (
+                    <label className="mt-3 block text-xs font-medium text-slate-700">
+                      Choose the disposable resource to check
+                      <select value={selectedNotionResourceId} onChange={(event) => setSelectedNotionResourceId(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-[#d8caa8] bg-white px-3 text-sm text-slate-900">
+                        <option value="">Select a resource</option>
+                        {notionResources.map((resource) => <option key={resource.id} value={resource.id}>{resource.title} ({resource.type === "page" ? "page" : "data source"})</option>)}
+                      </select>
+                    </label>
+                  )}
+                  <button type="button" onClick={() => void confirmNotionContentRead()} disabled={readingNotion || !selectedNotionResourceId} className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-xl border border-[#d8caa8] px-4 text-xs font-semibold text-slate-700 transition hover:bg-[#fff8e3] disabled:opacity-60">
+                    {readingNotion && <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />}
+                    {readingNotion ? "Checking…" : "Read selected Notion resource"}
                   </button>
                   {error && <p role="alert" className="mt-2 text-xs font-medium text-rose-700">{error}</p>}
                 </div>
