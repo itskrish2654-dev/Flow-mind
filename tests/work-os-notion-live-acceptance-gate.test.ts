@@ -83,6 +83,7 @@ test("Notion Ask read is staging-only, bounded and links to an authenticated sou
   assert.match(source, /\/blocks\/\$\{input\.pageId\}\/children\?page_size=100/);
   assert.match(route, /getAuthenticatedContext\(\)/);
   assert.match(route, /readNotionPage\(\{ userId: auth\.user\.id, workspaceId: auth\.workspace\.id/);
+  assert.match(route, /pt-20[^\"]*lg:pt-8/, "mobile source navigation must clear the fixed menu button");
   assert.match(tools, /href: `\/dashboard\/notion\/\$\{result\.page\.connectionId\}\/\$\{result\.page\.id\}`/);
   assert.equal(notionBlockText({ results: [
     { type: "paragraph", paragraph: { rich_text: [{ plain_text: "Verified acceptance fact" }] } },

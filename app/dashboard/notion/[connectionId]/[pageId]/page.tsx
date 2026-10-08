@@ -15,7 +15,7 @@ export default async function NotionSourcePage({ params }: {
   const page = await readNotionPage({ userId: auth.user.id, workspaceId: auth.workspace.id, connectionId, pageId });
   if (!page) notFound();
   return (
-    <main className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
+    <main className="mx-auto max-w-3xl px-4 pb-8 pt-20 sm:px-6 lg:pt-8">
       <Link href="/ask" className="text-sm font-medium text-blue-700 hover:underline">Back to Ask CrazyLoops</Link>
       <p className="mt-8 text-xs font-semibold uppercase tracking-widest text-slate-500">Shared Notion source</p>
       <h1 className="mt-2 break-words text-2xl font-semibold text-slate-950">{page.title}</h1>
