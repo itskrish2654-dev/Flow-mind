@@ -47,7 +47,7 @@ test("Slack v1 connects with confirmed bot scopes without desktop PKCE", async (
   const callback = await readFile("app/api/connectors/oauth/[connectorId]/callback/route.ts", "utf8");
   assert.match(oauth, /token\.scope\.split/);
   assert.doesNotMatch(oauth, /token\.scope\?\.split[\s\S]*input\.requestedScopes/);
-  assert.match(callback, /providerFamily === "slack"\s*\? tokens\.scopes/);
+  assert.match(callback, /providerFamily === "slack" \|\| connector\.manifest\.providerFamily === "notion"\s*\? tokens\.scopes/);
   assert.doesNotMatch(oauth, /code_verifier\s*:/);
 });
 

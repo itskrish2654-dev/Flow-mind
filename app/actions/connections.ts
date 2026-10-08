@@ -2,7 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getAuthenticatedContext } from "@/lib/auth";
-import { revokeConnection } from "@/lib/connectors/connection-vault";
+import { readConnectionSecret, revokeConnection } from "@/lib/connectors/connection-vault";
 import { isDeferredCustomerAirtableConnection } from "@/lib/connectors/airtable/workflow-configuration";
 import { connectorConnectionIds, matchesOwnedConnectorConnection } from "@/lib/connectors/connection-matching";
 import { getConnectorOperation } from "@/lib/connectors/registry";
@@ -15,6 +15,8 @@ import {
 import { GOOGLE_LEGACY_SHEETS_SCOPE, GOOGLE_SCOPES } from "@/lib/connectors/google/scopes";
 import { listSlackChannels } from "@/lib/connectors/slack/messages";
 import { inspectNotionDataSource, listNotionResources } from "@/lib/connectors/notion/actions";
+import { introspectNotionAccessToken, verifyNotionTokenBotIdentity } from "@/lib/connectors/notion/oauth-provider";
+import { notionLiveAcceptanceEnabled } from "@/lib/notion-live-acceptance";
 import { CompiledWorkflowSchema } from "@/lib/schemas/workflow";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createImmutableWorkflowVersion, loadWorkflowSnapshot } from "@/lib/workflow-versioning";
@@ -122,6 +124,44 @@ export async function getNotionResourceOptions(connectionId: string) {
   const auth = await getAuthenticatedContext(); const user = auth?.user; if (!user) return { ok: false as const, error: "Unauthorized", resources: [] };
   try { return { ok: true as const, resources: await listNotionResources({ userId: user.id, connectionId: parsed.data }) }; }
   catch (error) { return { ok: false as const, error: error instanceof Error ? error.message : "Accessible Notion resources could not be loaded.", resources: [] }; }
+}
+
+/** Existing staging OAuth tokens can be verified without broadening consent. */
+export async function verifyNotionConnectionCapabilities(connectionId: string) {
+  const parsed = z.string().uuid().safeParse(connectionId);
+  if (!parsed.success || !notionLiveAcceptanceEnabled()) return { ok: false as const, error: "Notion verification is unavailable." };
+  const auth = await getAuthenticatedContext();
+  if (!auth) return { ok: false as const, error: "Unauthorized" };
+  const admin = createAdminClient();
+  const { data: connection, error } = await admin.from("connector_connections")
+    .select("id,safe_metadata,status,last_refreshed_at")
+    .eq("id", parsed.data).eq("user_id", auth.user.id).eq("workspace_id", auth.workspace.id)
+    .eq("connector_id", "notion").eq("provider_family", "notion").maybeSingle();
+  if (error || !connection || connection.status !== "connected") return { ok: false as const, error: "Notion connection is unavailable." };
+  const metadata = connection.safe_metadata && typeof connection.safe_metadata === "object" && !Array.isArray(connection.safe_metadata)
+    ? connection.safe_metadata : {};
+  const botId = typeof metadata.botId === "string" ? metadata.botId : "";
+  try {
+    const accessToken = await readConnectionSecret({ userId: auth.user.id, connectionId: connection.id, credentialKey: "access_token" });
+    await verifyNotionTokenBotIdentity(accessToken, botId);
+    const scopes = await introspectNotionAccessToken(accessToken);
+    const update = admin.from("connector_connections").update({
+      granted_scopes: scopes,
+      safe_metadata: { ...metadata, capabilityVerification: "notion_token_introspection_v1" },
+      last_refreshed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq("id", connection.id).eq("user_id", auth.user.id).eq("workspace_id", auth.workspace.id).eq("status", "connected");
+    // A reconnect during provider verification must not restore stale grants.
+    const guardedUpdate = connection.last_refreshed_at
+      ? update.eq("last_refreshed_at", connection.last_refreshed_at)
+      : update.is("last_refreshed_at", null);
+    const { data: updated, error: updateError } = await guardedUpdate.select("id").single();
+    if (updateError || updated?.id !== connection.id) throw new Error("Notion capability verification could not be saved.");
+    revalidatePath("/connections");
+    return { ok: true as const };
+  } catch {
+    return { ok: false as const, error: "Notion could not verify this connection's capabilities. No permissions were changed." };
+  }
 }
 
 export async function inspectNotionSource(connectionId: string, dataSourceId: string) {

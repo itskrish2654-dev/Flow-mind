@@ -291,7 +291,7 @@ const notionManifest: ConnectorManifest = {
   description: "Receives page changes and creates, finds, or updates accessible pages and data-source items.",
   status: "BETA",
   version: 1,
-  auth: { type: "oauth2", authorizationUrl: NOTION_AUTHORIZATION_URL, tokenUrl: NOTION_TOKEN_URL, defaultScopes: [NOTION_CAPABILITIES.readContent], pkceRequired: false },
+  auth: { type: "oauth2", authorizationUrl: NOTION_AUTHORIZATION_URL, tokenUrl: NOTION_TOKEN_URL, defaultScopes: [NOTION_CAPABILITIES.readContent, NOTION_CAPABILITIES.insertContent, NOTION_CAPABILITIES.updateContent], pkceRequired: false },
   triggers: [
     { key: "page_created_or_added", version: 1, kind: "trigger", displayName: "Notion page created or added", description: "Starts after a verified page.created event and fetches the current accessible page.", input: [], output: [{ key: "page", label: "Page", type: "object", required: true }], requiredScopes: [NOTION_CAPABILITIES.readContent], connectionRequired: true, testMode: true, production: true, deliverySemantics: "trigger" },
     { key: "page_updated", version: 1, kind: "trigger", displayName: "Notion page updated", description: "Starts after a verified page update event and fetches the current accessible page.", input: [], output: [{ key: "page", label: "Page", type: "object", required: true }], requiredScopes: [NOTION_CAPABILITIES.readContent], connectionRequired: true, testMode: true, production: true, deliverySemantics: "trigger" },

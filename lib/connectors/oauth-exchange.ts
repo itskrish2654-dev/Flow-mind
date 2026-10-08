@@ -49,7 +49,7 @@ export async function exchangeAuthorizationCode(input: { connectorId: string; co
     return exchangeSlackAuthorizationCode({ code: input.code, verifier: input.verifier, redirectUri: input.redirectUri, requestedScopes: input.scopes });
   }
   if (registered.manifest.providerFamily === "notion") {
-    return exchangeNotionAuthorizationCode({ code: input.code, redirectUri: input.redirectUri, requestedScopes: input.scopes });
+    return exchangeNotionAuthorizationCode({ code: input.code, redirectUri: input.redirectUri });
   }
   throw new Error("No production OAuth exchange adapter is registered for this connector.");
 }

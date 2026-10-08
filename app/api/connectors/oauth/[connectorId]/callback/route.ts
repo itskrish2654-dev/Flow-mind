@@ -136,9 +136,9 @@ export async function GET(
             .eq("connector_id", canonicalConnectorId)
             .eq("external_account_id", tokens.externalAccountId)
             .maybeSingle();
-      // A Slack reinstall may remove a bot grant. The latest provider token is
-      // authoritative; unioning old scopes would falsely retain permission.
-      const grantedScopes = connector.manifest.providerFamily === "slack"
+      // Slack reinstalls and Notion capability changes can remove grants.
+      // Their latest provider-confirmed token is authoritative, not old rows.
+      const grantedScopes = connector.manifest.providerFamily === "slack" || connector.manifest.providerFamily === "notion"
         ? tokens.scopes
         : Array.from(new Set([...(existing?.granted_scopes ?? []), ...tokens.scopes]));
       const { data: connection, error } = await admin

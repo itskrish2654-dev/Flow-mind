@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 
 import { connectAirtable } from "@/app/actions/airtable-connections";
-import { disconnectConnector } from "@/app/actions/connections";
+import { disconnectConnector, verifyNotionConnectionCapabilities } from "@/app/actions/connections";
 import { AccessibleDialog } from "@/components/accessible-dialog";
 import { getConnectorOnboarding } from "@/lib/capability-registry";
 import type { ConnectionProvider, ConnectionView } from "@/lib/connectors/connection-view";
@@ -209,6 +209,7 @@ export function ConnectionsList({
   const router = useRouter();
   const [managed, setManaged] = useState<ConnectionView | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [verifyingNotion, setVerifyingNotion] = useState(false);
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -280,6 +281,21 @@ export function ConnectionsList({
     setManaged(null);
     setConfirmingDisconnect(false);
     setDisconnecting(false);
+    router.refresh();
+  }
+
+  async function confirmNotionCapabilities() {
+    if (!managed || managed.provider !== "notion" || verifyingNotion) return;
+    setVerifyingNotion(true);
+    setError(null);
+    const result = await verifyNotionConnectionCapabilities(managed.id);
+    setVerifyingNotion(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setMessage("Notion confirmed this connection's content permissions. Notion workflows remain unavailable during live acceptance.");
+    setManaged(null);
     router.refresh();
   }
 
@@ -557,6 +573,18 @@ export function ConnectionsList({
                 <p className="flex items-center gap-2 text-xs font-semibold text-slate-900"><ShieldCheck className="size-4 text-[#8a6200]" />What CrazyLoops can do</p>
                 <p className="mt-2 text-xs leading-5 text-slate-600">{managed.permissionSummary}</p>
               </div>
+
+              {managed.provider === "notion" && notionAcceptanceEnabled && managed.status === "connected" && (
+                <div className="mt-5 rounded-xl border border-[#e4ddd2] bg-white p-4">
+                  <p className="text-xs font-semibold text-slate-900">Verify existing Notion connection</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-600">Check this connection’s actual content permissions with Notion. No new access is requested.</p>
+                  <button type="button" onClick={() => void confirmNotionCapabilities()} disabled={verifyingNotion} className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-xl border border-[#d8caa8] px-4 text-xs font-semibold text-slate-700 transition hover:bg-[#fff8e3] disabled:opacity-60">
+                    {verifyingNotion && <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />}
+                    {verifyingNotion ? "Verifying…" : "Verify Notion permissions"}
+                  </button>
+                  {error && <p role="alert" className="mt-2 text-xs font-medium text-rose-700">{error}</p>}
+                </div>
+              )}
 
               {(managed.provider === "slack" || managed.provider === "notion" || managed.provider === "google") && providerAvailability[managed.provider] && (
                 <a
