@@ -6,6 +6,7 @@ import { ActionPreviewSchema, type ActionPreview } from "@/lib/action-execution-
 import type { AskGroundedResponse } from "@/lib/ask-core";
 import { getCapability } from "@/lib/capability-registry";
 import { googleSheetsAcceptanceCapability } from "@/lib/google-sheets-live-acceptance";
+import { notionAcceptanceAction, notionLiveAcceptanceEnabled } from "@/lib/notion-live-acceptance";
 import { connectorConnectionIds } from "@/lib/connectors/connection-matching";
 import { getConnector } from "@/lib/connectors/registry";
 import { parseGmailSendIntent } from "@/lib/connectors/google/gmail-action-intent";
@@ -16,6 +17,11 @@ import { findSelectedGoogleSpreadsheetRow, inspectSelectedGoogleWorksheet, readS
 import { resolveSelectedSheetForQuestion } from "@/lib/connectors/google/sheets-work-context";
 import { parseSlackReplyIntent, parseSlackSendIntent } from "@/lib/connectors/slack/action-intent";
 import { listSlackChannels, verifySlackThread } from "@/lib/connectors/slack/messages";
+import { parseNotionActionIntent } from "@/lib/connectors/notion/action-intent";
+import { inspectNotionDataSource, listNotionResources } from "@/lib/connectors/notion/actions";
+import { notionApiFetch } from "@/lib/connectors/notion/api";
+import { NOTION_CAPABILITIES } from "@/lib/connectors/notion/constants";
+import { mapNotionProperties, notionPageBelongsToDataSource } from "@/lib/connectors/notion/properties";
 import type { Database } from "@/lib/supabase/types";
 
 type Scope = { userId: string; workspaceId: string; supabase: SupabaseClient<Database> };
@@ -270,6 +276,44 @@ async function planCalendarAction(scope: Scope, question: string): Promise<AskGr
 
 /** Deterministic allowlist. The model cannot name or construct executable capabilities. */
 export async function planAskAction(scope: Scope, question: string): Promise<AskGroundedResponse | null> {
+  const notion = parseNotionActionIntent(question);
+  if (notion && notionLiveAcceptanceEnabled()) {
+    if (notion === "clarification") return clarification('Use: Add Notion item to "Exact data source name" with {"Name":"Exact title"}. For an update, name the exact item UUID and data source. Nothing was changed.');
+    const capability = getCapability(notion.kind === "add" ? "notion_create_data_source_item" : "notion_update_item");
+    if (!capability?.connectorOperation || !notionAcceptanceAction(capability.id)) return null;
+    const connection = await ownedConnection(scope, "notion", capability.requiredScopes);
+    if (!connection) return connectionRequired("Notion");
+    const resources = await listNotionResources({ userId: scope.userId, connectionId: connection.id });
+    const sources = resources.filter((resource) => resource.type === "data_source" && resource.title.toLocaleLowerCase() === notion.dataSourceName.toLocaleLowerCase());
+    if (sources.length !== 1) return clarification("Name one exact, shared Notion data source. Nothing was changed.");
+    const source = sources[0];
+    const inspected = await inspectNotionDataSource({ userId: scope.userId, connectionId: connection.id, dataSourceId: source.id });
+    try { mapNotionProperties(inspected.properties, notion.values); }
+    catch { return clarification("The requested fields do not exactly match supported properties of the selected Notion data source. Nothing was changed."); }
+    if (notion.kind === "update") {
+      const page = await notionApiFetch({ userId: scope.userId, connectionId: connection.id,
+        requiredCapabilities: [NOTION_CAPABILITIES.readContent], path: `/pages/${notion.pageId}` });
+      if (!notionPageBelongsToDataSource(page, source.id)) return clarification("The exact Notion item is not in the selected data source. Nothing was changed.");
+    }
+    const preview = ActionPreviewSchema.safeParse({
+      version: 1, capabilityId: capability.id,
+      connectorId: capability.connectorOperation.connectorId,
+      operationKey: capability.connectorOperation.operationKey,
+      operationVersion: capability.connectorOperation.operationVersion,
+      connectionId: connection.id,
+      actionTitle: notion.kind === "add" ? "Add one Notion data-source item" : "Update one Notion data-source item",
+      actionSummary: notion.kind === "add"
+        ? `Create one item in the exact shared Notion data source “${source.title}” with the displayed properties.`
+        : `Update only item ${notion.pageId} in the exact shared Notion data source “${source.title}” with the displayed properties.`,
+      approvalReason: "Changing external Notion content requires approval of the exact item and values.",
+      target: { kind: "external_resource", label: source.title, reference: notion.kind === "add" ? source.id : notion.pageId },
+      parameters: [parameter("dataSourceId", "Data source", source.id),
+        ...(notion.kind === "update" ? [parameter("pageId", "Exact item", notion.pageId)] : []),
+        parameter("values", "Exact property values", JSON.stringify(notion.values))],
+    });
+    return preview.success ? response(preview.data)
+      : clarification("The Notion change cannot be safely previewed within approval limits. Nothing was changed.");
+  }
   const calendar = await planCalendarAction(scope, question);
   if (calendar) return calendar;
   const sheets = await planSheetsAction(scope, question);

@@ -207,7 +207,7 @@ test("D3.1 disconnect remains authenticated, owner-scoped, and destroys vault ac
     readFile("app/actions/connections.ts", "utf8"),
     readFile("lib/connectors/connection-vault.ts", "utf8"),
   ]);
-  assert.match(action, /if \(!user\) return \{ ok: false as const, error: "Unauthorized" \}/);
+  assert.match(action, /if \(!auth\) return \{ ok: false as const, error: "Unauthorized" \}/);
   assert.match(action, /revokeConnection\(user\.id, parsed\.data\)/);
   assert.match(vault, /assertOwnedConnection\(userId, connectionId\)/);
   assert.match(vault, /\.eq\("id", connectionId\)\.eq\("user_id", userId\)/);

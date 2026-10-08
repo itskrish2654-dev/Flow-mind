@@ -210,9 +210,13 @@ export async function verifyNotionContentRead(connectionId: string, resourceId: 
 }
 
 export async function inspectNotionSource(connectionId: string, dataSourceId: string) {
-  const parsed = z.object({ connectionId: z.string().uuid(), dataSourceId: z.string().max(100) }).safeParse({ connectionId, dataSourceId }); if (!parsed.success) return { ok: false as const, error: "Choose a valid Notion data source." };
-  const auth = await getAuthenticatedContext(); const user = auth?.user; if (!user) return { ok: false as const, error: "Unauthorized" };
-  try { return { ok: true as const, dataSource: await inspectNotionDataSource({ userId: user.id, connectionId: parsed.data.connectionId, dataSourceId: parsed.data.dataSourceId }) }; }
+  const parsed = z.object({ connectionId: z.string().uuid(), dataSourceId: z.string().uuid() }).safeParse({ connectionId, dataSourceId }); if (!parsed.success) return { ok: false as const, error: "Choose a valid Notion data source." };
+  const auth = await getAuthenticatedContext(); if (!auth) return { ok: false as const, error: "Unauthorized" };
+  const { data: connection } = await createAdminClient().from("connector_connections")
+    .select("id,status").eq("id", parsed.data.connectionId).eq("user_id", auth.user.id)
+    .eq("workspace_id", auth.workspace.id).eq("connector_id", "notion").eq("provider_family", "notion").maybeSingle();
+  if (!connection || connection.status !== "connected") return { ok: false as const, error: "Notion connection is unavailable." };
+  try { return { ok: true as const, dataSource: await inspectNotionDataSource({ userId: auth.user.id, connectionId: parsed.data.connectionId, dataSourceId: parsed.data.dataSourceId }) }; }
   catch (error) { return { ok: false as const, error: error instanceof Error ? error.message : "Notion data source could not be inspected." }; }
 }
 

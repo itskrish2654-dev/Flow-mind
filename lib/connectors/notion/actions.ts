@@ -1,7 +1,7 @@
 import type { ConnectorActionHandler } from "@/lib/connectors/types";
 import { NOTION_API_VERSION, NOTION_CAPABILITIES } from "@/lib/connectors/notion/constants";
 import { notionApiErrorResult, notionApiFetch } from "@/lib/connectors/notion/api";
-import { mapNotionProperties, normalizeNotionPage, notionExactMatchFilter } from "@/lib/connectors/notion/properties";
+import { mapNotionProperties, normalizeNotionPage, notionExactMatchFilter, notionPageBelongsToDataSource } from "@/lib/connectors/notion/properties";
 import { captureOperationalEvent } from "@/lib/observability";
 import { ConnectorError, ambiguousAcknowledgement } from "@/lib/connectors/errors";
 
@@ -66,7 +66,12 @@ export const notionFindItem: ConnectorActionHandler = async (input, context) => 
 export const notionUpdateItem: ConnectorActionHandler = async (input, context) => {
   try {
     if (!context.connectionId) throw new Error("Choose a Notion workspace before updating an item.");
-    const pageId = uuid(input.pageId, "page or item"); const dataSourceId = uuid(input.dataSourceId, "data source"); const schema = await dataSourceSchema(context.userId, context.connectionId, dataSourceId); const properties = mapNotionProperties(schema, values(input.values));
+    const pageId = uuid(input.pageId, "page or item"); const dataSourceId = uuid(input.dataSourceId, "data source");
+    const currentPage = await notionApiFetch({ userId: context.userId, connectionId: context.connectionId, requiredCapabilities: [NOTION_CAPABILITIES.readContent], path: `/pages/${pageId}` });
+    if (!notionPageBelongsToDataSource(currentPage, dataSourceId)) {
+      throw new Error("The selected Notion item does not belong to the selected data source.");
+    }
+    const schema = await dataSourceSchema(context.userId, context.connectionId, dataSourceId); const properties = mapNotionProperties(schema, values(input.values));
     const page = await notionApiFetch({ userId: context.userId, connectionId: context.connectionId, requiredCapabilities: [NOTION_CAPABILITIES.readContent, NOTION_CAPABILITIES.updateContent], path: `/pages/${pageId}`, method: "PATCH", write: true, body: { properties } });
     const normalized = normalizeNotionPage(page); if (normalized.page.id.replace(/-/g, "") !== pageId) throw new ConnectorError(ambiguousAcknowledgement("Notion did not acknowledge the requested item update; the change may have happened.")); await success("update_item", context);
     return { status: "succeeded", acknowledged: true, externallyDelivered: true, providerReferenceId: normalized.page.id, output: normalized, metadata: { operation: "update_item", apiVersion: NOTION_API_VERSION } };

@@ -41,6 +41,7 @@ export const AskToolIdSchema = z.enum([
   "company_knowledge",
   "goals",
   "slack_search",
+  "notion_search",
 ]);
 export type AskToolId = z.infer<typeof AskToolIdSchema>;
 
@@ -58,6 +59,7 @@ export const AskReferenceKindSchema = z.enum([
   "knowledge_chunk",
   "goal",
   "slack_message",
+  "notion_page",
 ]);
 export type AskReferenceKind = z.infer<typeof AskReferenceKindSchema>;
 
@@ -103,7 +105,7 @@ export type AskResponseMetadata = z.infer<typeof AskResponseMetadataSchema>;
 export const AskModelOutputSchema = z.object({
   responseType: z.enum(ASK_MODEL_RESPONSE_TYPES),
   answer: z.string().trim().min(1).max(ASK_LIMITS.modelAnswerCharacters),
-  referenceKeys: z.array(z.string().regex(/^(?:work_item|approval|workflow|execution|action_execution|activity|gmail_message|sheet_row|sheet_range|calendar_event|knowledge_chunk|goal|slack_message):\d+$/)).max(12),
+  referenceKeys: z.array(z.string().regex(/^(?:work_item|approval|workflow|execution|action_execution|activity|gmail_message|sheet_row|sheet_range|calendar_event|knowledge_chunk|goal|slack_message|notion_page):\d+$/)).max(12),
   clarificationRequired: z.boolean(),
   suggestedAction: AskSuggestedActionSchema.optional(),
 }).strict();
@@ -148,7 +150,7 @@ export type AskToolResult = {
   tool: AskToolId;
   summary: string;
   records: AskToolRecord[];
-  availability?: "ok" | "connection_required" | "reconnect_required" | "account_selection_required" | "selection_required";
+  availability?: "ok" | "connection_required" | "reconnect_required" | "account_selection_required" | "selection_required" | "not_available";
 };
 
 export type AskGroundedResponse = {
@@ -227,6 +229,7 @@ export function selectAskTools(question: string): AskToolId[] {
     || /\b(?:our|company)\b[^?.!]{0,80}\b(?:process|rule|guideline)\b/.test(text)) tools.push("company_knowledge");
   const directSlackSend = /^\s*(?:please\s+)?(?:tell|post(?: a message)? to|send(?: a message)? to|notify)\s+#/i.test(question);
   if (!directSlackSend && (/\bslack\b|#[a-z0-9_-]+\b|\b(?:team say|team said|discussed|discussion|anyone reply|anyone replied)\b/.test(text))) tools.push("slack_search");
+  if (/\bnotion\b/.test(text) && !/^\s*(?:please\s+)?(?:add|create|update|change)\b/.test(text)) tools.push("notion_search");
   if (employeeApprovalAction) tools.push("pending_approvals");
   if (historicalApprovalFact) tools.push("work_items");
   if (/waiting|handled|task|work item|needs you/.test(text)) tools.push("work_items");
@@ -417,6 +420,7 @@ function emptyAnswer(tools: readonly AskToolId[]): string {
   if (tools.includes("calendar_events")) return "I found no matching events in the next 30 days of the connected primary calendar; older or more distant events were not searched.";
   if (tools.includes("gmail_search")) return "I found no matching Gmail messages in the bounded recent mailbox search.";
   if (tools.includes("slack_search")) return "I found no matching Slack messages among the recently captured, permitted public-channel events.";
+  if (tools.includes("notion_search")) return "I found no content in the one selected, shared Notion page. Other pages were not searched.";
   if (tools.includes("my_day")) return "There is nothing in CrazyLoops that needs your attention right now.";
   if (tools.includes("pending_approvals")) return "You have no pending approvals in CrazyLoops right now.";
   if (tools.includes("recent_activity")) return "I found no matching Activity in the bounded recent history I checked.";
@@ -498,6 +502,17 @@ export async function runGroundedAsk(input: {
     const reconnect = unavailable.availability === "reconnect_required";
     const answer = reconnect ? "Reconnect Slack before CrazyLoops can search its captured messages." : "Connect Slack before CrazyLoops can search captured messages.";
     return { answer, metadata: { version: 1, responseType: "unsupported", clarificationRequired: false, references: [], unsupportedReason: answer, suggestedAction: { label: reconnect ? "Reconnect Slack" : "Connect Slack", href: "/connections" } } };
+  }
+  if (unavailable?.tool === "notion_search") {
+    const answer = unavailable.availability === "not_available"
+      ? "Notion content is not yet available outside the isolated staging acceptance environment."
+      : unavailable.availability === "reconnect_required"
+        ? "Reconnect Notion before CrazyLoops can read its shared pages."
+        : unavailable.availability === "connection_required"
+          ? "Connect Notion before CrazyLoops can read a shared page."
+          : "Name one exact shared Notion page so CrazyLoops can read only that page.";
+    return { answer, metadata: { version: 1, responseType: "clarification", clarificationRequired: true,
+      references: [], suggestedAction: { label: "Open Connections", href: "/connections" } } };
   }
   if (toolResults.every((result) => result.records.length === 0)) {
     return {

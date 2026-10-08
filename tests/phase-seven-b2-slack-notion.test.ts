@@ -7,7 +7,7 @@ import { getConnector, getConnectorOperation, validateConnectorRegistry } from "
 import { assessConnectorPlan } from "../lib/connectors/planning";
 import { getSlackUrlVerificationChallenge, normalizeSlackMessage, verifySlackRequest } from "../lib/connectors/slack/events";
 import { SLACK_SCOPES, slackScopesForOperation } from "../lib/connectors/slack/scopes";
-import { encodeNotionProperty, mapNotionProperties, notionExactMatchFilter } from "../lib/connectors/notion/properties";
+import { encodeNotionProperty, mapNotionProperties, notionExactMatchFilter, notionPageBelongsToDataSource } from "../lib/connectors/notion/properties";
 import { getInitialNotionVerificationToken, verifyNotionWebhook } from "../lib/connectors/notion/webhooks";
 import { planWorkflow } from "../lib/workflow-planner";
 
@@ -116,8 +116,17 @@ test("7B2-9c. ordinary Notion events still require raw-body HMAC verification", 
 
 test("7B2-10. Notion property mapping supports the initial safe type surface and never invents fields", () => {
   const schema = [{ id: "title", name: "Name", type: "title" }, { id: "email", name: "Email", type: "email" }, { id: "done", name: "Done", type: "checkbox" }];
-  assert.deepEqual(mapNotionProperties(schema, { Name: "Alice", Email: "alice@example.com", Done: true, Ignored: "not in schema" }), { Name: encodeNotionProperty(schema[0], "Alice"), Email: { email: "alice@example.com" }, Done: { checkbox: true } });
+  assert.deepEqual(mapNotionProperties(schema, { Name: "Alice", Email: "alice@example.com", Done: true }), { Name: encodeNotionProperty(schema[0], "Alice"), Email: { email: "alice@example.com" }, Done: { checkbox: true } });
+  assert.throws(() => mapNotionProperties(schema, { Name: "Alice", Ignored: "not in schema" }), /not a property/);
+  assert.throws(() => mapNotionProperties(schema, { Name: "Alice", name: "Eve" }), /more than once/);
   assert.throws(() => encodeNotionProperty({ id: "files", name: "Files", type: "files" }, []), /unsupported/);
+});
+
+test("7B2-10A. Notion updates bind an item to the exact selected data source", () => {
+  const source = "c7de2ef4-7142-4e64-a880-d2fa56c8386a";
+  assert.equal(notionPageBelongsToDataSource({ parent: { type: "data_source_id", data_source_id: source } }, source.replace(/-/g, "")), true);
+  assert.equal(notionPageBelongsToDataSource({ parent: { type: "data_source_id", data_source_id: "d2543129-f886-473c-ab38-413e4224910b" } }, source), false);
+  assert.equal(notionPageBelongsToDataSource({ parent: { type: "page_id", page_id: source } }, source), false);
 });
 
 test("7B2-11. Notion exact match supports deterministic types", () => {

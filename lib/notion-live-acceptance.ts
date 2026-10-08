@@ -19,3 +19,9 @@ export function notionLiveAcceptanceEnabled(env: NotionAcceptanceEnvironment = p
 export function notionAcceptanceConnector(connectorId: string): boolean {
   return connectorId === "notion" && notionLiveAcceptanceEnabled();
 }
+
+/** Ask-only write acceptance; workflow/planner registry availability stays false. */
+export function notionAcceptanceAction(capabilityId: string): boolean {
+  return notionLiveAcceptanceEnabled()
+    && (capabilityId === "notion_create_data_source_item" || capabilityId === "notion_update_item");
+}

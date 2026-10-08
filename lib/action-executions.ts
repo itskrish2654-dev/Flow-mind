@@ -13,6 +13,7 @@ import { AskResponseMetadataSchema } from "@/lib/ask-core";
 import { getAuthenticatedContext } from "@/lib/auth";
 import { getCapability } from "@/lib/capability-registry";
 import { googleSheetsAcceptanceCapability } from "@/lib/google-sheets-live-acceptance";
+import { notionAcceptanceAction } from "@/lib/notion-live-acceptance";
 import { getConnectorOperation } from "@/lib/connectors/registry";
 import { connectorConnectionIds } from "@/lib/connectors/connection-matching";
 import type { ConnectorActionHandler } from "@/lib/connectors/types";
@@ -43,12 +44,13 @@ function acceptanceHarnessEnabled() {
 function isExecutableCapability(preview: ActionPreview) {
   const capability = getCapability(preview.capabilityId);
   const operation = capability?.connectorOperation;
-  if (!capability?.supported || !operation || operation.operationKind !== "action") return false;
+  if (!capability || (!capability.supported && !notionAcceptanceAction(preview.capabilityId))
+    || !operation || operation.operationKind !== "action") return false;
   if (operation.connectorId !== preview.connectorId || operation.operationKey !== preview.operationKey
     || operation.operationVersion !== preview.operationVersion) return false;
   if (capability.internalOnly) return preview.capabilityId === "internal.action_acknowledge"
     && capability.availableInTest && acceptanceHarnessEnabled();
-  return capability.availableInProduction || googleSheetsAcceptanceCapability(capability.id);
+  return capability.availableInProduction || googleSheetsAcceptanceCapability(capability.id) || notionAcceptanceAction(capability.id);
 }
 
 async function assertUsableConnection(execution: ActionExecution) {
@@ -233,6 +235,7 @@ async function executeQueuedAction(execution: ActionExecution): Promise<ActionEx
       if (result.status === "succeeded" && result.acknowledged && result.externallyDelivered) {
         const sheets = action.capability_id === "google_sheets_add_row" || action.capability_id === "google_sheets_update_row";
         const calendar = action.capability_id === "google_calendar_create_event" || action.capability_id === "google_calendar_update_event";
+        const notion = action.capability_id === "notion_create_data_source_item" || action.capability_id === "notion_update_item";
         return complete(action, claimToken, {
           status: "succeeded", acknowledged: true, externallyDelivered: true,
           providerReferenceId: result.providerReferenceId,
@@ -240,6 +243,8 @@ async function executeQueuedAction(execution: ActionExecution): Promise<ActionEx
             ? `Google Sheets acknowledged the exact approved change at ${result.providerReferenceId.slice(0, 180)}.`
             : calendar && result.providerReferenceId
               ? `Google Calendar acknowledged the exact approved event change (event ${result.providerReferenceId.slice(0, 100)}).`
+            : notion && result.providerReferenceId
+              ? `Notion acknowledged the exact approved item change (item ${result.providerReferenceId.slice(0, 100)}).`
             : "The provider acknowledged the exact approved action.",
         });
       }

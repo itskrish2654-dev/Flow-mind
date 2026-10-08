@@ -32,7 +32,8 @@ export function mapNotionProperties(schema: NotionPropertySchema[], values: Reco
   const mapped: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(values)) {
     const property = byName.get(name.toLowerCase());
-    if (!property) continue;
+    if (!property) throw new Error(`${name} is not a property in the selected Notion data source.`);
+    if (Object.hasOwn(mapped, property.name)) throw new Error(`${property.name} was supplied more than once.`);
     mapped[property.name] = encodeNotionProperty(property, value);
   }
   const titleProperty = schema.find((property) => property.type === "title");
@@ -42,6 +43,13 @@ export function mapNotionProperties(schema: NotionPropertySchema[], values: Reco
   }
   if (Object.keys(mapped).length === 0) throw new Error("None of the submitted fields match supported properties in the selected Notion data source.");
   return mapped;
+}
+
+export function notionPageBelongsToDataSource(page: Record<string, unknown>, dataSourceId: string): boolean {
+  const parent = page.parent && typeof page.parent === "object" && !Array.isArray(page.parent)
+    ? page.parent as Record<string, unknown> : {};
+  return parent.type === "data_source_id"
+    && String(parent.data_source_id ?? "").replace(/-/g, "").toLowerCase() === dataSourceId.replace(/-/g, "").toLowerCase();
 }
 
 export function notionExactMatchFilter(property: NotionPropertySchema, value: unknown) {

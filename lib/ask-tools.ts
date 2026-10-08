@@ -25,6 +25,7 @@ import { resolveSelectedSheetForQuestion } from "@/lib/connectors/google/sheets-
 import { searchCompanyKnowledge } from "@/lib/knowledge";
 import { getWorkspaceGoal, listWorkspaceGoals } from "@/lib/goals";
 import { readSlackForAsk } from "@/lib/connectors/slack/read";
+import { readNotionForAsk } from "@/lib/connectors/notion/read";
 
 export type AskTrustedScope = { userId: string; workspaceId: string };
 
@@ -460,6 +461,21 @@ async function loadSlack(scope: AskTrustedScope, question: string): Promise<AskT
   };
 }
 
+async function loadNotion(scope: AskTrustedScope, question: string): Promise<AskToolResult> {
+  await assertTrustedScope(scope);
+  const result = await readNotionForAsk({ ...scope, question });
+  return { tool: "notion_search", availability: result.status,
+    summary: result.page ? "One explicitly shared Notion page was read live. Only its first 100 top-level blocks were inspected."
+      : "No uniquely selected, shared Notion page was read.",
+    records: result.page ? [safeRecord({ key: "notion_page:0", kind: "notion_page",
+      id: result.page.id, label: result.page.title,
+      href: `/dashboard/notion/${result.page.connectionId}/${result.page.id}`,
+      facts: { title: result.page.title, content: result.page.content || "No text in the inspected top-level blocks.",
+        updatedAt: result.page.updatedAt, coverage: "First 100 top-level blocks only" },
+    })] : [],
+  };
+}
+
 /** Strict registry: callers cannot invent a tool name or provide query text. */
 export async function executeAskTool(tool: AskToolId, scope: AskTrustedScope, question = ""): Promise<AskToolResult> {
   switch (AskToolIdSchema.parse(tool)) {
@@ -475,5 +491,6 @@ export async function executeAskTool(tool: AskToolId, scope: AskTrustedScope, qu
     case "company_knowledge": return loadCompanyKnowledge(scope, question);
     case "goals": return loadGoals(scope, question);
     case "slack_search": return loadSlack(scope, question);
+    case "notion_search": return loadNotion(scope, question);
   }
 }

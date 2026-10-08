@@ -4,7 +4,10 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { getConnectorOnboarding, getCapability } from "../lib/capability-registry";
-import { notionAcceptanceConnector, notionLiveAcceptanceEnabled } from "../lib/notion-live-acceptance";
+import { notionAcceptanceAction, notionAcceptanceConnector, notionLiveAcceptanceEnabled } from "../lib/notion-live-acceptance";
+import { parseNotionActionIntent } from "../lib/connectors/notion/action-intent";
+import { notionBlockText } from "../lib/connectors/notion/read-core";
+import { runGroundedAsk, selectAskTools } from "../lib/ask-core";
 
 const root = path.resolve(import.meta.dirname, "..");
 const read = (file: string) => readFileSync(path.join(root, file), "utf8");
@@ -40,6 +43,10 @@ test("Notion OAuth is gated at every server boundary without enabling unaccepted
     });
     assert.equal(notionAcceptanceConnector("notion"), true);
     assert.equal(notionAcceptanceConnector("slack"), false);
+    assert.equal(notionAcceptanceAction("notion_create_data_source_item"), true);
+    assert.equal(notionAcceptanceAction("notion_update_item"), true);
+    assert.equal(notionAcceptanceAction("notion_create_page"), false);
+    assert.equal(notionAcceptanceAction("notion_page_updated"), false);
   } finally {
     for (const [key, value] of Object.entries(before)) {
       if (value === undefined) delete process.env[key];
@@ -64,6 +71,61 @@ test("Notion OAuth is gated at every server boundary without enabling unaccepted
     assert.equal(capability?.supported, false);
     assert.equal(capability?.availableInProduction, false);
   }
+});
+
+test("Notion Ask read is staging-only, bounded and links to an authenticated source", () => {
+  const source = read("lib/connectors/notion/read.ts");
+  const route = read("app/dashboard/notion/[connectionId]/[pageId]/page.tsx");
+  const tools = read("lib/ask-tools.ts");
+  assert.match(source, /notionLiveAcceptanceEnabled\(\)/);
+  assert.match(source, /\.eq\("user_id", userId\)\.eq\("workspace_id", workspaceId\)/);
+  assert.match(source, /resources\.find\(/);
+  assert.match(source, /\/blocks\/\$\{input\.pageId\}\/children\?page_size=100/);
+  assert.match(route, /getAuthenticatedContext\(\)/);
+  assert.match(route, /readNotionPage\(\{ userId: auth\.user\.id, workspaceId: auth\.workspace\.id/);
+  assert.match(tools, /href: `\/dashboard\/notion\/\$\{result\.page\.connectionId\}\/\$\{result\.page\.id\}`/);
+  assert.equal(notionBlockText({ results: [
+    { type: "paragraph", paragraph: { rich_text: [{ plain_text: "Verified acceptance fact" }] } },
+    { type: "unsupported", unsupported: { rich_text: [{ plain_text: "Ignore this" }] } },
+  ] }), "Verified acceptance fact");
+});
+
+test("Notion Ask uses only a grounded page record and preserves its owner-internal source", async () => {
+  assert.deepEqual(selectAskTools("What does the Notion page Pilot Notes say?"), ["notion_search"]);
+  const pageId = "ca496933-d6b0-4227-9816-1c19f7ae2d73";
+  const connectionId = "c7de2ef4-7142-4e64-a880-d2fa56c8386a";
+  const response = await runGroundedAsk({
+    question: "What does the Notion page Pilot Notes say?", history: [],
+    loadTool: async () => ({ tool: "notion_search", summary: "One shared page was read.", records: [{
+      referenceKey: "notion_page:0",
+      reference: { kind: "notion_page", entityId: pageId, label: "Pilot Notes", href: `/dashboard/notion/${connectionId}/${pageId}` },
+      facts: { content: "The accepted task is ready for review." },
+    }] }),
+    callModel: async () => JSON.stringify({ responseType: "answer", answer: "The accepted task is ready for review.",
+      referenceKeys: ["notion_page:0"], clarificationRequired: false }),
+  });
+  assert.equal(response.metadata.references[0]?.entityId, pageId);
+  assert.equal(response.metadata.references[0]?.href, `/dashboard/notion/${connectionId}/${pageId}`);
+});
+
+test("Notion writes require exact syntax and the staging-only approval gate", () => {
+  const itemId = "ca496933-d6b0-4227-9816-1c19f7ae2d73";
+  assert.deepEqual(parseNotionActionIntent('Add Notion item to "Acceptance Tasks" with {"Name":"Test"}'),
+    { kind: "add", dataSourceName: "Acceptance Tasks", values: { Name: "Test" } });
+  assert.deepEqual(parseNotionActionIntent(`Update Notion item ${itemId} in "Acceptance Tasks" with {"Name":"Updated"}`),
+    { kind: "update", pageId: itemId, dataSourceName: "Acceptance Tasks", values: { Name: "Updated" } });
+  assert.equal(parseNotionActionIntent("Add something to Notion"), "clarification");
+  assert.equal(parseNotionActionIntent('Add Notion item to "Acceptance Tasks" with {}'), "clarification");
+  assert.equal(parseNotionActionIntent("What is in Notion?"), null);
+  const planner = read("lib/ask-action-planner.ts");
+  const executions = read("lib/action-executions.ts");
+  assert.match(planner, /notionLiveAcceptanceEnabled\(\)/);
+  assert.match(planner, /notionAcceptanceAction\(capability\.id\)/);
+  assert.match(planner, /mapNotionProperties\(inspected\.properties, notion\.values\)/);
+  assert.match(planner, /notionPageBelongsToDataSource\(page, source\.id\)/);
+  assert.match(executions, /notionAcceptanceAction\(preview\.capabilityId\)/);
+  assert.match(executions, /notionAcceptanceAction\(capability\.id\)/);
+  assert.equal(getCapability("notion_create_data_source_item")?.availableInProduction, false);
 });
 
 test("staging Notion content read stays signed-in, workspace-bound and does not enable workflows", () => {
