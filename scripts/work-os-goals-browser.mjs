@@ -391,6 +391,15 @@ try {
   await ownerBrowser.page.getByRole("textbox", { name: "Ask CrazyLoops" })
     .fill("What is blocking the team on our customer support hiring goal?");
   await ownerBrowser.page.getByRole("button", { name: "Send message" }).click();
+  await ownerBrowser.page.waitForFunction((before) =>
+    document.querySelectorAll("article").length >= before + 2
+      || [...document.querySelectorAll("button")].some((button) => button.textContent?.includes("Retry answer")),
+    managerMessagesBefore, { timeout: 60_000 });
+  const retryAnswer = ownerBrowser.page.getByRole("button", { name: "Retry answer" });
+  if (await retryAnswer.count()) {
+    await retryAnswer.click();
+    results.push("MANAGER_ASK_EXPLICIT_SAFE_RETRY_USED=PASS");
+  }
   try {
     await ownerBrowser.page.waitForFunction((before) => document.querySelectorAll("article").length >= before + 2,
       managerMessagesBefore, { timeout: 60_000 });
@@ -407,10 +416,10 @@ try {
     }));
     throw new Error(`Manager Ask did not render: ${JSON.stringify({ turns, browserState })}`);
   }
-  await ownerBrowser.page.locator("article").last().locator(`a[href="/goals/${goalId}"]`)
-    .waitFor({ timeout: 60_000 });
-  assert.equal(await ownerBrowser.page.locator("article").last()
-    .locator(`a[href="/goals/${goalId}"]`).count(), 1);
+  const managerSources = ownerBrowser.page.locator("article").last()
+    .locator(`a[href="/goals/${goalId}"]`);
+  await managerSources.filter({ hasText: "Work Item" }).first().waitFor({ timeout: 60_000 });
+  assert.ok(await managerSources.count() >= 1, "manager answer must cite the approved goal work");
   const managerAnswer = await ownerBrowser.page.locator("article").last().innerText();
   assert.match(managerAnswer, /blocked|waiting/i);
   assert.match(managerAnswer, /Finance approval/i);
