@@ -6,6 +6,7 @@ import { GoalManager } from "@/components/goals/goal-manager";
 import { activityLabel } from "@/lib/activity-core";
 import { getAuthenticatedContext } from "@/lib/auth";
 import { getWorkspaceGoal, listGoalMembers } from "@/lib/goals";
+import { listManagerFinalDeliverables } from "@/lib/workbench";
 
 function shortDate(value: string | null) {
   return value ? new Date(value.length === 10 ? `${value}T12:00:00` : value).toLocaleDateString("en-GB") : "Not set";
@@ -18,7 +19,7 @@ export default async function GoalDetailPage({ params, searchParams }: {
   const { goalId } = await params;
   const auth = await getAuthenticatedContext();
   if (!auth) redirect(`/login?next=/goals/${encodeURIComponent(goalId)}`);
-  const [detail, members] = await Promise.all([getWorkspaceGoal(goalId), listGoalMembers()]);
+  const [detail, members, finalResults] = await Promise.all([getWorkspaceGoal(goalId), listGoalMembers(), listManagerFinalDeliverables(goalId)]);
   if (!detail) notFound();
   const { goal, plan, items, progress, revisions, events } = detail;
   const assignmentError = (await searchParams).assignment_error === "1";
@@ -64,6 +65,14 @@ export default async function GoalDetailPage({ params, searchParams }: {
         {detail.canManage && goal.status === "active" && <p className="mt-4 text-xs text-slate-600">Live assignment and due-date changes are recorded in Activity. The approved plan remains unchanged.</p>}
         {sources.length > 0 && <div className="mt-5 border-t border-[#e4ddd2] pt-4"><h3 className="text-sm font-semibold">Company sources used in this proposal</h3><ul className="mt-2 space-y-1">{sources.map((source) => <li key={source.chunkId}><Link className="text-sm text-[#4b357d] hover:underline" href={`/knowledge/${source.documentId}?chunk=${source.chunkId}#chunk-${source.chunkId}`}>{source.title} · {source.location}</Link></li>)}</ul></div>}
       </section>
+      {detail.canManage && <section aria-label="Final team work" className="mt-5 rounded-2xl border border-[#e4ddd2] bg-white p-5 sm:p-6">
+        <h2 className="text-xl font-semibold">Final team work</h2>
+        <p className="mt-2 text-sm text-slate-600">Only employee-finalized deliverables appear here. Private AI working notes and drafts remain with their assigned employee.</p>
+        {finalResults.length === 0 ? <p className="mt-4 text-sm text-slate-600">No final results yet.</p> : <div className="mt-4 space-y-4">{finalResults.map((result) => <article key={result.id} className="rounded-xl border border-[#e4ddd2] bg-[#fcfbf8] p-4">
+          <h3 className="break-words text-base font-semibold">{result.title}</h3><p className="mt-1 text-xs text-slate-600">By {labelFor(result.owner_user_id)} · {result.finalized_at ? new Date(result.finalized_at).toLocaleDateString("en-GB") : "Final"}</p>
+          <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-7 text-slate-700">{result.content}</p>
+        </article>)}</div>}
+      </section>}
       {revisions.length > 1 && <p className="mt-4 text-xs text-slate-600">{revisions.length} proposal revisions preserved. The approved revision cannot be edited.</p>}
       <section aria-label="Goal activity" className="mt-5 rounded-2xl border border-[#e4ddd2] bg-white p-5 sm:p-6"><h2 className="text-xl font-semibold">Recent Activity</h2>
         {events.length === 0 ? <p className="mt-3 text-sm text-slate-600">No goal events recorded yet.</p> : <ul className="mt-3 divide-y divide-[#e4ddd2]">{events.map((event) => <li key={event.id} className="flex flex-wrap justify-between gap-2 py-3 text-sm"><span>{activityLabel(event)}</span><time className="text-slate-600" dateTime={event.occurred_at}>{shortDate(event.occurred_at)}</time></li>)}</ul>}

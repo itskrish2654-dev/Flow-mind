@@ -82,6 +82,7 @@ function MyDayItemCard({ item }: { item: MyDayItem }) {
         </Link>}
       </div>
       {item.workItem && item.workItem.status !== "handled" && item.workItem.status !== "done" && (<>
+        <Link href={`/my-day/work/${item.workItem.id}`} className="mt-3 inline-flex min-h-11 items-center rounded-lg bg-[#4b357d] px-4 text-xs font-semibold text-white hover:bg-[#3d2968] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#4b357d]">Open task · Do with AI →</Link>
         <form action={updateMyWorkItem} className="mt-3 flex flex-wrap gap-2">
           <input type="hidden" name="id" value={item.workItem.id} />
           {item.workItem.status !== "in_progress" && <button name="to" value="in_progress" className="min-h-10 rounded-lg border border-[#ded6ca] px-3 text-xs font-semibold text-slate-700 hover:bg-[#faf8f4] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9b7309]">Start work</button>}

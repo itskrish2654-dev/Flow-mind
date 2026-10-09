@@ -9,6 +9,41 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      work_item_ai_turns: {
+        Row: {
+          id: string; workspace_id: string; work_item_id: string; owner_user_id: string;
+          request_key: string; mode: "GENERAL" | "RESEARCH" | "WRITING" | "DATA" | "CODING" | "MARKETING";
+          instruction: string; response_title: string | null; response_content: string | null;
+          source_references: Json; status: "processing" | "completed" | "failed";
+          created_at: string; finished_at: string | null;
+        };
+        Insert: {
+          id?: string; workspace_id: string; work_item_id: string; owner_user_id: string;
+          request_key: string; mode: Database["public"]["Tables"]["work_item_ai_turns"]["Row"]["mode"];
+          instruction: string; response_title?: string | null; response_content?: string | null;
+          source_references?: Json; status?: "processing" | "completed" | "failed";
+          created_at?: string; finished_at?: string | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["work_item_ai_turns"]["Insert"]>;
+        Relationships: [];
+      };
+      work_item_deliverables: {
+        Row: {
+          id: string; workspace_id: string; work_item_id: string; goal_id: string | null;
+          owner_user_id: string; ai_turn_id: string | null; based_on_id: string | null;
+          request_key: string; title: string; content: string; source_references: Json;
+          ai_assisted: boolean; status: "draft" | "final"; created_at: string; finalized_at: string | null;
+        };
+        Insert: {
+          id?: string; workspace_id: string; work_item_id: string; goal_id?: string | null;
+          owner_user_id: string; ai_turn_id?: string | null; based_on_id?: string | null;
+          request_key: string; title: string; content: string; source_references?: Json;
+          ai_assisted?: boolean; status?: "draft" | "final";
+          created_at?: string; finalized_at?: string | null;
+        };
+        Update: Partial<Database["public"]["Tables"]["work_item_deliverables"]["Insert"]>;
+        Relationships: [];
+      };
       goals: {
         Row: {
           id: string; workspace_id: string; created_by_user_id: string | null;
