@@ -10,8 +10,10 @@ alter table public.work_items add constraint work_items_resolution_check check (
   (status in ('done', 'handled') and resolved_at is not null)
   or (status in ('needs_you', 'in_progress', 'waiting', 'blocked') and resolved_at is null)
 );
-alter table public.work_items add column status_reason text
-  check (status_reason is null or char_length(trim(status_reason)) between 1 and 500);
+alter table public.work_items add column status_reason text;
+alter table public.work_items add constraint work_items_status_reason_length_check check (
+  status_reason is null or char_length(trim(status_reason)) between 1 and 500
+);
 alter table public.work_items add column status_actor_user_id uuid references auth.users(id) on delete set null;
 alter table public.work_items add constraint work_items_status_reason_check check (
   status_reason is null or status in ('waiting', 'blocked')

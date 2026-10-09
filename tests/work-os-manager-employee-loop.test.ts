@@ -138,6 +138,9 @@ test("migration preserves service-only mutation, workspace membership and generi
   assert.match(sql, /for update/);
   assert.match(sql, /updated_at is distinct from p_expected_updated_at/);
   assert.match(sql, /v_item\.goal_id is distinct from p_goal_id/);
+  assert.match(sql, /add column status_reason text;/);
+  assert.match(sql, /add constraint work_items_status_reason_length_check/);
+  assert.match(sql, /add constraint work_items_status_reason_check/);
   assert.match(sql, /manager\.role in \('owner', 'admin'\)/);
   assert.match(sql, /m\.role in \('owner', 'admin'\)/);
   assert.match(sql, /m\.user_id = p_assignee_user_id and m\.is_default/);
