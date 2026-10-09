@@ -132,7 +132,7 @@ test("Activity shared work labels are generic and never repeat employee reasons"
 });
 
 test("migration preserves service-only mutation, workspace membership and generic manager Activity", async () => {
-  const sql = await readFile("supabase/migrations/20261009000100_work_os_manager_employee_loop.sql", "utf8");
+  const sql = await readFile("supabase/migrations/20261009042044_work_os_manager_employee_loop.sql", "utf8");
   assert.match(sql, /^begin;/);
   assert.match(sql, /commit;\s*$/);
   assert.match(sql, /for update/);
