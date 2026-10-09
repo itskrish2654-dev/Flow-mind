@@ -31,6 +31,11 @@ export const GoalPlanEditSchema = z.object({
   items: z.array(GoalPlanItemSchema).min(1).max(GOAL_LIMITS.items),
 }).strict();
 
+export const GoalWorkAssignmentSchema = z.object({
+  goalId: z.uuid(), workItemId: z.uuid(), expectedUpdatedAt: z.iso.datetime({ offset: true }),
+  assigneeUserId: z.uuid(), dueAt: z.iso.datetime({ offset: true }).nullish(),
+}).strict();
+
 export const GoalModelProposalSchema = z.object({
   goalSummary: z.string().trim().min(1).max(300),
   successCriteria: z.string().trim().min(1).max(1000),
@@ -71,16 +76,25 @@ export function goalNeedsClarification(input: { title: string; successCriteria?:
   return null;
 }
 
-export type GoalWorkState = { status: "needs_you" | "waiting" | "handled" | "done"; dueAt: string | null } | null;
+export type GoalWorkState = { status: "needs_you" | "in_progress" | "waiting" | "blocked" | "handled" | "done";
+  dueAt: string | null } | null;
 export function deriveGoalProgress(items: readonly GoalWorkState[], now = new Date()): {
-  completed: number; total: number; needsAttention: number; overdue: number; missing: number;
+  completed: number; total: number; needsAttention: number; blocked: number;
+  overdue: number; missing: number;
 } {
-  let completed = 0; let needsAttention = 0; let overdue = 0; let missing = 0;
+  let completed = 0; let needsAttention = 0; let blocked = 0; let overdue = 0; let missing = 0;
   for (const item of items) {
     if (!item) { missing += 1; needsAttention += 1; continue; }
     if (item.status === "done") { completed += 1; continue; }
-    if (item.status === "needs_you") needsAttention += 1;
+    if (item.status === "needs_you" || item.status === "blocked") needsAttention += 1;
+    if (item.status === "blocked") blocked += 1;
     if (item.dueAt && new Date(item.dueAt) < now) overdue += 1;
   }
-  return { completed, total: items.length, needsAttention, overdue, missing };
+  return { completed, total: items.length, needsAttention, blocked, overdue, missing };
+}
+
+/** A teammate's free-text blocker is not part of company-wide goal progress. */
+export function visibleGoalWorkReason(input: { reason: string | null; assigneeUserId: string;
+  viewerUserId: string; canManage: boolean }): string | null {
+  return input.canManage || input.assigneeUserId === input.viewerUserId ? input.reason : null;
 }

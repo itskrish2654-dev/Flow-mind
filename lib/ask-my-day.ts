@@ -29,16 +29,24 @@ function rankedPresentationItems(data: MyDayData): RankedMyDayItem[] {
   let sourceOrder = 0;
   return [
     ...data.needsYou.map((item) => ({ item, section: 0, sourceOrder: sourceOrder++ })),
-    ...data.waitingOn.map((item) => ({ item, section: 1, sourceOrder: sourceOrder++ })),
-    ...data.handledByCrazyLoops.map((item) => ({ item, section: 2, sourceOrder: sourceOrder++ })),
-    ...data.recentActivity.map((item) => ({ item, section: 3, sourceOrder: sourceOrder++ })),
+    ...data.blocked.map((item) => ({ item, section: 1, sourceOrder: sourceOrder++ })),
+    ...data.today.map((item) => ({ item, section: 2, sourceOrder: sourceOrder++ })),
+    ...data.deadlines.map((item) => ({ item, section: 3, sourceOrder: sourceOrder++ })),
+    ...data.managerAssigned.map((item) => ({ item, section: 4, sourceOrder: sourceOrder++ })),
+    ...data.waitingOn.map((item) => ({ item, section: 5, sourceOrder: sourceOrder++ })),
+    ...data.completed.map((item) => ({ item, section: 6, sourceOrder: sourceOrder++ })),
+    ...data.handledByCrazyLoops.map((item) => ({ item, section: 7, sourceOrder: sourceOrder++ })),
+    ...data.recentActivity.map((item) => ({ item, section: 8, sourceOrder: sourceOrder++ })),
   ];
 }
 
 function workItemSection(item: WorkItem): number {
   if (item.status === "needs_you") return 0;
-  if (item.status === "waiting") return 1;
-  return 2;
+  if (item.status === "blocked") return 1;
+  if (item.status === "in_progress") return 2;
+  if (item.status === "waiting") return 5;
+  if (item.status === "done") return 6;
+  return 7;
 }
 
 /**

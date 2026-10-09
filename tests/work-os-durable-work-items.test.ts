@@ -26,6 +26,7 @@ function item(overrides: Partial<WorkItem> = {}): WorkItem {
     title: "Review the draft", summary: "Check the prepared result.",
     why_it_matters: "A customer is waiting.", suggested_action: "Review and decide.",
     status: "needs_you", priority: "high", due_at: now,
+    status_reason: null, status_actor_user_id: null,
     source_type: "internal", source_id: null, source_label: "Customer request",
     dedupe_key: null, created_at: now, updated_at: now, resolved_at: null,
     goal_id: null, goal_plan_item_id: null,
@@ -154,7 +155,7 @@ test("My Day merges durable and workflow-derived items without showing done or o
   assert.equal(result.needsYou.filter((entry) => entry.workItem).length, 1);
   assert.equal(result.waitingOn.filter((entry) => entry.workItem).length, 1);
   assert.equal(result.handledByCrazyLoops.length, 1);
-  assert.equal(JSON.stringify(result).includes("00000000-0000-4000-8000-000000000033"), false);
+  assert.equal(result.completed.some((entry) => entry.workItem?.id === "00000000-0000-4000-8000-000000000033"), true);
   assert.equal(JSON.stringify(result).includes("00000000-0000-4000-8000-000000000034"), false);
   assert.equal(result.today.length > 0 || result.needsYou.some((entry) => !entry.workItem), true);
   const oldOnly = buildMyDayData({ ...input, workItems: [], workItemsUnavailable: true });
@@ -202,8 +203,8 @@ test("service and UI never accept browser tenancy, provenance, or handled state"
   assert.match(service, /\.eq\("status", from\)/);
   assert.match(service, /\.eq\("status", "succeeded"\)/);
   assert.match(service, /\.eq\("is_default", true\)/);
-  assert.match(service, /\["needs_you", "waiting", "handled"\]/);
-  assert.match(action, /z\.enum\(\["needs_you", "waiting", "done"\]\)/);
+  assert.match(service, /"needs_you", "in_progress", "waiting", "blocked", "handled"/);
+  assert.match(action, /EmployeeWorkUpdateSchema\.safeParse/);
   assert.doesNotMatch(action, /createWorkItem|markWorkItemHandled/);
   assert.match(view, /name="to" value="waiting"/);
   assert.match(view, /name="to" value="done"/);

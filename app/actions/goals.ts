@@ -1,10 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { z } from "zod";
 
 import {
   approveGoalPlan, createGoalDraft, finishWorkspaceGoal, generateGoalPlan,
-  saveManagerGoalPlan, updateGoalDraft,
+  reviseManagerGoalWorkAssignment, saveManagerGoalPlan, updateGoalDraft,
 } from "@/lib/goals";
 
 type GoalActionResult = { ok: true; goalId?: string; question?: string } | { ok: false; error: string };
@@ -14,6 +16,23 @@ function refreshGoal(goalId?: string) {
   if (goalId) revalidatePath(`/goals/${goalId}`);
   revalidatePath("/my-day");
   revalidatePath("/activity");
+}
+
+export async function reviseGoalWorkAssignmentAction(formData: FormData): Promise<void> {
+  const goalId = z.uuid().safeParse(formData.get("goalId"));
+  if (!goalId.success) redirect("/goals");
+  let failed = false;
+  try {
+    const rawDate = formData.get("dueDate");
+    const dueAt = typeof rawDate === "string" && z.iso.date().safeParse(rawDate).success
+      ? new Date(`${rawDate}T12:00:00Z`).toISOString() : null;
+    await reviseManagerGoalWorkAssignment({ goalId: goalId.data,
+      workItemId: formData.get("workItemId"), expectedUpdatedAt: formData.get("expectedUpdatedAt"),
+      assigneeUserId: formData.get("assigneeUserId"), dueAt });
+  } catch { failed = true; }
+  refreshGoal(goalId.data);
+  revalidatePath("/manager");
+  redirect(`/goals/${goalId.data}${failed ? "?assignment_error=1" : ""}`);
 }
 
 export async function createGoalAction(input: unknown): Promise<GoalActionResult> {

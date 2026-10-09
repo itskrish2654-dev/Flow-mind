@@ -14,6 +14,7 @@ import {
   type WorkItemSourceType,
   type WorkItemStatus,
   type WorkItemTransitionStore,
+  type EmployeeWorkStatus,
 } from "@/lib/work-items-core";
 
 const WORK_ITEM_LIST_LIMIT = 50;
@@ -54,17 +55,15 @@ export async function createWorkItem(input: CreateWorkItemInput): Promise<WorkIt
 }
 
 /** Browser reads use their own authenticated client, explicit scope, and RLS. */
-export async function listCurrentUserWorkItems(): Promise<WorkItem[]> {
+export async function listCurrentUserWorkItems(options: { includeDone?: boolean } = {}): Promise<WorkItem[]> {
   const auth = await getAuthenticatedContext();
   if (!auth) throw new Error("Unauthorized");
-  const results = await Promise.all((["needs_you", "waiting", "handled"] as const).map((status) =>
-    auth.supabase.from("work_items").select("*")
-      .eq("workspace_id", auth.workspace.id)
-      .eq("assignee_user_id", auth.user.id)
-      .eq("status", status)
-      .order("created_at", { ascending: false })
-      .limit(WORK_ITEM_LIST_LIMIT),
-  ));
+  const statuses: WorkItem["status"][] = ["needs_you", "in_progress", "waiting", "blocked", "handled"];
+  if (options.includeDone) statuses.push("done");
+  const results = await Promise.all(statuses.map((status) => auth.supabase.from("work_items").select("*")
+    .eq("workspace_id", auth.workspace.id).eq("assignee_user_id", auth.user.id)
+    .eq("status", status).order("updated_at", { ascending: false })
+    .limit(status === "done" ? 10 : WORK_ITEM_LIST_LIMIT)));
   if (results.some((result) => result.error)) throw new Error("Work items could not be loaded.");
   return results.flatMap((result) => result.data ?? []);
 }
@@ -83,7 +82,8 @@ export async function getCurrentUserWorkItem(id: string): Promise<WorkItem | nul
 }
 
 /** Authenticated employee action: only status changes, never identity or provenance. */
-export async function transitionCurrentUserWorkItem(id: string, to: "needs_you" | "waiting" | "done"): Promise<WorkItem> {
+export async function transitionCurrentUserWorkItem(id: string, to: EmployeeWorkStatus,
+  reason?: string | null): Promise<WorkItem> {
   const auth = await getAuthenticatedContext();
   if (!auth) throw new Error("Unauthorized");
   const admin = createAdminClient();
@@ -94,10 +94,13 @@ export async function transitionCurrentUserWorkItem(id: string, to: "needs_you" 
       if (error) throw new Error("Work item could not be loaded.");
       return data;
     },
-    async updateStatus(itemId, workspaceId, assigneeUserId, from: WorkItemStatus, next: WorkItemStatus) {
+    async updateStatus(itemId, workspaceId, assigneeUserId, from: WorkItemStatus, next: WorkItemStatus,
+      statusReason?: string | null) {
       const { data, error } = await admin.from("work_items")
         .update({
           status: next,
+          status_reason: statusReason ?? null,
+          status_actor_user_id: auth.user.id,
           updated_at: new Date().toISOString(),
           resolved_at: next === "done" ? new Date().toISOString() : null,
         })
@@ -108,7 +111,7 @@ export async function transitionCurrentUserWorkItem(id: string, to: "needs_you" 
     },
   };
   return transitionOwnedWorkItemWithStore({
-    id, workspaceId: auth.workspace.id, assigneeUserId: auth.user.id, to,
+    id, workspaceId: auth.workspace.id, assigneeUserId: auth.user.id, to, reason,
   }, store);
 }
 
@@ -130,14 +133,17 @@ export async function markWorkItemHandledForExecution(input: {
   if (itemError || !item || item.source_type !== "workflow_execution" || item.source_id !== executionId) {
     throw new Error("Work item cannot be marked handled without matching execution provenance.");
   }
-  if (item.status !== "needs_you" && item.status !== "waiting") throw new Error("Work item is already resolved.");
+  if (!["needs_you", "in_progress", "waiting", "blocked"].includes(item.status)) {
+    throw new Error("Work item is already resolved.");
+  }
   const { data: workflow, error: workflowError } = await admin.from("workflows").select("id")
     .eq("id", execution.workflow_id).eq("user_id", execution.user_id)
     .eq("workspace_id", workspaceId).maybeSingle();
   if (workflowError || !workflow) throw new Error("Execution workspace proof is unavailable.");
   const now = new Date().toISOString();
   const { data: handled, error: updateError } = await admin.from("work_items")
-    .update({ status: "handled", resolved_at: now, updated_at: now })
+    .update({ status: "handled", status_reason: null, status_actor_user_id: execution.user_id,
+      resolved_at: now, updated_at: now })
     .eq("id", itemId).eq("workspace_id", workspaceId).eq("assignee_user_id", execution.user_id)
     .eq("source_type", "workflow_execution").eq("source_id", executionId)
     .eq("status", item.status).select("*").maybeSingle();

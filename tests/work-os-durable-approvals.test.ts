@@ -75,6 +75,7 @@ function workItem(overrides: Partial<WorkItem> = {}): WorkItem {
     title: "Approve this reply", summary: "Review the prepared reply.",
     why_it_matters: "A decision is required.", suggested_action: "Review proposal.",
     status: "needs_you", priority: "normal", due_at: null,
+    status_reason: null, status_actor_user_id: null,
     source_type: "internal", source_id: null, source_label: "Prepared work",
     dedupe_key: "draft-1", created_at: now, updated_at: now, resolved_at: null,
     goal_id: null, goal_plan_item_id: null,

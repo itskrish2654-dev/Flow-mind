@@ -24,6 +24,8 @@ import { findSelectedGoogleSpreadsheetRow, inspectSelectedGoogleWorksheet, readS
 import { resolveSelectedSheetForQuestion } from "@/lib/connectors/google/sheets-work-context";
 import { searchCompanyKnowledge } from "@/lib/knowledge";
 import { getWorkspaceGoal, listWorkspaceGoals } from "@/lib/goals";
+import { loadManagerCockpit } from "@/lib/manager-work";
+import { selectTeamWorkForQuestion } from "@/lib/manager-work-core";
 import { readSlackForAsk } from "@/lib/connectors/slack/read";
 import { readNotionForAsk } from "@/lib/connectors/notion/read";
 
@@ -64,13 +66,15 @@ async function assertTrustedScope(scope: AskTrustedScope) {
   return auth;
 }
 
-async function loadWorkItems(scope: AskTrustedScope): Promise<AskToolResult> {
+async function loadWorkItems(scope: AskTrustedScope, question: string): Promise<AskToolResult> {
   await assertTrustedScope(scope);
-  const items = await listCurrentUserWorkItems();
+  const completedIntent = /\bwhat did i (?:complete|finish)\b|\bmy\b.{0,32}\b(?:completed|finished|done)\b/i.test(question);
+  const items = await listCurrentUserWorkItems({ includeDone: completedIntent });
+  const relevant = completedIntent ? items.filter((item) => item.status === "done") : items;
   return {
     tool: "work_items",
-    summary: `${items.length} open Work Item${items.length === 1 ? "" : "s"} belong to this employee.`,
-    records: items.slice(0, ASK_LIMITS.recordsPerTool).map((item, index) => safeRecord({
+    summary: `${relevant.length} ${completedIntent ? "recently completed" : "open"} Work Item${relevant.length === 1 ? "" : "s"} were read for this employee. This is a bounded result, not an all-time count.`,
+    records: relevant.slice(0, ASK_LIMITS.recordsPerTool).map((item, index) => safeRecord({
       key: `work_item:${index}`,
       kind: "work_item",
       id: item.id,
@@ -85,6 +89,9 @@ async function loadWorkItems(scope: AskTrustedScope): Promise<AskToolResult> {
         suggestedAction: item.suggested_action,
         source: item.source_label,
         dueAt: item.due_at,
+        completedAt: item.status === "done" ? item.resolved_at : undefined,
+        statusReason: item.status_reason,
+        goalSource: item.goal_id ? `/goals/${item.goal_id}` : undefined,
       },
     })),
   };
@@ -417,7 +424,7 @@ async function loadGoals(scope: AskTrustedScope, question: string): Promise<AskT
       if (!detail) return [];
       const incomplete = detail.items.filter((item) => item.workItem?.status !== "done");
       const workSummary = incomplete.slice(0, 6).map((item) =>
-        `${item.title}: ${item.workItem?.status ?? "assignment missing"}${item.due_at ? `, due ${item.due_at.slice(0, 10)}` : ""}`).join("; ");
+        `${item.title}: ${item.workItem?.status ?? "assignment missing"}${item.workItem?.due_at ? `, due ${item.workItem.due_at.slice(0, 10)}` : ""}${item.workItem?.status_reason ? `, reason: ${item.workItem.status_reason}` : ""}`).join("; ");
       return [safeRecord({ key: `goal:${index}`, kind: "goal", id: goal.id,
         label: goal.title, href: `/goals/${goal.id}`,
         facts: { title: goal.title, status: goal.status, successCriteria: goal.success_criteria,
@@ -461,6 +468,33 @@ async function loadSlack(scope: AskTrustedScope, question: string): Promise<AskT
   };
 }
 
+async function loadTeamWork(scope: AskTrustedScope, question: string): Promise<AskToolResult> {
+  await assertTrustedScope(scope);
+  const board = await loadManagerCockpit();
+  if (!board || board.workspaceId !== scope.workspaceId || board.actorUserId !== scope.userId) {
+    return { tool: "team_work", availability: "not_available",
+      summary: "Team work is available only to workspace managers.", records: [] };
+  }
+  const selected = selectTeamWorkForQuestion({ question, work: board.work, members: board.members });
+  if (selected.needsEmployeeClarification) return { tool: "team_work", availability: "selection_required",
+    summary: "The named employee could not be uniquely identified from current workspace members. No team work was read for that name.", records: [] };
+  const subset = selected.items;
+  const ranked = subset.sort((a, b) => Number(b.status === "blocked") - Number(a.status === "blocked")
+    || Number(b.status === "in_progress") - Number(a.status === "in_progress")
+    || b.updated_at.localeCompare(a.updated_at));
+  return { tool: "team_work",
+    summary: `${subset.length} matching approved-goal Work Item${subset.length === 1 ? "" : "s"} ${selected.namedEmployee ? `are assigned to ${selected.namedEmployee}` : "belong to this workspace"}. Yesterday means the previous UTC calendar day. Only assigned company work is included; no private employee messages or Ask history was read. The bounded result may omit older items.`,
+    records: ranked.slice(0, ASK_LIMITS.recordsPerTool).map((item, index) => safeRecord({
+      key: `team_work:${index}`, kind: "work_item", id: item.id,
+      label: item.title, href: `/goals/${item.goal_id}`,
+      facts: { title: item.title, assignee: board.members.find((candidate) => candidate.userId === item.assignee_user_id)?.label ?? "Former member",
+        status: item.status.replaceAll("_", " "), blockerOrWaitingReason: item.status_reason,
+        dueAt: item.due_at, completedAt: item.status === "done" ? item.resolved_at : undefined,
+        goalSource: `/goals/${item.goal_id}`, updatedAt: item.updated_at },
+    })),
+  };
+}
+
 async function loadNotion(scope: AskTrustedScope, question: string): Promise<AskToolResult> {
   await assertTrustedScope(scope);
   const result = await readNotionForAsk({ ...scope, question });
@@ -480,7 +514,7 @@ async function loadNotion(scope: AskTrustedScope, question: string): Promise<Ask
 export async function executeAskTool(tool: AskToolId, scope: AskTrustedScope, question = ""): Promise<AskToolResult> {
   switch (AskToolIdSchema.parse(tool)) {
     case "my_day": return loadMyDay(scope);
-    case "work_items": return loadWorkItems(scope);
+    case "work_items": return loadWorkItems(scope, question);
     case "pending_approvals": return loadApprovals(scope);
     case "workflow_status": return loadWorkflowStatus(scope);
     case "recent_activity": return loadRecentActivity(scope, question);
@@ -490,6 +524,7 @@ export async function executeAskTool(tool: AskToolId, scope: AskTrustedScope, qu
     case "sheets_search": return loadSheets(scope, question);
     case "company_knowledge": return loadCompanyKnowledge(scope, question);
     case "goals": return loadGoals(scope, question);
+    case "team_work": return loadTeamWork(scope, question);
     case "slack_search": return loadSlack(scope, question);
     case "notion_search": return loadNotion(scope, question);
   }

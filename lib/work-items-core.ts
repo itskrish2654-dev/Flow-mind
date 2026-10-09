@@ -71,33 +71,50 @@ export async function createWorkItemWithStore(input: CreateWorkItemInput, store:
   throw new Error("Work item could not be created.");
 }
 
-const employeeTransitions: Readonly<Record<"needs_you" | "waiting", readonly WorkItemStatus[]>> = {
-  needs_you: ["waiting", "done"],
-  waiting: ["needs_you", "done"],
+export type EmployeeWorkStatus = "needs_you" | "in_progress" | "waiting" | "blocked" | "done";
+const employeeTransitions: Readonly<Record<Exclude<EmployeeWorkStatus, "done">, readonly WorkItemStatus[]>> = {
+  needs_you: ["in_progress", "waiting", "blocked", "done"],
+  in_progress: ["needs_you", "waiting", "blocked", "done"],
+  waiting: ["needs_you", "in_progress", "blocked", "done"],
+  blocked: ["needs_you", "in_progress", "waiting", "done"],
 };
 
 export function isAllowedEmployeeTransition(from: WorkItemStatus, to: WorkItemStatus): boolean {
-  return (from === "needs_you" || from === "waiting") && employeeTransitions[from].includes(to);
+  return from in employeeTransitions && employeeTransitions[from as keyof typeof employeeTransitions].includes(to);
 }
+
+export const EmployeeWorkUpdateSchema = z.object({
+  id: z.uuid(),
+  to: z.enum(["needs_you", "in_progress", "waiting", "blocked", "done"]),
+  reason: z.string().trim().max(500).nullish(),
+}).strict().superRefine((value, context) => {
+  if (value.to === "blocked" && !value.reason) {
+    context.addIssue({ code: "custom", path: ["reason"], message: "Describe what is blocking this work." });
+  }
+});
 
 export interface WorkItemTransitionStore {
   findOwned(id: string, workspaceId: string, assigneeUserId: string): Promise<WorkItem | null>;
-  updateStatus(id: string, workspaceId: string, assigneeUserId: string, from: WorkItemStatus, to: WorkItemStatus): Promise<WorkItem | null>;
+  updateStatus(id: string, workspaceId: string, assigneeUserId: string, from: WorkItemStatus,
+    to: WorkItemStatus, reason?: string | null): Promise<WorkItem | null>;
 }
 
 export async function transitionOwnedWorkItemWithStore(input: {
   id: string;
   workspaceId: string;
   assigneeUserId: string;
-  to: "needs_you" | "waiting" | "done";
+  to: EmployeeWorkStatus;
+  reason?: string | null;
 }, store: WorkItemTransitionStore): Promise<WorkItem> {
-  const id = z.uuid().parse(input.id);
+  const value = EmployeeWorkUpdateSchema.parse({ id: input.id, to: input.to, reason: input.reason });
+  const id = value.id;
   const current = await store.findOwned(id, input.workspaceId, input.assigneeUserId);
   if (!current) throw new Error("Work item is unavailable.");
-  if (!isAllowedEmployeeTransition(current.status, input.to)) {
+  if (!isAllowedEmployeeTransition(current.status, value.to)) {
     throw new Error("This work item cannot be moved to that state.");
   }
-  const updated = await store.updateStatus(id, input.workspaceId, input.assigneeUserId, current.status, input.to);
+  const updated = await store.updateStatus(id, input.workspaceId, input.assigneeUserId, current.status,
+    value.to, value.to === "waiting" || value.to === "blocked" ? value.reason ?? null : null);
   if (!updated) throw new Error("Work item changed while you were updating it. Please refresh.");
   return updated;
 }

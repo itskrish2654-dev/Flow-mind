@@ -4,7 +4,8 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { getAuthenticatedContext } from "@/lib/auth";
-import { deriveGoalProgress, GoalDraftEditSchema, GoalDraftSchema, GoalPlanEditSchema,
+import { deriveGoalProgress, GoalDraftEditSchema, GoalDraftSchema, GoalPlanEditSchema, GoalWorkAssignmentSchema,
+  visibleGoalWorkReason,
   GOAL_LIMITS, type GoalWorkState } from "@/lib/goals-core";
 import { proposeGoalPlanWithModel } from "@/lib/goals-planning";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -112,19 +113,24 @@ export async function getWorkspaceGoal(goalId: string) {
     throw new Error("Goal details could not be loaded.");
   }
   let items: PlanItem[] = [];
-  let work: Pick<WorkItem, "id" | "goal_plan_item_id" | "assignee_user_id" | "status" | "due_at" | "resolved_at">[] = [];
+  let work: Pick<WorkItem, "id" | "goal_plan_item_id" | "assignee_user_id" | "status" |
+    "status_reason" | "due_at" | "resolved_at" | "updated_at">[] = [];
   if (plan) {
     const [{ data: loadedItems, error: itemError }, { data: loadedWork, error: workError }] = await Promise.all([
       auth.supabase.from("goal_plan_items").select("*")
         .eq("workspace_id", auth.workspace.id).eq("plan_id", plan.id)
         .order("position").limit(GOAL_LIMITS.items),
-      admin.from("work_items").select("id,goal_plan_item_id,assignee_user_id,status,due_at,resolved_at")
+      admin.from("work_items").select("id,goal_plan_item_id,assignee_user_id,status,status_reason,due_at,resolved_at,updated_at")
         .eq("workspace_id", auth.workspace.id).eq("goal_id", goal.id).limit(GOAL_LIMITS.items),
     ]);
     if (itemError || workError || !loadedItems || !loadedWork) throw new Error("Goal work could not be loaded.");
     items = loadedItems; work = loadedWork;
   }
-  const workByItem = new Map(work.map((item) => [item.goal_plan_item_id, item]));
+  const workByItem = new Map(work.map((item) => [item.goal_plan_item_id, {
+    ...item, status_reason: visibleGoalWorkReason({ reason: item.status_reason,
+      assigneeUserId: item.assignee_user_id, viewerUserId: auth.user.id,
+      canManage: auth.membership.role !== "member" }),
+  }]));
   const progress = plan?.status === "approved"
     ? deriveGoalProgress(items.map((item) => {
       const current = workByItem.get(item.id);
@@ -227,6 +233,18 @@ export async function approveGoalPlan(input: { goalId: string; planId: string; r
     p_plan_id: parsed.planId, p_expected_revision: parsed.revision,
   });
   if (error || data !== parsed.goalId) throw new Error("Plan approval failed. Assign every item and refresh before retrying.");
+}
+
+export async function reviseManagerGoalWorkAssignment(input: unknown): Promise<void> {
+  const value = GoalWorkAssignmentSchema.parse(input);
+  const auth = await goalsContext(true);
+  await assertAssignee(auth.workspace.id, value.assigneeUserId);
+  const { data, error } = await createAdminClient().rpc("revise_goal_work_assignment", {
+    p_actor_user_id: auth.user.id, p_goal_id: value.goalId, p_work_item_id: value.workItemId,
+    p_expected_updated_at: value.expectedUpdatedAt,
+    p_assignee_user_id: value.assigneeUserId, p_due_at: value.dueAt ?? null,
+  });
+  if (error || data !== value.workItemId) throw new Error("Assignment changed; refresh and review the live work.");
 }
 
 export async function finishWorkspaceGoal(input: { goalId: string; action: "cancel" | "complete" }) {

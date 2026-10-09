@@ -344,7 +344,9 @@ export type Database = {
           summary: string | null;
           why_it_matters: string | null;
           suggested_action: string | null;
-          status: "needs_you" | "waiting" | "handled" | "done";
+          status: "needs_you" | "in_progress" | "waiting" | "blocked" | "handled" | "done";
+          status_reason: string | null;
+          status_actor_user_id: string | null;
           priority: "low" | "normal" | "high";
           due_at: string | null;
           source_type: "workflow" | "workflow_execution" | "connector_event" | "system" | "internal";
@@ -365,7 +367,9 @@ export type Database = {
           summary?: string | null;
           why_it_matters?: string | null;
           suggested_action?: string | null;
-          status?: "needs_you" | "waiting" | "handled" | "done";
+          status?: "needs_you" | "in_progress" | "waiting" | "blocked" | "handled" | "done";
+          status_reason?: string | null;
+          status_actor_user_id?: string | null;
           priority?: "low" | "normal" | "high";
           due_at?: string | null;
           source_type: "workflow" | "workflow_execution" | "connector_event" | "system" | "internal";
@@ -379,7 +383,11 @@ export type Database = {
           goal_plan_item_id?: string | null;
         };
         Update: {
-          status?: "needs_you" | "waiting" | "handled" | "done";
+          status?: "needs_you" | "in_progress" | "waiting" | "blocked" | "handled" | "done";
+          status_reason?: string | null;
+          status_actor_user_id?: string | null;
+          assignee_user_id?: string;
+          due_at?: string | null;
           updated_at?: string;
           resolved_at?: string | null;
           goal_id?: string | null;
@@ -1027,6 +1035,11 @@ export type Database = {
       };
       activate_goal_plan: {
         Args: { p_actor_user_id: string; p_goal_id: string; p_plan_id: string; p_expected_revision: number };
+        Returns: string;
+      };
+      revise_goal_work_assignment: {
+        Args: { p_actor_user_id: string; p_goal_id: string; p_work_item_id: string;
+          p_expected_updated_at: string; p_assignee_user_id: string; p_due_at: string | null };
         Returns: string;
       };
       finish_goal: {

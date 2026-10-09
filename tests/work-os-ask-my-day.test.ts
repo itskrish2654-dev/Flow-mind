@@ -27,6 +27,8 @@ function workItem(value: number, overrides: Partial<WorkItem> = {}): WorkItem {
     status: "needs_you",
     priority: "normal",
     due_at: null,
+    status_reason: null,
+    status_actor_user_id: null,
     source_type: "internal",
     source_id: null,
     source_label: "Acceptance fixture",

@@ -15,6 +15,7 @@ export default async function GoalsPage() {
         <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">Goals</h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">Turn a clear outcome into a reviewed plan and track progress from work your team actually completes.</p>
       </header>
+      {canManage && <Link href="/manager" className="mb-5 inline-flex min-h-11 items-center rounded-xl border border-[#c9bdd9] bg-white px-4 text-sm font-semibold text-[#4b357d] hover:bg-[#f3eff8]">Open team work view →</Link>}
       {canManage && <CreateGoalForm members={members} currentUserId={auth.user.id} />}
       <section aria-label="Workspace goals" className="mt-8">
         {goals.length === 0 ? <div className="rounded-2xl border border-dashed border-[#d8caa8] bg-white p-8">

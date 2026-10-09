@@ -37,6 +37,8 @@ const statusStyles: Record<MyDayItemStatus, string> = {
   handled: "border-emerald-200 bg-emerald-50 text-emerald-700",
   failed: "border-rose-200 bg-rose-50 text-rose-700",
   cancelled: "border-slate-200 bg-slate-100 text-slate-600",
+  blocked: "border-rose-200 bg-rose-50 text-rose-800",
+  completed: "border-emerald-200 bg-emerald-50 text-emerald-800",
 };
 
 const statusLabels: Record<MyDayItemStatus, string> = {
@@ -48,6 +50,8 @@ const statusLabels: Record<MyDayItemStatus, string> = {
   handled: "Handled",
   failed: "Failed",
   cancelled: "Cancelled",
+  blocked: "Blocked",
+  completed: "Completed",
 };
 
 function MyDayItemCard({ item }: { item: MyDayItem }) {
@@ -67,8 +71,9 @@ function MyDayItemCard({ item }: { item: MyDayItem }) {
       <p className="mt-1.5 text-sm leading-6 text-slate-600">{item.description}</p>
       {item.workItem?.whyItMatters && <p className="mt-2 text-xs leading-5 text-slate-600"><span className="font-semibold text-slate-800">Why it matters:</span> {item.workItem.whyItMatters}</p>}
       {item.workItem?.suggestedAction && <p className="mt-1 text-xs leading-5 text-slate-600"><span className="font-semibold text-slate-800">Suggested next step:</span> {item.workItem.suggestedAction}</p>}
+      {item.workItem?.statusReason && <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-slate-700"><span className="font-semibold">{item.workItem.status === "blocked" ? "Blocker" : "Waiting on"}:</span> {item.workItem.statusReason}</p>}
       <div className="mt-4 flex flex-col gap-3 border-t border-[#eee8de] pt-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="min-w-0 break-words text-xs font-medium text-slate-500">{item.source}</p>
+        <p className="min-w-0 break-words text-xs font-medium text-slate-500">{item.source}{item.workItem?.goalId && <> · <Link href={`/goals/${item.workItem.goalId}`} className="text-[#4b357d] underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6047a0]">View goal and approved plan</Link></>}</p>
         {!item.workItem && <Link
           href={item.cta.href}
           className="inline-flex min-h-11 shrink-0 items-center gap-1.5 self-start rounded-lg px-1 text-xs font-semibold text-[#725300] hover:text-[#493500] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9b7309] focus-visible:ring-offset-2 sm:min-h-0 sm:self-auto"
@@ -76,17 +81,22 @@ function MyDayItemCard({ item }: { item: MyDayItem }) {
           {item.cta.label}<ArrowRight className="size-3.5" aria-hidden="true" />
         </Link>}
       </div>
-      {item.workItem && item.workItem.status !== "handled" && (
+      {item.workItem && item.workItem.status !== "handled" && item.workItem.status !== "done" && (<>
         <form action={updateMyWorkItem} className="mt-3 flex flex-wrap gap-2">
           <input type="hidden" name="id" value={item.workItem.id} />
-          {item.workItem.status === "needs_you" ? (
-            <button name="to" value="waiting" className="min-h-10 rounded-lg border border-[#ded6ca] px-3 text-xs font-semibold text-slate-700 hover:bg-[#faf8f4] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9b7309]">Move to waiting</button>
-          ) : (
-            <button name="to" value="needs_you" className="min-h-10 rounded-lg border border-[#ded6ca] px-3 text-xs font-semibold text-slate-700 hover:bg-[#faf8f4] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9b7309]">Return to Needs You</button>
-          )}
+          {item.workItem.status !== "in_progress" && <button name="to" value="in_progress" className="min-h-10 rounded-lg border border-[#ded6ca] px-3 text-xs font-semibold text-slate-700 hover:bg-[#faf8f4] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9b7309]">Start work</button>}
+          {item.workItem.status !== "needs_you" && <button name="to" value="needs_you" className="min-h-10 rounded-lg border border-[#ded6ca] px-3 text-xs font-semibold text-slate-700 hover:bg-[#faf8f4] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9b7309]">Return to Needs You</button>}
           <button name="to" value="done" className="min-h-10 rounded-lg border border-[#ded6ca] px-3 text-xs font-semibold text-slate-700 hover:bg-[#faf8f4] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#9b7309]">Mark done</button>
         </form>
-      )}
+        <form action={updateMyWorkItem} className="mt-3 flex flex-wrap items-end gap-2">
+          <input type="hidden" name="id" value={item.workItem.id} />
+          <label className="min-w-48 grow text-xs font-medium text-slate-700">Waiting or blocked reason <span className="font-normal">(required for blocked)</span>
+            <input name="reason" maxLength={500} placeholder="What are you waiting for?" className="mt-1 block min-h-10 w-full rounded-lg border border-[#ded6ca] bg-white px-3 text-sm" />
+          </label>
+          {item.workItem.status !== "waiting" && <button name="to" value="waiting" className="min-h-10 rounded-lg border border-[#ded6ca] px-3 text-xs font-semibold text-slate-700 hover:bg-[#faf8f4]">Waiting</button>}
+          {item.workItem.status !== "blocked" && <button name="to" value="blocked" className="min-h-10 rounded-lg border border-rose-200 px-3 text-xs font-semibold text-rose-800 hover:bg-rose-50">Blocked</button>}
+        </form>
+      </>)}
     </article>
   );
 }
@@ -202,6 +212,14 @@ export function MyDayView({ data, actionError = false, approvalActionError = fal
           </div>
         </header>
 
+        <section aria-labelledby="daily-agenda-title" className="mt-6 rounded-2xl border border-[#ded6ca] bg-white p-5 sm:p-6">
+          <h2 id="daily-agenda-title" className="text-lg font-semibold">Your daily agenda</h2>
+          <p className="mt-1 text-xs text-slate-600">Grounded in your assigned Work Items. Nothing is added from a guess.</p>
+          {data.agenda.priorities.length ? <ol className="mt-4 space-y-2">{data.agenda.priorities.map((priority, index) => <li key={priority.href} className="flex gap-3 text-sm"><span className="font-semibold text-[#856b36]">{index + 1}.</span><Link href={priority.href} className="min-w-0 break-words font-medium text-[#4b357d] hover:underline">{priority.title}</Link><span className="text-xs text-slate-600">{priority.reason}</span></li>)}</ol>
+            : <p className="mt-4 text-sm text-slate-600">No assigned priorities are due soon. Review Needs You and your approved plans below.</p>}
+          <p className="mt-4 text-xs text-slate-600">{data.agenda.waiting} waiting · {data.agenda.atRisk} blocked or due within 48 hours</p>
+        </section>
+
         {(data.workItemsUnavailable || data.approvalsUnavailable || data.workflowDataUnavailable || data.actionActivityUnavailable || actionError || approvalActionError) && (
           <div role="alert" className="mt-5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
             {approvalActionError ? "That approval could not be decided. Refresh and review its current status."
@@ -237,14 +255,18 @@ export function MyDayView({ data, actionError = false, approvalActionError = fal
             <MyDaySection
               id="today-title"
               title="Today"
-              description="Workflows you can move forward now."
+              description="Work in progress, due today, and workflows you can move forward."
               icon={ListChecks}
               items={data.today}
               empty={data.summary.workflowCount === 0
-                ? "Create your first workflow to give CrazyLoops something to help you move."
+                ? "Nothing is in progress or due today. Your manager-assigned work appears below."
                 : "Nothing is ready to move right now. Review Needs You for the next step."}
             />
           </div>
+
+          <div className="lg:col-span-6"><MyDaySection id="manager-assigned-title" title="Manager Assigned" description="Work from approved company plans assigned to you." icon={ListChecks} items={data.managerAssigned} empty="No manager-assigned work is waiting for you." /></div>
+          <div className="lg:col-span-6"><MyDaySection id="deadlines-title" title="Deadlines" description="Assigned work due within seven days, including overdue work." icon={Clock3} items={data.deadlines} empty="No upcoming deadlines in your assigned work." /></div>
+          <div className="lg:col-span-6"><MyDaySection id="blocked-title" title="Blocked" description="Work you have marked blocked, with your reason." icon={TriangleAlert} items={data.blocked} empty="No work is blocked." /></div>
 
           <div className="lg:col-span-5">
             <MyDaySection
@@ -266,6 +288,7 @@ export function MyDayView({ data, actionError = false, approvalActionError = fal
               empty="No work has been handled automatically yet."
             />
           </div>
+          <div className="lg:col-span-6"><MyDaySection id="completed-title" title="Completed" description="Work you marked done. Goal progress uses these durable completions." icon={CircleCheck} items={data.completed} empty="No recently completed Work Items." /></div>
           <div className="lg:col-span-12">
             <MyDaySection
               id="recent-activity-title"

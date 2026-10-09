@@ -15,7 +15,7 @@ export function activityEventTypesForQuestion(question: string): string[] | unde
 }
 
 export const ACTIVITY_FILTER_TYPES: Record<Exclude<ActivityFilter, "all">, string[]> = {
-  attention: ["work_item_created", "work_item_needs_you", "work_item_waiting", "approval_requested", "action_failed", "action_ambiguous"],
+  attention: ["work_item_created", "work_item_needs_you", "work_item_waiting", "work_item_blocked", "work_item_reassigned", "work_item_due_changed", "approval_requested", "action_failed", "action_ambiguous"],
   approvals: ["approval_requested", "approval_approved", "approval_rejected", "approval_cancelled"],
   actions: ["action_proposed", "action_queued", "action_executing", "action_succeeded", "action_failed", "action_ambiguous", "action_rejected", "action_cancelled"],
   workflows: ["workflow_succeeded", "workflow_failed"],
@@ -33,6 +33,20 @@ export function parseActivityCursor(value: unknown): number | null {
 
 export function activityLabel(event: ActivityEvent): string {
   if (event.visibility === "workspace") {
+    if (event.source_type === "work_item") {
+      const sharedWork: Record<string, string> = {
+        work_item_created: "Company work assigned",
+        work_item_reassigned: "Company work reassigned",
+        work_item_due_changed: "Company work deadline changed",
+        work_item_in_progress: "Company work started",
+        work_item_waiting: "Company work is waiting",
+        work_item_blocked: "Company work is blocked",
+        work_item_needs_you: "Company work needs attention",
+        work_item_done: "Goal progress updated by completed work",
+        work_item_handled: "Company work handled",
+      };
+      return sharedWork[event.event_type] ?? "Company work updated";
+    }
     if (event.source_type === "goal") {
       const shared: Record<string, string> = {
         goal_created: "A teammate created a goal",
@@ -51,7 +65,11 @@ export function activityLabel(event: ActivityEvent): string {
   const labels: Record<string, string> = {
     work_item_created: "Work item created",
     work_item_needs_you: "Work returned for your review",
+    work_item_in_progress: "You started this work",
     work_item_waiting: "Work is waiting",
+    work_item_blocked: "You marked work blocked",
+    work_item_reassigned: "Work assignment changed",
+    work_item_due_changed: "Work deadline changed",
     work_item_handled: "CrazyLoops handled this work",
     work_item_done: "You marked work done",
     approval_requested: "Approval requested",
@@ -87,6 +105,9 @@ export function activityOutcome(event: ActivityEvent): string {
     return "For review";
   }
   if (event.event_type === "work_item_created") return "Created";
+  if (event.event_type === "work_item_blocked") return "Blocked";
+  if (event.event_type === "work_item_in_progress") return "In progress";
+  if (event.event_type === "work_item_reassigned" || event.event_type === "work_item_due_changed") return "Updated";
   if (event.event_type === "approval_cancelled" || event.event_type === "action_cancelled") return "Cancelled";
   if (event.event_type === "action_ambiguous") return "Outcome uncertain";
   if (event.event_type.endsWith("_failed")) return "Failed";

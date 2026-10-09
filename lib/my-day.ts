@@ -72,7 +72,7 @@ export async function loadMyDayData(): Promise<MyDayData | null> {
 
   const userId = auth.user.id;
   const workspaceId = auth.workspace.id;
-  const workItemsPromise = listCurrentUserWorkItems()
+  const workItemsPromise = listCurrentUserWorkItems({ includeDone: true })
     .then((items) => ({ items, unavailable: false }))
     .catch(() => ({ items: [], unavailable: true }));
   const approvalsPromise = listCurrentUserPendingApprovals()

@@ -65,7 +65,7 @@ test("only done counts toward progress; overdue and missing work remain visible"
     { status: "done", dueAt: "2026-10-01T00:00:00Z" },
     { status: "handled", dueAt: "2026-10-01T00:00:00Z" },
     { status: "needs_you", dueAt: "2026-10-03T00:00:00Z" }, null,
-  ], now), { completed: 1, total: 4, needsAttention: 2, overdue: 1, missing: 1 });
+  ], now), { completed: 1, total: 4, needsAttention: 2, blocked: 0, overdue: 1, missing: 1 });
 });
 
 test("goal routing and references stay inside authenticated workspace URLs", async () => {

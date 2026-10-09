@@ -40,6 +40,7 @@ export const AskToolIdSchema = z.enum([
   "calendar_events",
   "company_knowledge",
   "goals",
+  "team_work",
   "slack_search",
   "notion_search",
 ]);
@@ -64,7 +65,7 @@ export const AskReferenceKindSchema = z.enum([
 export type AskReferenceKind = z.infer<typeof AskReferenceKindSchema>;
 
 const InternalHrefSchema = z.string().max(500).refine(
-  (value) => /^\/(?:my-day|dashboard|connections|activity|knowledge|goals)(?:[/?#][^\s]*)?$/.test(value),
+  (value) => /^\/(?:my-day|manager|dashboard|connections|activity|knowledge|goals)(?:[/?#][^\s]*)?$/.test(value),
   "Reference links must stay inside CrazyLoops.",
 );
 
@@ -128,7 +129,7 @@ export const ASK_MODEL_OUTPUT_CONTRACT_INSTRUCTION = [
   `"responseType" must be exactly ${ASK_MODEL_RESPONSE_TYPES.map((value) => `"${value}"`).join(" or ")}. "answer" must be a non-empty string. "clarificationRequired" must be a boolean.`,
   '"referenceKeys" must be an array containing only reference keys supplied in the retrieved records.',
   'If the requested fact is not present in the supplied records, say that the information is not available, use "responseType":"clarification", set "clarificationRequired":true, use an empty "referenceKeys" array, and omit "suggestedAction".',
-  'When a useful safe internal action exists, "suggestedAction" must be exactly an object with two fields: {"label":"non-empty text","href":"internal path"}. Its href must begin with /my-day, /dashboard, /activity, /knowledge, /goals, or /connections. Otherwise omit "suggestedAction" entirely. Never return null, a string, an external URL, or extra fields for "suggestedAction".',
+  'When a useful safe internal action exists, "suggestedAction" must be exactly an object with two fields: {"label":"non-empty text","href":"internal path"}. Its href must begin with /my-day, /manager, /dashboard, /activity, /knowledge, /goals, or /connections. Otherwise omit "suggestedAction" entirely. Never return null, a string, an external URL, or extra fields for "suggestedAction".',
   `Valid complete example: ${JSON.stringify(ASK_MODEL_OUTPUT_CONTRACT_EXAMPLE)}`,
 ].join(" ");
 
@@ -210,6 +211,9 @@ export function askGoogleSourceSignals(question: string) {
 export function selectAskTools(question: string): AskToolId[] {
   const text = question.toLowerCase();
   const tools: AskToolId[] = [];
+  const teamQuestion = /\b(?:team|teammate|employee|staff|colleague|manager brief|company work)\b/.test(text)
+    || /\bwho (?:is|was) blocked\b|\bwhat is [a-z]+ blocked on\b|\bwhat did [a-z]+ (?:complete|finish)\b/.test(text);
+  if (teamQuestion && !/\b(?:my team assignment|my manager assigned|my own work)\b/.test(text)) tools.push("team_work");
   if (/\b(?:goals?|objectives?|milestones?|on track|overdue work|blocking the)\b/.test(text)) tools.push("goals");
   const generalAttention = /^attention[?.!]*$|(?:needs?|requires?|deserves?) my attention|what should i (?:do|handle|focus on)|what do i need(?: to do)?|anything (?:i need to handle|that needs me)|what needs me|my priorities/.test(text.trim());
   const explicitWorkflow = /workflow|automation/.test(text);
@@ -233,6 +237,7 @@ export function selectAskTools(question: string): AskToolId[] {
   if (employeeApprovalAction) tools.push("pending_approvals");
   if (historicalApprovalFact) tools.push("work_items");
   if (/waiting|handled|task|work item|needs you/.test(text)) tools.push("work_items");
+  if (/\bwhat did i (?:complete|finish)\b|\bmy\b.{0,32}\b(?:completed|finished|done)\b/.test(text)) tools.push("work_items");
   if (generalAttention) tools.push("my_day", "pending_approvals");
   if (explicitWorkflow || /failed|failure|problem|broken/.test(text)) tools.push("workflow_status");
   if (/activity|what happened|completed|run|\brecent(?:ly)?\b|what did crazyloops do|actions? failed|uncertain outcome|after i approved/.test(text)) tools.push("recent_activity");
@@ -240,6 +245,7 @@ export function selectAskTools(question: string): AskToolId[] {
   if (actionOutcome && (!tools.includes("gmail_search")
     || /\b(?:crazyloops|you)\b|\baction (?:status|outcome|result)\b/.test(text))) tools.push("action_activity");
   if (/today|current work|my work|summari[sz]e|what do i need|what is happening/.test(text)) tools.push("my_day");
+  if (/\bwhat did i (?:complete|finish)\b|\bmy\b.{0,32}\b(?:completed|finished|done)\b/.test(text)) tools.push("my_day");
   const selected: AskToolId[] = tools.length ? tools : ["my_day"];
   return unique(selected).slice(0, ASK_LIMITS.toolFanOut);
 }
@@ -288,6 +294,9 @@ export function buildMyDayAskFacts(input: {
   timestamp: string | null;
   workItem?: {
     priority: "high" | "normal" | "low";
+    goalId?: string | null;
+    dueAt?: string | null;
+    statusReason?: string | null;
     whyItMatters: string | null;
     suggestedAction: string | null;
   };
@@ -301,6 +310,9 @@ export function buildMyDayAskFacts(input: {
     ...(input.workItem ? { priority: input.workItem.priority } : {}),
     whyItMatters: input.workItem?.whyItMatters,
     suggestedAction: input.workItem?.suggestedAction,
+    dueAt: input.workItem?.dueAt,
+    statusReason: input.workItem?.statusReason,
+    goalSource: input.workItem?.goalId ? `/goals/${input.workItem.goalId}` : undefined,
   };
 }
 
@@ -513,6 +525,14 @@ export async function runGroundedAsk(input: {
           : "Name one exact shared Notion page so CrazyLoops can read only that page.";
     return { answer, metadata: { version: 1, responseType: "clarification", clarificationRequired: true,
       references: [], suggestedAction: { label: "Open Connections", href: "/connections" } } };
+  }
+  if (unavailable?.tool === "team_work") {
+    const clarification = unavailable.availability === "selection_required";
+    const answer = clarification
+      ? "I couldn't uniquely identify that employee among current workspace members. Name them as shown in Team work; I did not substitute another employee's records."
+      : "Company-wide assigned work is available only to a manager of this workspace. I did not read another employee's work or private information.";
+    return { answer, metadata: { version: 1, responseType: clarification ? "clarification" : "unsupported",
+      clarificationRequired: clarification, references: [], ...(clarification ? {} : { unsupportedReason: answer }) } };
   }
   if (toolResults.every((result) => result.records.length === 0)) {
     return {

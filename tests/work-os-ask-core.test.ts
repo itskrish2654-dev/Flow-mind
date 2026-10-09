@@ -539,7 +539,7 @@ test("model contract instruction and strict schema share one validated complete 
   assert.match(ASK_MODEL_OUTPUT_CONTRACT_INSTRUCTION, /requested fact.*not present.*responseType.*clarification/i);
   assert.match(ASK_MODEL_OUTPUT_CONTRACT_INSTRUCTION, /clarificationRequired.*boolean/i);
   assert.match(ASK_MODEL_OUTPUT_CONTRACT_INSTRUCTION, /suggestedAction.*exactly an object/i);
-  assert.match(ASK_MODEL_OUTPUT_CONTRACT_INSTRUCTION, /\/my-day, \/dashboard, \/activity, \/knowledge, \/goals, or \/connections/);
+  assert.match(ASK_MODEL_OUTPUT_CONTRACT_INSTRUCTION, /\/my-day, \/manager, \/dashboard, \/activity, \/knowledge, \/goals, or \/connections/);
   assert.match(ASK_MODEL_OUTPUT_CONTRACT_INSTRUCTION, /Otherwise omit "suggestedAction" entirely/);
   assert.match(ASK_MODEL_OUTPUT_CONTRACT_INSTRUCTION, /Never return null, a string, an external URL, or extra fields/);
   assert.match(ASK_MODEL_OUTPUT_CONTRACT_INSTRUCTION, /Do not use Markdown fences/);

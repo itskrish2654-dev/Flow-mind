@@ -25,10 +25,12 @@ export const MY_DAY_LIMITS = {
   recentActivity: 5,
   durableWorkItems: 50,
   handled: 5,
+  teamWork: 20,
+  completed: 10,
   approvals: 50,
 } as const;
 
-export type MyDayItemKind = "attention" | "today" | "waiting" | "activity";
+export type MyDayItemKind = "attention" | "today" | "waiting" | "activity" | "blocked" | "completed";
 export type MyDayItemStatus =
   | "action_required"
   | "ready"
@@ -37,7 +39,9 @@ export type MyDayItemStatus =
   | "success"
   | "handled"
   | "failed"
-  | "cancelled";
+  | "cancelled"
+  | "blocked"
+  | "completed";
 
 export type MyDayItem = {
   id: string;
@@ -54,9 +58,11 @@ export type MyDayItem = {
   };
   workItem?: {
     id: string;
-    status: "needs_you" | "waiting" | "handled";
+    status: WorkItem["status"];
     priority: WorkItem["priority"];
     dueAt: string | null;
+    goalId: string | null;
+    statusReason: string | null;
     whyItMatters: string | null;
     suggestedAction: string | null;
   };
@@ -73,10 +79,16 @@ export type MyDayData = {
   startWith: MyDayItem | null;
   needsYou: MyDayItem[];
   today: MyDayItem[];
+  managerAssigned: MyDayItem[];
+  deadlines: MyDayItem[];
+  blocked: MyDayItem[];
   waitingOn: MyDayItem[];
+  completed: MyDayItem[];
   recentActivity: MyDayItem[];
   handledByCrazyLoops: MyDayItem[];
   approvals: MyDayApproval[];
+  agenda: { priorities: Array<{ title: string; href: string; reason: string }>;
+    waiting: number; atRisk: number };
   approvalsUnavailable: boolean;
   workItemsUnavailable: boolean;
   workflowDataUnavailable: boolean;
@@ -159,6 +171,7 @@ export type BuildMyDayInput = {
   workItemsUnavailable?: boolean;
   workflowDataUnavailable?: boolean;
   actionActivityUnavailable?: boolean;
+  now?: Date;
 };
 
 const USER_ACTION_FAILURES = new Set([
@@ -341,22 +354,30 @@ function durableSource(item: WorkItem): string {
 }
 
 export function durableMyDayItem(item: WorkItem): MyDayItem {
-  const status = item.status === "needs_you" ? "action_required" : item.status === "waiting" ? "waiting" : "handled";
+  const status: MyDayItemStatus = item.status === "needs_you" ? "action_required"
+    : item.status === "in_progress" ? "running"
+    : item.status === "waiting" ? "waiting"
+    : item.status === "blocked" ? "blocked"
+    : item.status === "done" ? "completed" : "handled";
   return {
     id: `work-item:${item.id}`,
-    kind: item.status === "needs_you" ? "attention" : item.status === "waiting" ? "waiting" : "activity",
+    kind: item.status === "needs_you" ? "attention" : item.status === "waiting" ? "waiting"
+      : item.status === "blocked" ? "blocked" : item.status === "done" ? "completed"
+      : item.status === "in_progress" ? "today" : "activity",
     priority: item.priority === "high" ? 0 : item.priority === "normal" ? 4 : 7,
     title: safeText(item.title, "Work item", 180),
     description: item.summary ? safeText(item.summary, "Work needs review.", 2000) : "Work needs review.",
     source: durableSource(item),
-    timestamp: item.created_at,
+    timestamp: item.updated_at,
     status,
     cta: { label: "Review item", href: `/my-day#work-item-${item.id}` },
     workItem: {
       id: item.id,
-      status: item.status as "needs_you" | "waiting" | "handled",
+      status: item.status,
       priority: item.priority,
       dueAt: item.due_at,
+      goalId: item.goal_id,
+      statusReason: item.status_reason,
       whyItMatters: item.why_it_matters ? safeText(item.why_it_matters, "", 1000) : null,
       suggestedAction: item.suggested_action ? safeText(item.suggested_action, "", 500) : null,
     },
@@ -388,8 +409,7 @@ export function buildMyDayData(input: BuildMyDayInput): MyDayData {
   const linkedPendingWorkItems = new Set(approvals.map((approval) => approval.workItemId));
   const durable = (input.workItems ?? [])
     .filter((item) => item.assignee_user_id === input.userId
-      && (!input.workspaceId || item.workspace_id === input.workspaceId)
-      && item.status !== "done")
+      && (!input.workspaceId || item.workspace_id === input.workspaceId))
     .filter((item) => !linkedPendingWorkItems.has(item.id))
     .slice(0, MY_DAY_LIMITS.durableWorkItems * 3)
     .map(durableMyDayItem);
@@ -485,7 +505,25 @@ export function buildMyDayData(input: BuildMyDayInput): MyDayData {
     }];
   });
 
-  const allNeedsYou = [...durable.filter((item) => item.workItem?.status === "needs_you"), ...readinessAttention, ...executionAttention].sort(attentionSort);
+  const now = input.now ?? new Date();
+  const dueWithin = (item: MyDayItem, hours: number) => Boolean(item.workItem?.dueAt
+    && Date.parse(item.workItem.dueAt) <= now.getTime() + hours * 60 * 60 * 1000);
+  const todayWork = durable.filter((item) => item.workItem?.status === "in_progress"
+    || (item.workItem?.status === "needs_you" && item.workItem.goalId && dueWithin(item, 24)));
+  const todayWorkIds = new Set(todayWork.map((item) => item.id));
+  const deadlineWork = durable.filter((item) => item.workItem?.status === "needs_you"
+    && item.workItem.goalId && !todayWorkIds.has(item.id) && dueWithin(item, 24 * 7));
+  const deadlineIds = new Set(deadlineWork.map((item) => item.id));
+  const managerAssigned = durable.filter((item) => item.workItem?.status === "needs_you"
+    && item.workItem.goalId && !todayWorkIds.has(item.id) && !deadlineIds.has(item.id))
+    .sort(attentionSort).slice(0, MY_DAY_LIMITS.teamWork);
+  const blocked = durable.filter((item) => item.workItem?.status === "blocked")
+    .sort(attentionSort).slice(0, MY_DAY_LIMITS.teamWork);
+  const completed = durable.filter((item) => item.workItem?.status === "done")
+    .sort(newestFirst).slice(0, MY_DAY_LIMITS.completed);
+  const allNeedsYou = [...durable.filter((item) => item.workItem?.status === "needs_you"
+    && !item.workItem.goalId && !todayWorkIds.has(item.id)),
+    ...readinessAttention, ...executionAttention].sort(attentionSort);
   const needsYou = allNeedsYou.slice(0, MY_DAY_LIMITS.needsYou);
 
   const readyToday = evaluated
@@ -522,7 +560,7 @@ export function buildMyDayData(input: BuildMyDayInput): MyDayData {
       }];
     });
 
-  const today = [...readyToday, ...setupToday]
+  const today = [...todayWork, ...readyToday, ...setupToday]
     .sort((left, right) => left.priority - right.priority || newestFirst(left, right))
     .slice(0, MY_DAY_LIMITS.today);
 
@@ -598,6 +636,8 @@ export function buildMyDayData(input: BuildMyDayInput): MyDayData {
   const readyToTestCount = evaluated.filter(({ readiness }) => readiness.testReady).length;
   const sentence = [
     `${plural(allNeedsYou.length, "thing")} need${allNeedsYou.length === 1 ? "s" : ""} you.`,
+    `${plural(managerAssigned.length, "manager assignment")} open.`,
+    `${plural(blocked.length, "work item")} blocked.`,
     `${plural(approvals.length, "approval")} await${approvals.length === 1 ? "s" : ""} your decision.`,
     `${plural(readyToTestCount, "workflow")} ${readyToTestCount === 1 ? "is" : "are"} ready to test.`,
     `${plural(recentCompletedCount, "run")} completed recently.`,
@@ -611,13 +651,29 @@ export function buildMyDayData(input: BuildMyDayInput): MyDayData {
       recentCompletedCount,
       sentence,
     },
-    startWith: needsYou[0] ?? today[0] ?? null,
+    startWith: needsYou[0] ?? blocked[0] ?? today[0] ?? deadlineWork[0] ?? managerAssigned[0] ?? null,
     needsYou,
     today,
+    managerAssigned,
+    deadlines: deadlineWork.sort(attentionSort).slice(0, MY_DAY_LIMITS.teamWork),
+    blocked,
     waitingOn,
+    completed,
     recentActivity,
     handledByCrazyLoops,
     approvals,
+    agenda: {
+      priorities: [...todayWork, ...deadlineWork, ...managerAssigned, ...allNeedsYou.filter((item) => item.workItem)]
+        .filter((item, index, all) => all.findIndex((candidate) => candidate.id === item.id) === index)
+        .sort((a, b) => a.priority - b.priority ||
+          (Date.parse(a.workItem?.dueAt ?? "9999-12-31") - Date.parse(b.workItem?.dueAt ?? "9999-12-31")))
+        .slice(0, 3).map((item) => ({ title: item.title, href: item.cta.href,
+          reason: item.workItem?.status === "in_progress" ? "In progress"
+            : item.workItem?.dueAt ? `Due ${item.workItem.dueAt.slice(0, 10)}`
+            : item.workItem?.goalId ? "Assigned from an approved goal" : "Needs your attention" })),
+      waiting: waitingOn.filter((item) => Boolean(item.workItem)).length,
+      atRisk: blocked.length + deadlineWork.filter((item) => dueWithin(item, 48)).length,
+    },
     approvalsUnavailable,
     workItemsUnavailable: input.workItemsUnavailable ?? false,
     workflowDataUnavailable: input.workflowDataUnavailable ?? false,
