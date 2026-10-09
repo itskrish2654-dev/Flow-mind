@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { activityLabel } from "../lib/activity-core";
-import { selectAskTools, runGroundedAsk, type AskToolResult } from "../lib/ask-core";
+import { selectAskTools, runGroundedAsk, resolveGroundedResponse,
+  parseAskModelOutput, AskModelOutputError, type AskToolResult } from "../lib/ask-core";
 import { buildManagerBrief, selectTeamWorkForQuestion, type TeamGoal, type TeamWorkItem } from "../lib/manager-work-core";
 import { buildMyDayData } from "../lib/my-day-model";
 import { visibleGoalWorkReason } from "../lib/goals-core";
@@ -124,6 +125,29 @@ test("Ask routes own work and team work distinctly; member team access fails tru
   });
   assert.match(response.answer, /only to a manager/);
   assert.equal(response.metadata.references.length, 0);
+});
+
+test("manager Ask accepts and binds only a retrieved team-work source key", async () => {
+  const source: AskToolResult = { tool: "team_work", summary: "One blocked company Work Item.", records: [{
+    referenceKey: "team_work:0",
+    reference: { kind: "work_item", entityId: uuid(20), label: "Review hiring plan",
+      href: `/goals/${goalId}` },
+    facts: { status: "blocked", blockerOrWaitingReason: "Finance approval" },
+  }] };
+  const response = await runGroundedAsk({
+    question: "What is blocking the team on our hiring goal?", history: [],
+    loadTool: async (tool) => tool === "team_work" ? source
+      : { tool, summary: "No other matching records.", records: [] },
+    callModel: async () => JSON.stringify({ responseType: "answer",
+      answer: "The hiring plan is blocked on Finance approval.",
+      referenceKeys: ["team_work:0"], clarificationRequired: false }),
+  });
+  assert.equal(response.metadata.references[0]?.entityId, uuid(20));
+  assert.equal(response.metadata.references[0]?.href, `/goals/${goalId}`);
+  assert.throws(() => resolveGroundedResponse(parseAskModelOutput(JSON.stringify({
+    responseType: "answer", answer: "An unrelated employee is blocked.",
+    referenceKeys: ["team_work:1"], clarificationRequired: false,
+  })), [source]), AskModelOutputError, "an unreturned teammate source must remain unusable");
 });
 
 test("Activity shared work labels are generic and never repeat employee reasons", () => {

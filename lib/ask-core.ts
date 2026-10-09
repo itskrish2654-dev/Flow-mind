@@ -106,7 +106,7 @@ export type AskResponseMetadata = z.infer<typeof AskResponseMetadataSchema>;
 export const AskModelOutputSchema = z.object({
   responseType: z.enum(ASK_MODEL_RESPONSE_TYPES),
   answer: z.string().trim().min(1).max(ASK_LIMITS.modelAnswerCharacters),
-  referenceKeys: z.array(z.string().regex(/^(?:work_item|approval|workflow|execution|action_execution|activity|gmail_message|sheet_row|sheet_range|calendar_event|knowledge_chunk|goal|slack_message|notion_page):\d+$/)).max(12),
+  referenceKeys: z.array(z.string().regex(/^(?:work_item|team_work|approval|workflow|execution|action_execution|activity|gmail_message|sheet_row|sheet_range|calendar_event|knowledge_chunk|goal|slack_message|notion_page):\d+$/)).max(12),
   clarificationRequired: z.boolean(),
   suggestedAction: AskSuggestedActionSchema.optional(),
 }).strict();

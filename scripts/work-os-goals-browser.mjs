@@ -6,7 +6,8 @@ import { createBrowserClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 import { chromium } from "@playwright/test";
 
-const raw = await readFile(new URL("../.env.local", import.meta.url), "utf8");
+const raw = await readFile(process.env.CRAZYLOOPS_ACCEPTANCE_ENV_FILE
+  ?? new URL("../.env.local", import.meta.url), "utf8");
 const env = Object.fromEntries(raw.split(/\r?\n/).filter((line) => /^[A-Z][A-Z0-9_]*=/.test(line))
   .map((line) => { const at = line.indexOf("="); return [line.slice(0, at), line.slice(at + 1).replace(/^['"]|['"]$/g, "")]; }));
 assert.equal(new URL(env.NEXT_PUBLIC_SUPABASE_URL).hostname, "gamdxwtgccluifatcrrs.supabase.co");
@@ -110,9 +111,11 @@ try {
   assert.equal(baseline.goals, 0, "Goals baseline must be empty");
   const owner = await createAccount();
   const member = await createAccount();
+  const secondMember = await createAccount();
   const outsider = await createAccount();
   const ownerBrowser = await login(owner);
   const memberBrowser = await login(member);
+  const secondMemberBrowser = await login(secondMember);
   const outsiderBrowser = await login(outsider);
 
   if (new URL(origin).hostname === "staging.crazy-loops.com") {
@@ -132,9 +135,24 @@ try {
     assert.equal(membership.role, "member");
     assert.equal(membership.is_default, true);
     member.workspaceId = owner.workspaceId;
+    await ownerBrowser.page.goto(`${origin}/settings/company`);
+    await ownerBrowser.page.getByRole("textbox", { name: "Work email" }).fill(secondMember.email);
+    await ownerBrowser.page.getByRole("button", { name: "Create invite" }).click();
+    const secondInvitationUrl = await ownerBrowser.page.getByRole("textbox", { name: "Invitation link" }).inputValue();
+    assert.equal(new URL(secondInvitationUrl).origin, origin);
+    await secondMemberBrowser.page.goto(secondInvitationUrl);
+    await secondMemberBrowser.page.getByRole("button", { name: "Accept invitation" }).click();
+    await secondMemberBrowser.page.waitForURL(/\/my-day\?joined=1/);
+    const secondMembership = await checked(await admin.from("workspace_memberships")
+      .select("workspace_id,role,is_default").eq("user_id", secondMember.id)
+      .eq("workspace_id", owner.workspaceId).single(), "second member acceptance");
+    assert.equal(secondMembership.role, "member");
+    assert.equal(secondMembership.is_default, true);
+    secondMember.workspaceId = owner.workspaceId;
     results.push("BROWSER_INVITE_ACCEPTANCE_REAL_MEMBERSHIP=PASS");
   } else {
     await joinAccount(member, owner.workspaceId, "member");
+    await joinAccount(secondMember, owner.workspaceId, "member");
   }
 
   const knowledgeId = await addKnowledge(owner, ownerBrowser.page);
@@ -205,7 +223,8 @@ try {
     "AI proposal must cite the relevant company SOP");
   const initialItems = await checked(await admin.from("goal_plan_items").select("id,assignee_user_id")
     .eq("plan_id", firstPlan.id), "proposed items");
-  assert.ok(initialItems.length > 0 && initialItems.length <= 12);
+  assert.ok(initialItems.length >= 2 && initialItems.length <= 12,
+    "the reviewed company plan must have work for both disposable employees");
   assert.ok(initialItems.every((item) => item.assignee_user_id === null));
   assert.equal((await checked(await admin.from("work_items").select("id").eq("goal_id", goalId), "preapproval work")).length, 0);
   results.push("REAL_AI_STRUCTURED_KNOWLEDGE_GROUNDED_UNASSIGNED_PROPOSAL=PASS");
@@ -216,7 +235,7 @@ try {
   await titles.first().fill("Finalize role description — manager reviewed");
   const assignees = editor.getByRole("combobox", { name: "Assignee" });
   for (let index = 0; index < await assignees.count(); index++)
-    await assignees.nth(index).selectOption(index === 0 ? member.id : owner.id);
+    await assignees.nth(index).selectOption(index === 0 ? member.id : index === 1 ? secondMember.id : owner.id);
   await editor.getByRole("button", { name: "Save proposal" }).click();
   await ownerBrowser.page.getByText(/Revision 2/).waitFor({ timeout: 30_000 });
   const revised = await checked(await admin.from("goal_plans").select("id,status,revision")
@@ -237,22 +256,66 @@ try {
   await secondTab.getByRole("button", { name: "Review exact plan for approval" }).click();
   await secondTab.getByRole("button", { name: "Approve and create work" }).click();
   const linkedWork = await checked(await admin.from("work_items")
-    .select("id,goal_plan_item_id,assignee_user_id,status")
+    .select("id,title,goal_plan_item_id,assignee_user_id,status")
     .eq("goal_id", goalId), "activated Work Items");
   assert.equal(linkedWork.length, initialItems.length);
   assert.equal(new Set(linkedWork.map((item) => item.goal_plan_item_id)).size, linkedWork.length);
+  const firstEmployeeWork = linkedWork.find((item) => item.assignee_user_id === member.id);
+  const secondEmployeeWork = linkedWork.find((item) => item.assignee_user_id === secondMember.id);
+  assert.ok(firstEmployeeWork && secondEmployeeWork, "each employee receives approved work");
   assert.equal((await checked(await admin.from("action_executions").select("id")
     .eq("workspace_id", owner.workspaceId), "external actions")).length, 0);
   results.push("EXACT_APPROVAL_TWO_TAB_ONE_ACTIVATION_NO_EXTERNAL_ACTION=PASS");
 
+  await secondMemberBrowser.page.goto(`${origin}/my-day`);
+  await secondMemberBrowser.page.locator(`#work-item-${secondEmployeeWork.id}`).waitFor();
+  assert.equal(await secondMemberBrowser.page.locator(`#work-item-${firstEmployeeWork.id}`).count(), 0);
+  await memberBrowser.page.goto(`${origin}/my-day`);
+  await memberBrowser.page.locator(`#work-item-${firstEmployeeWork.id}`).waitFor();
+  assert.equal(await memberBrowser.page.locator(`#work-item-${secondEmployeeWork.id}`).count(), 0);
+  const memberCrossRead = await dataApi(memberBrowser, `work_items?id=eq.${secondEmployeeWork.id}&select=id`);
+  assert.equal(memberCrossRead.status, 200);
+  assert.deepEqual(await memberCrossRead.json(), []);
+  const managerDenied = await secondMemberBrowser.page.goto(`${origin}/manager`);
+  assert.equal(managerDenied.status(), 404, "employees cannot open the manager cockpit");
+  results.push("TWO_EMPLOYEES_MY_DAY_ASSIGNMENT_AND_MANAGER_BOUNDARY=PASS");
+
+  await secondMemberBrowser.page.goto(`${origin}/my-day`);
+  const secondCard = secondMemberBrowser.page.locator(`#work-item-${secondEmployeeWork.id}`);
+  await secondCard.locator('input[name="reason"]').fill("Waiting for disposable Finance approval");
+  await secondCard.getByRole("button", { name: "Blocked" }).click();
+  await secondMemberBrowser.page.waitForFunction((id) =>
+    document.querySelector(`#work-item-${id}`)?.textContent?.includes("Waiting for disposable Finance approval"),
+    secondEmployeeWork.id, { timeout: 30_000 });
+  assert.equal((await checked(await admin.from("work_items").select("status,status_reason")
+    .eq("id", secondEmployeeWork.id).single(), "blocked employee work")).status, "blocked");
+  await ownerBrowser.page.goto(`${origin}/manager`);
+  await ownerBrowser.page.getByRole("heading", { name: "Today’s brief" }).waitFor();
+  await ownerBrowser.page.getByText("Waiting for disposable Finance approval").waitFor();
+  assert.equal(await memberBrowser.page.getByText("Waiting for disposable Finance approval").count(), 0);
+  results.push("EMPLOYEE_BLOCKER_MANAGER_WORK_VIEW_NO_TEAMMATE_LEAK=PASS");
+
   await memberBrowser.page.goto(`${origin}/my-day`);
   await memberBrowser.page.getByRole("heading", { name: "Finalize role description — manager reviewed" }).waitFor();
   const card = memberBrowser.page.locator("article").filter({ has: memberBrowser.page.getByRole("heading", { name: "Finalize role description — manager reviewed" }) });
+  await card.getByRole("button", { name: "Start work" }).click();
+  await card.getByRole("button", { name: "Start work" }).waitFor({ state: "detached" });
+  assert.equal((await checked(await admin.from("work_items").select("status")
+    .eq("id", firstEmployeeWork.id).single(), "started employee work")).status, "in_progress");
   await card.getByRole("button", { name: "Mark done" }).click();
-  await memberBrowser.page.getByRole("heading", { name: "Finalize role description — manager reviewed" }).waitFor({ state: "detached" });
-  await ownerBrowser.page.reload();
+  await memberBrowser.page.locator('section[aria-labelledby="completed-title"] article')
+    .filter({ has: memberBrowser.page.getByRole("heading", { name: "Finalize role description — manager reviewed" }) })
+    .waitFor();
+  assert.equal(await memberBrowser.page.getByRole("heading", { name: "Finalize role description — manager reviewed" }).count(), 1);
+  await ownerBrowser.page.goto(`${origin}/goals/${goalId}`);
   await ownerBrowser.page.getByText(`1 of ${linkedWork.length} done`).waitFor();
   results.push("MEMBER_MY_DAY_DONE_DETERMINISTIC_PROGRESS=PASS");
+
+  await ownerBrowser.page.goto(`${origin}/manager`);
+  await ownerBrowser.page.getByText(`1 of ${linkedWork.length} Work Items done`).waitFor();
+  await ownerBrowser.page.getByText("Waiting for disposable Finance approval").waitFor();
+  assert.equal(await ownerBrowser.page.getByRole("heading", { level: 1, name: "Team work" }).count(), 1);
+  results.push("MANAGER_BRIEF_REAL_PROGRESS_AND_BLOCKER=PASS");
 
   await ownerBrowser.page.goto(`${origin}/activity`);
   await ownerBrowser.page.getByText(/Goal activated and Work Items created|A goal became active/).first().waitFor();
@@ -300,8 +363,61 @@ try {
   assert.match(activityAnswer, /goal|activat|work item/i);
   results.push("GROUNDED_ASK_ACTIVITY_AND_GOAL_PROGRESS=PASS");
 
+  await secondMemberBrowser.page.goto(`${origin}/ask`);
+  const employeeMessagesBefore = await secondMemberBrowser.page.locator("article").count();
+  await secondMemberBrowser.page.getByRole("textbox", { name: "Ask CrazyLoops" })
+    .fill(`What is blocking my ${secondEmployeeWork.title} work?`);
+  await secondMemberBrowser.page.getByRole("button", { name: "Send message" }).click();
+  await secondMemberBrowser.page.waitForFunction((before) => document.querySelectorAll("article").length >= before + 2,
+    employeeMessagesBefore, { timeout: 60_000 });
+  await secondMemberBrowser.page.locator("article").last()
+    .locator(`a[href="/my-day#work-item-${secondEmployeeWork.id}"]`)
+    .waitFor({ timeout: 60_000 });
+  assert.equal(await secondMemberBrowser.page.locator("article").last()
+    .locator(`a[href="/my-day#work-item-${secondEmployeeWork.id}"]`).count(), 1);
+  const employeeAnswer = await secondMemberBrowser.page.locator("article").last().innerText();
+  assert.match(employeeAnswer, /blocked|waiting/i);
+  assert.match(employeeAnswer, /Finance approval/i);
+  const secondThreads = await checked(await admin.from("ask_threads").select("id")
+    .eq("user_id", secondMember.id).eq("workspace_id", owner.workspaceId), "employee private Ask threads");
+  assert.ok(secondThreads.length >= 1);
+  const managerPrivateAskRead = await dataApi(ownerBrowser, `ask_threads?id=eq.${secondThreads[0].id}&select=id`);
+  assert.equal(managerPrivateAskRead.status, 200);
+  assert.deepEqual(await managerPrivateAskRead.json(), []);
+  results.push("EMPLOYEE_ASK_GROUNDED_BLOCKER_MANAGER_PRIVATE_THREAD_DENIED=PASS");
+
+  await ownerBrowser.page.goto(`${origin}/ask`);
+  const managerMessagesBefore = await ownerBrowser.page.locator("article").count();
+  await ownerBrowser.page.getByRole("textbox", { name: "Ask CrazyLoops" })
+    .fill("What is blocking the team on our customer support hiring goal?");
+  await ownerBrowser.page.getByRole("button", { name: "Send message" }).click();
+  try {
+    await ownerBrowser.page.waitForFunction((before) => document.querySelectorAll("article").length >= before + 2,
+      managerMessagesBefore, { timeout: 60_000 });
+  } catch {
+    const turns = await checked(await admin.from("ask_turns")
+      .select("state,failure_category,turn_sequence,created_at,completed_at,failed_at")
+      .eq("workspace_id", owner.workspaceId).eq("user_id", owner.id)
+      .eq("question", "What is blocking the team on our customer support hiring goal?")
+      .order("created_at", { ascending: false }).limit(1), "manager Ask diagnostic");
+    const browserState = await ownerBrowser.page.evaluate(() => ({
+      articleCount: document.querySelectorAll("article").length,
+      status: [...document.querySelectorAll('[role="status"], [role="alert"]')]
+        .map((element) => element.textContent?.trim().slice(0, 180)).filter(Boolean),
+    }));
+    throw new Error(`Manager Ask did not render: ${JSON.stringify({ turns, browserState })}`);
+  }
+  await ownerBrowser.page.locator("article").last().locator(`a[href="/goals/${goalId}"]`)
+    .waitFor({ timeout: 60_000 });
+  assert.equal(await ownerBrowser.page.locator("article").last()
+    .locator(`a[href="/goals/${goalId}"]`).count(), 1);
+  const managerAnswer = await ownerBrowser.page.locator("article").last().innerText();
+  assert.match(managerAnswer, /blocked|waiting/i);
+  assert.match(managerAnswer, /Finance approval/i);
+  results.push("MANAGER_ASK_GROUNDED_TEAM_BLOCKER=PASS");
+
   const mobile = await browser.newContext({ viewport: { width: 390, height: 844 },
-    storageState: await memberBrowser.context.storageState() });
+    storageState: await secondMemberBrowser.context.storageState() });
   const mobilePage = await mobile.newPage();
   for (const path of [`/goals/${goalId}`, "/my-day", "/ask", "/activity", "/knowledge"]) {
     await mobilePage.goto(`${origin}${path}`);
@@ -309,12 +425,17 @@ try {
     assert.equal(await mobilePage.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false,
       `mobile horizontal overflow: ${path}`);
   }
+  await mobilePage.goto(`${origin}/my-day`);
+  await mobilePage.locator(`#work-item-${secondEmployeeWork.id}`).waitFor();
+  assert.equal(await mobilePage.locator(`#work-item-${firstEmployeeWork.id}`).count(), 0);
   await mobile.close();
   results.push("MOBILE_WORK_OS_CORE_PATHS_NO_HORIZONTAL_OVERFLOW=PASS");
 
-  assert.equal(ownerBrowser.errors.length + memberBrowser.errors.length + outsiderBrowser.errors.length, 0);
+  assert.equal(ownerBrowser.errors.length + memberBrowser.errors.length + secondMemberBrowser.errors.length
+    + outsiderBrowser.errors.length, 0);
   await secondTab.close();
-  await ownerBrowser.context.close(); await memberBrowser.context.close(); await outsiderBrowser.context.close();
+  await ownerBrowser.context.close(); await memberBrowser.context.close();
+  await secondMemberBrowser.context.close(); await outsiderBrowser.context.close();
   console.log(results.join("\n"));
 } finally {
   if (created.knowledgeDigest && !created.knowledgeId) {
