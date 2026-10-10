@@ -108,6 +108,7 @@ export async function changeAutomationActivation(formData: FormData) {
   if (!result.ok) throw new Error(result.error);
   revalidatePath("/automations");
   revalidatePath(`/automations/${suggestion.id}`);
+  redirect(`/automations/${suggestion.id}`);
 }
 
 export async function disableAutomationSuggestion(formData: FormData) {
