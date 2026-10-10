@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getAuthenticatedContext } from "@/lib/auth";
+import { AutomationConfigurationSchema, isReviewedAutomateThisWorkflow } from "@/lib/automate-this-plan";
 import { connectorWebhookUrl, deactivateWorkflowConnectorSubscriptions, prepareWorkflowConnectorPublication, stopUnusedGmailWatches, validateWorkflowConnectorConnections } from "@/lib/connectors/subscriptions";
 import {
   annotateWorkflowCapabilities,
@@ -13,6 +14,7 @@ import {
 } from "@/lib/capability-registry";
 import type { Json } from "@/lib/supabase/types";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { GOOGLE_SCOPES } from "@/lib/connectors/google/scopes";
 import {
   PLAN_ENTITLEMENTS,
   SECURITY_LIMITS,
@@ -703,6 +705,39 @@ export async function setWorkflowPublication(
   if (!snapshot) return { ok: false, error: "Workflow not found." };
   let currentVersionId = snapshot.versionId;
   let workflow = CompiledWorkflowSchema.safeParse(snapshot.workflow);
+  const hasWorkItemTrigger = workflow.success && workflow.data.steps.some((step) => step.capabilityId === "work_item_trigger");
+  const { data: linkedSuggestion, error: suggestionLookupError } = await admin.from("automation_suggestions")
+    .select("id,pattern_kind,source_title,source_type,status")
+    .eq("workflow_id", request.data.workflowId).eq("workspace_id", auth.workspace.id)
+    .eq("owner_user_id", auth.user.id).maybeSingle();
+  if (suggestionLookupError) return { ok: false, error: "Automation ownership could not be checked." };
+  const workItemAutomation = hasWorkItemTrigger || Boolean(linkedSuggestion);
+  if (workItemAutomation) {
+    if (!workflow.success || !isReviewedAutomateThisWorkflow(workflow.data) || request.data.setupConfig) {
+      return { ok: false, error: "Review this Automate This proposal before changing publication." };
+    }
+    if (!linkedSuggestion || !["configured", "active", "paused"].includes(linkedSuggestion.status)) {
+      return { ok: false, error: "The reviewed automation proposal is unavailable." };
+    }
+    let storedConfiguration: unknown = null;
+    try { storedConfiguration = JSON.parse(snapshot.setupConfig.automate_this ?? "null"); }
+    catch { return { ok: false, error: "The reviewed automation configuration is invalid." }; }
+    const configured = AutomationConfigurationSchema.safeParse(storedConfiguration);
+    if (!configured.success || configured.data.kind !== linkedSuggestion.pattern_kind
+      || configured.data.matchTitle !== linkedSuggestion.source_title
+      || configured.data.sourceType !== linkedSuggestion.source_type) {
+      return { ok: false, error: "The reviewed automation configuration is incomplete." };
+    }
+    if (configured.data.kind === "gmail_follow_up" && request.data.publish) {
+      const { data: connection, error: connectionError } = await admin.from("connector_connections")
+        .select("id,granted_scopes").eq("id", configured.data.gmailConnectionId)
+        .eq("workspace_id", auth.workspace.id).eq("user_id", auth.user.id)
+        .eq("provider_family", "google").eq("status", "connected").maybeSingle();
+      if (connectionError || !connection?.granted_scopes.includes(GOOGLE_SCOPES.gmailSend)) {
+        return { ok: false, error: "The selected Gmail account must be reconnected before activation." };
+      }
+    }
+  }
   let publicationSetupConfig: Record<string, string> = {};
   if (request.data.publish) {
     if (!workflow.success) {
@@ -740,7 +775,7 @@ export async function setWorkflowPublication(
     }
     const hasConnectorTrigger = workflow.data.steps.some((step) => step.config?.connector?.operationKind === "trigger");
     const hasSchedule = Boolean(scheduleStep(workflow.data));
-    if (!workflow.data.publicForm && !hasConnectorTrigger && !hasSchedule) {
+    if (!workflow.data.publicForm && !hasConnectorTrigger && !hasSchedule && !workItemAutomation) {
       return { ok: false, error: "Add a hosted form, connected trigger, or schedule before activating this loop." };
     }
     const unavailable = assessWorkflowCapabilities(workflow.data.steps, "production")
@@ -823,6 +858,29 @@ export async function setWorkflowPublication(
   } catch (publicationFailure) {
     securityLog("Workflow publication failed", { error: publicationFailure, workflowId: request.data.workflowId });
     return { ok: false, error: "Publication status could not be changed safely." };
+  }
+  if (linkedSuggestion) {
+    const nextStatus = request.data.publish ? "active" : "paused";
+    const update = admin.from("automation_suggestions").update({
+      status: nextStatus, updated_at: new Date().toISOString(),
+    }).eq("id", linkedSuggestion.id).eq("workspace_id", auth.workspace.id)
+      .eq("owner_user_id", auth.user.id).eq("workflow_id", request.data.workflowId);
+    const { data: changed, error: suggestionError } = request.data.publish
+      ? await update.neq("status", "active").select("id").maybeSingle()
+      : await update.eq("status", "active").select("id").maybeSingle();
+    if (suggestionError) return { ok: false, error: "Publication changed, but automation status could not be synchronized." };
+    if (changed) {
+      const { error: activityError } = await admin.from("activity_events").insert({
+        workspace_id: auth.workspace.id, owner_user_id: auth.user.id,
+        actor_user_id: auth.user.id, visibility: "private",
+        event_type: request.data.publish ? "automation_activated" : "automation_paused",
+        source_type: "automation", source_id: linkedSuggestion.id,
+        workflow_id: request.data.workflowId,
+        event_key: `automation:${linkedSuggestion.id}:${request.data.publish ? "activate" : "pause"}:${crypto.randomUUID()}`,
+      });
+      if (activityError) return { ok: false, error: "Publication changed, but Activity could not be recorded." };
+    }
+    revalidatePath("/automations");
   }
   revalidatePath(`/f/${request.data.workflowId}`);
   revalidatePath(`/dashboard/projects/${request.data.workflowId}`);

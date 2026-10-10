@@ -179,6 +179,26 @@ async function loadWorkflowStatus(scope: AskTrustedScope): Promise<AskToolResult
   };
 }
 
+async function loadAutomationStatus(scope: AskTrustedScope): Promise<AskToolResult> {
+  const auth = await assertTrustedScope(scope);
+  const { data, error } = await auth.supabase.from("automation_suggestions")
+    .select("id,pattern_kind,source_title,evidence_count,status,updated_at")
+    .eq("workspace_id", scope.workspaceId).eq("owner_user_id", scope.userId)
+    .neq("status", "dismissed").order("updated_at", { ascending: false })
+    .limit(ASK_LIMITS.recordsPerTool);
+  if (error) throw new Error("Automation status is unavailable.");
+  return { tool: "automation_status",
+    summary: `${data.length} owner-visible repeated-work suggestions or automations. Ask cannot change activation state; the owner must review the linked page.`,
+    records: data.map((item, index) => safeRecord({
+      key: `automation:${index}`, kind: "automation", id: item.id,
+      label: item.source_title, href: `/automations/${item.id}`,
+      facts: { task: item.source_title, kind: item.pattern_kind === "gmail_follow_up" ? "Gmail follow-up" : "AI Work Item preparation",
+        status: item.status, evidence: `${item.evidence_count} similar completed Work Items in 14 days`,
+        updatedAt: item.updated_at,
+        control: "Open the linked review page to configure, activate, pause, or disable. Ask made no change." },
+    })) };
+}
+
 async function loadRecentActivity(scope: AskTrustedScope, question: string): Promise<AskToolResult> {
   await assertTrustedScope(scope);
   const data = await listCurrentWorkspaceActivity("all", null, activityEventTypesForQuestion(question));
@@ -517,6 +537,7 @@ export async function executeAskTool(tool: AskToolId, scope: AskTrustedScope, qu
     case "work_items": return loadWorkItems(scope, question);
     case "pending_approvals": return loadApprovals(scope);
     case "workflow_status": return loadWorkflowStatus(scope);
+    case "automation_status": return loadAutomationStatus(scope);
     case "recent_activity": return loadRecentActivity(scope, question);
     case "action_activity": return loadActionActivity(scope);
     case "gmail_search": return loadGmail(scope, question);

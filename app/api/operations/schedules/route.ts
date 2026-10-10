@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 
+import { dispatchDueWorkItemAutomations } from "@/lib/automate-this-dispatch";
 import { captureOperationalError, captureOperationalEvent } from "@/lib/observability";
 import { dispatchDueSchedules } from "@/lib/scheduled-workflows";
 
@@ -19,9 +20,10 @@ export async function POST(request: Request) {
   if (!authorized(request)) return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   const started = Date.now();
   try {
-    const metrics = await dispatchDueSchedules(20);
-    await captureOperationalEvent({ level: "info", event: "schedule_dispatch_completed", durationMs: Date.now() - started, status: "succeeded", metadata: metrics });
-    return Response.json({ ok: true, metrics });
+    const scheduleMetrics = await dispatchDueSchedules(20);
+    const automationMetrics = await dispatchDueWorkItemAutomations(1);
+    await captureOperationalEvent({ level: "info", event: "schedule_dispatch_completed", durationMs: Date.now() - started, status: "succeeded", metadata: { scheduleMetrics, automationMetrics } });
+    return Response.json({ ok: true, metrics: scheduleMetrics, automationMetrics });
   } catch (error) {
     const reference = await captureOperationalError({ event: "schedule_dispatch_failed", error, durationMs: Date.now() - started, status: "failed", errorCategory: "schedule_dispatch_failed" });
     return Response.json({ ok: false, error: "Schedule dispatch failed.", reference }, { status: 500 });

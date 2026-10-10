@@ -81,7 +81,7 @@ function connectorForCapability(
   };
 }
 
-function assertPlanCapabilities(plan: WorkflowPlan): void {
+function assertPlanCapabilities(plan: WorkflowPlan, allowWorkItemTrigger: boolean): void {
   const capabilities = [
     plan.trigger,
     ...plan.transformations,
@@ -91,7 +91,8 @@ function assertPlanCapabilities(plan: WorkflowPlan): void {
   ].filter((capability): capability is NonNullable<typeof capability> => Boolean(capability));
   for (const planned of capabilities) {
     const capability = getCapability(planned.capabilityId);
-    if (!capability || !capability.plannerVisible || capability.internalOnly || !capability.availableInTest) {
+    if (!capability || (!capability.plannerVisible && !(allowWorkItemTrigger && planned.capabilityId === "work_item_trigger"))
+      || capability.internalOnly || !capability.availableInTest) {
       throw new Error(`Capability cannot be compiled: ${planned.capabilityId}`);
     }
     if (!resolveCapabilityImplementation(capability.id, capability.defaultCapabilityVersion)) {
@@ -231,11 +232,13 @@ function triggerStep(plan: WorkflowPlan): Step {
   const connectorCapability = getCapability(trigger.capabilityId)?.connectorOperation;
   const type: Step["type"] = trigger.capabilityId === "generic_webhook_trigger"
     ? "webhook_trigger"
-    : connectorCapability || trigger.capabilityId === "manual_trigger"
+    : connectorCapability || trigger.capabilityId === "manual_trigger" || trigger.capabilityId === "work_item_trigger"
       ? "connector_trigger"
       : "public_form_trigger";
   const description = trigger.capabilityId.startsWith("gmail_")
     ? "Starts from a new message resolved through Gmail history."
+    : trigger.capabilityId === "work_item_trigger"
+      ? "Starts only for a new Work Item assigned to this employee that exactly matches the reviewed pattern."
     : trigger.capabilityId === "slack_new_channel_message"
       ? `Starts from a new message in ${trigger.instruction ?? "the selected Slack channel"}.`
       : trigger.capabilityId.startsWith("notion_page_")
@@ -272,9 +275,9 @@ function triggerStep(plan: WorkflowPlan): Step {
   };
 }
 
-export function compileReadyPlan(prompt: string, plan: WorkflowPlan): CompiledWorkflow {
+export function compileReadyPlan(prompt: string, plan: WorkflowPlan, options: { allowWorkItemTrigger?: boolean } = {}): CompiledWorkflow {
   if (plan.status !== "READY_TO_COMPILE" || !plan.trigger || !plan.destination) throw new Error("Only READY_TO_COMPILE plans can become workflows.");
-  assertPlanCapabilities(plan);
+  assertPlanCapabilities(plan, options.allowWorkItemTrigger === true);
   const workflowName = titleFromPrompt(prompt).slice(0, 80);
   const trigger = triggerStep(plan);
 

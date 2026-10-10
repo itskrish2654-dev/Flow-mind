@@ -192,6 +192,15 @@ export const CAPABILITY_REGISTRY = {
     executionImplementation: "flowmind-test-run", requiredSetupFields: [], credentialsRequired: false,
     availableInTest: true, availableInProduction: true, limitations: ["Starts only when an authenticated owner explicitly runs the workflow."], aliases: ["manual", "manually", "when i run"],
   }),
+  work_item_trigger: defineCapability({
+    id: "work_item_trigger", displayName: "Matching work item", category: "trigger", supported: true,
+    maturity: "AVAILABLE", executionImplementation: "work-os-durable-work-item-dispatch",
+    requiredSetupFields: [], credentialsRequired: false,
+    availableInTest: true, availableInProduction: true,
+    plannerVisible: false, builderVisible: false, customerVisible: true, intentRecognizable: false,
+    limitations: ["Only Automate This may configure exact owner-bound Work Item matching; it never starts from arbitrary text."],
+    aliases: [],
+  }),
   public_form_submission: defineCapability({
     id: "public_form_submission",
     displayName: "Public form submission",
@@ -1249,6 +1258,7 @@ export function resolveStepCapabilityId(
     const compatibleTypes: Partial<Record<CapabilityId, WorkflowStepType[]>> = {
       public_form_submission: ["public_form_trigger", "webhook_trigger"],
       manual_trigger: ["connector_trigger"],
+      work_item_trigger: ["connector_trigger"],
       generic_webhook_trigger: ["webhook_trigger"],
       "schedule.trigger": ["scheduled_trigger"],
       "condition.if": ["filter_condition"],

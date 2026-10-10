@@ -6,6 +6,9 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { sendAskMessage } from "@/lib/ask";
+import { isFollowUpWorkTitle } from "@/lib/automate-this-core";
+import { getAuthenticatedContext } from "@/lib/auth";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { finalizeWorkItemDeliverable, generateWorkItemResult, loadWorkItemWorkbench, saveWorkItemDeliverable } from "@/lib/workbench";
 import { transitionCurrentUserWorkItem } from "@/lib/work-items";
 
@@ -75,8 +78,33 @@ export async function prepareWorkbenchEmailAction(formData: FormData): Promise<v
   if (!work?.deliverables.some((result) => result.status === "final")) {
     redirect(`${href(workItemId.data)}?result=email_failed`);
   }
-  const result = await sendAskMessage({ requestId: randomUUID(),
+  const requestId = randomUUID();
+  const result = await sendAskMessage({ requestId,
     message: `Send an email to ${email.data} saying ${body.data}` });
-  if (result.ok && result.threadId) redirect(`/ask?thread=${encodeURIComponent(result.threadId)}`);
+  if (result.ok && result.threadId) {
+    if (result.response?.metadata.actionPreview?.capabilityId === "gmail_send_email"
+      && isFollowUpWorkTitle(work.item.title)) {
+      try {
+        const auth = await getAuthenticatedContext();
+        if (auth) {
+          const admin = createAdminClient();
+          const { data: turn, error: turnError } = await admin.from("ask_turns").select("id")
+            .eq("workspace_id", auth.workspace.id).eq("user_id", auth.user.id)
+            .eq("request_id", requestId).eq("state", "completed").maybeSingle();
+          if (!turnError && turn) {
+            // Handoff is optional provenance for future suggestions. A failed
+            // evidence write must not take away the already-prepared manual action.
+            await admin.from("automation_workbench_handoffs").insert({
+              workspace_id: auth.workspace.id, owner_user_id: auth.user.id,
+              work_item_id: workItemId.data, ask_turn_id: turn.id,
+            });
+          }
+        }
+      } catch {
+        // No evidence is recorded; the existing exact-preview flow still works.
+      }
+    }
+    redirect(`/ask?thread=${encodeURIComponent(result.threadId)}`);
+  }
   redirect(`${href(workItemId.data)}?result=email_failed`);
 }

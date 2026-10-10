@@ -195,12 +195,37 @@ test("general attention routes to employee work and approvals instead of workflo
 
 test("explicit workflow attention remains workflow-scoped and mixed intent stays bounded", () => {
   assert.deepEqual(selectAskTools("Which workflows need attention?"), ["workflow_status"]);
-  assert.deepEqual(selectAskTools("Are any automations broken?"), ["workflow_status"]);
+  assert.deepEqual(selectAskTools("Are any automations broken?"), ["automation_status", "workflow_status"]);
   assert.deepEqual(
     selectAskTools("What needs my attention across my work and workflows?"),
     ["my_day", "pending_approvals", "workflow_status"],
   );
   assert.equal(selectAskTools("What needs my attention across my work and workflows?").length, ASK_LIMITS.toolFanOut);
+});
+
+test("Ask cites owner-visible automation state but never claims to pause it", async () => {
+  const automationId = "00000000-0000-4000-8000-000000000070";
+  const automation: AskToolResult = resultFor("automation_status", [{
+    referenceKey: "automation:0",
+    reference: { kind: "automation", entityId: automationId,
+      label: "Customer follow-up", href: `/automations/${automationId}` },
+    facts: { status: "active", evidence: "3 completed examples" },
+  }]);
+  assert.ok(selectAskTools("What automations are active?").includes("automation_status"));
+  const read = await runGroundedAsk({ question: "What automations are active?", history: [],
+    async loadTool(tool) { return tool === "automation_status" ? automation : resultFor(tool); },
+    async callModel() { return JSON.stringify({ responseType: "answer", answer: "Customer follow-up is active.",
+      referenceKeys: ["automation:0"], clarificationRequired: false }); },
+  });
+  assert.equal(read.metadata.references[0]?.href, `/automations/${automationId}`);
+  let modelCalled = false;
+  const mutation = await runGroundedAsk({ question: "Pause my customer follow-up automation.", history: [],
+    async loadTool(tool) { return tool === "automation_status" ? automation : resultFor(tool); },
+    async callModel() { modelCalled = true; throw new Error("Model must not decide activation"); },
+  });
+  assert.equal(modelCalled, false);
+  assert.match(mutation.answer, /haven't changed/i);
+  assert.equal(mutation.metadata.suggestedAction?.href, "/automations");
 });
 
 test("workflow-only and mixed attention orchestration retain the relevant records", async () => {
@@ -539,7 +564,7 @@ test("model contract instruction and strict schema share one validated complete 
   assert.match(ASK_MODEL_OUTPUT_CONTRACT_INSTRUCTION, /requested fact.*not present.*responseType.*clarification/i);
   assert.match(ASK_MODEL_OUTPUT_CONTRACT_INSTRUCTION, /clarificationRequired.*boolean/i);
   assert.match(ASK_MODEL_OUTPUT_CONTRACT_INSTRUCTION, /suggestedAction.*exactly an object/i);
-  assert.match(ASK_MODEL_OUTPUT_CONTRACT_INSTRUCTION, /\/my-day, \/manager, \/dashboard, \/activity, \/knowledge, \/goals, or \/connections/);
+  assert.match(ASK_MODEL_OUTPUT_CONTRACT_INSTRUCTION, /\/my-day, \/manager, \/dashboard, \/activity, \/knowledge, \/goals, \/automations, or \/connections/);
   assert.match(ASK_MODEL_OUTPUT_CONTRACT_INSTRUCTION, /Otherwise omit "suggestedAction" entirely/);
   assert.match(ASK_MODEL_OUTPUT_CONTRACT_INSTRUCTION, /Never return null, a string, an external URL, or extra fields/);
   assert.match(ASK_MODEL_OUTPUT_CONTRACT_INSTRUCTION, /Do not use Markdown fences/);

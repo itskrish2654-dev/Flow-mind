@@ -9,6 +9,56 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      automation_workbench_handoffs: {
+        Row: { id: string; workspace_id: string; owner_user_id: string; work_item_id: string; ask_turn_id: string; created_at: string };
+        Insert: { id?: string; workspace_id: string; owner_user_id: string; work_item_id: string; ask_turn_id: string; created_at?: string };
+        Update: never;
+        Relationships: [];
+      };
+      automation_suggestions: {
+        Row: {
+          id: string; workspace_id: string; owner_user_id: string;
+          pattern_key: string; pattern_kind: "gmail_follow_up" | "work_item_ai_result";
+          source_type: "workflow" | "workflow_execution" | "connector_event" | "system" | "internal";
+          source_title: string; evidence_count: number; evidence_item_ids: string[];
+          evidence_first_at: string; evidence_last_at: string;
+          status: "suggested" | "dismissed" | "accepted" | "configured" | "active" | "paused" | "disabled";
+          workflow_id: string | null; dismissed_at: string | null;
+          configuration: Json;
+          created_at: string; updated_at: string;
+        };
+        Insert: {
+          id?: string; workspace_id: string; owner_user_id: string;
+          pattern_key: string; pattern_kind: Database["public"]["Tables"]["automation_suggestions"]["Row"]["pattern_kind"];
+          source_type: Database["public"]["Tables"]["automation_suggestions"]["Row"]["source_type"];
+          source_title: string; evidence_count: number; evidence_item_ids: string[];
+          evidence_first_at: string; evidence_last_at: string;
+          status?: Database["public"]["Tables"]["automation_suggestions"]["Row"]["status"];
+          workflow_id?: string | null; dismissed_at?: string | null;
+          configuration?: Json;
+          created_at?: string; updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["automation_suggestions"]["Insert"]>;
+        Relationships: [];
+      };
+      automation_work_item_runs: {
+        Row: {
+          id: string; workspace_id: string; owner_user_id: string;
+          suggestion_id: string; workflow_id: string; workflow_version_id: string;
+          work_item_id: string; status: "pending" | "running" | "succeeded" | "failed";
+          attempt_count: number; claim_token: string | null; lease_until: string | null; execution_id: string | null;
+          failure_category: string | null; created_at: string; updated_at: string;
+        };
+        Insert: {
+          id?: string; workspace_id: string; owner_user_id: string;
+          suggestion_id: string; workflow_id: string; workflow_version_id: string;
+          work_item_id: string; status?: Database["public"]["Tables"]["automation_work_item_runs"]["Row"]["status"];
+          attempt_count?: number; claim_token?: string | null; lease_until?: string | null; execution_id?: string | null;
+          failure_category?: string | null; created_at?: string; updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["automation_work_item_runs"]["Insert"]>;
+        Relationships: [];
+      };
       work_item_ai_turns: {
         Row: {
           id: string; workspace_id: string; work_item_id: string; owner_user_id: string;
@@ -149,7 +199,7 @@ export type Database = {
           actor_user_id: string | null;
           visibility: "private" | "workspace";
           event_type: string;
-          source_type: "work_item" | "approval" | "action" | "workflow_execution" | "goal";
+          source_type: "work_item" | "approval" | "action" | "workflow_execution" | "goal" | "automation";
           source_id: string;
           goal_id: string | null;
           work_item_id: string | null;
@@ -165,7 +215,7 @@ export type Database = {
           actor_user_id?: string | null;
           visibility: "private" | "workspace";
           event_type: string;
-          source_type: "work_item" | "approval" | "action" | "workflow_execution" | "goal";
+          source_type: "work_item" | "approval" | "action" | "workflow_execution" | "goal" | "automation";
           source_id: string;
           goal_id?: string | null;
           work_item_id?: string | null;
@@ -1181,6 +1231,18 @@ export type Database = {
           p_operation_version: number;
           p_connection_id: string | null;
           p_action_snapshot: Json;
+        };
+        Returns: Database["public"]["Tables"]["action_executions"]["Row"][];
+      };
+      claim_automation_work_item_run: {
+        Args: { p_run_id: string; p_owner_user_id: string };
+        Returns: Array<{ claimed: boolean; claim_token: string | null }>;
+      };
+      create_automation_action_approval: {
+        Args: {
+          p_actor_user_id: string; p_workflow_execution_id: string; p_request_key: string;
+          p_action_title: string; p_action_summary: string; p_approval_reason: string;
+          p_connection_id: string; p_action_snapshot: Json;
         };
         Returns: Database["public"]["Tables"]["action_executions"]["Row"][];
       };

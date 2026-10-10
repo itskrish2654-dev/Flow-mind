@@ -12,9 +12,11 @@ import {
 } from "lucide-react";
 
 import { updateMyWorkItem } from "@/app/actions/work-items";
+import { dismissAutomationSuggestion } from "@/app/actions/automate-this";
 import { decideMyApproval } from "@/app/actions/approvals";
 import { StartMyDay } from "@/components/my-day/start-my-day";
 import type { MyDayApproval, MyDayData, MyDayItem, MyDayItemStatus } from "@/lib/my-day-model";
+import type { AutomationSuggestion } from "@/lib/automate-this";
 
 function displayTime(value: string | null): string | null {
   if (!value) return null;
@@ -199,7 +201,7 @@ function ApprovalCard({ approval }: { approval: MyDayApproval }) {
   );
 }
 
-export function MyDayView({ data, actionError = false, approvalActionError = false }: { data: MyDayData; actionError?: boolean; approvalActionError?: boolean }) {
+export function MyDayView({ data, automationSuggestions = [], actionError = false, approvalActionError = false }: { data: MyDayData; automationSuggestions?: AutomationSuggestion[]; actionError?: boolean; approvalActionError?: boolean }) {
   return (
     <div className="h-dvh overflow-y-auto bg-[#f7f4ee] text-[#34313d]">
       <main className="mx-auto w-full max-w-6xl px-4 pb-16 pt-20 sm:px-6 sm:pb-20 lg:px-8 lg:pt-10">
@@ -220,6 +222,18 @@ export function MyDayView({ data, actionError = false, approvalActionError = fal
             : <p className="mt-4 text-sm text-slate-600">No assigned priorities are due soon. Review Needs You and your approved plans below.</p>}
           <p className="mt-4 text-xs text-slate-600">{data.agenda.waiting} waiting · {data.agenda.atRisk} blocked or due within 48 hours</p>
         </section>
+
+        {automationSuggestions.length > 0 && <section aria-labelledby="automate-this-title" className="mt-6 rounded-2xl border border-[#d6c9b3] bg-[#fffdfa] p-5 sm:p-6">
+          <h2 id="automate-this-title" className="text-lg font-semibold text-[#272536]">CrazyLoops found repeated work</h2>
+          <p className="mt-1 text-sm text-slate-600">These suggestions come from your completed work. Nothing runs until you review and activate it.</p>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">{automationSuggestions.map((item) => <article key={item.id} className="min-w-0 rounded-xl border border-[#e5dfd5] bg-white p-4">
+            <h3 className="break-words text-base font-semibold text-[#272536]">{item.source_title}</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-600">You completed {item.evidence_count} similar {item.pattern_kind === "gmail_follow_up" ? "Gmail follow-ups" : "AI-assisted results"} in the past 14 days.</p>
+            <div className="mt-4 flex flex-wrap items-center gap-3"><Link href={`/automations/${item.id}`} className="inline-flex min-h-11 items-center rounded-lg bg-[#4b357d] px-4 text-xs font-semibold text-white hover:bg-[#3d2968] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#4b357d]">Automate this</Link>
+              <form action={dismissAutomationSuggestion}><input type="hidden" name="suggestionId" value={item.id} /><button className="min-h-11 rounded-lg px-2 text-xs font-semibold text-slate-600 hover:text-slate-950">Not now</button></form></div>
+          </article>)}</div>
+          <Link href="/automations" className="mt-4 inline-flex min-h-11 items-center text-sm font-semibold text-[#4b357d] underline underline-offset-2">View your automations</Link>
+        </section>}
 
         {(data.workItemsUnavailable || data.approvalsUnavailable || data.workflowDataUnavailable || data.actionActivityUnavailable || actionError || approvalActionError) && (
           <div role="alert" className="mt-5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">

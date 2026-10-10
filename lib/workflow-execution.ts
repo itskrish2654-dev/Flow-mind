@@ -659,7 +659,7 @@ export async function executeWorkflowSteps({
       continue;
     }
 
-    if (capabilityId === "public_form_submission" || capabilityId === "generic_webhook_trigger" || capabilityId === "manual_trigger" || capabilityId === "schedule.trigger" || step.type === "connector_trigger") {
+    if (capabilityId === "public_form_submission" || capabilityId === "generic_webhook_trigger" || capabilityId === "manual_trigger" || capabilityId === "work_item_trigger" || capabilityId === "schedule.trigger" || step.type === "connector_trigger") {
       await succeed(
         capabilityId === "generic_webhook_trigger"
           ? "Received an authenticated webhook event."
@@ -671,6 +671,8 @@ export async function executeWorkflowSteps({
               : "Started from the configured durable schedule."
           : capabilityId === "manual_trigger"
             ? "Started by an authenticated manual run."
+          : capabilityId === "work_item_trigger"
+            ? "Started from a reviewed matching Work Item assigned to the workflow owner."
           : mode === "public-form"
           ? `Received ${Object.keys(inputData).length} submitted field${Object.keys(inputData).length === 1 ? "" : "s"}.`
           : "A safe sample form submission started the test.",

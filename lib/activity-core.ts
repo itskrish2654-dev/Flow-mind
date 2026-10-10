@@ -18,7 +18,7 @@ export const ACTIVITY_FILTER_TYPES: Record<Exclude<ActivityFilter, "all">, strin
   attention: ["work_item_created", "work_item_needs_you", "work_item_waiting", "work_item_blocked", "work_item_reassigned", "work_item_due_changed", "approval_requested", "action_failed", "action_ambiguous"],
   approvals: ["approval_requested", "approval_approved", "approval_rejected", "approval_cancelled"],
   actions: ["action_proposed", "action_queued", "action_executing", "action_succeeded", "action_failed", "action_ambiguous", "action_rejected", "action_cancelled"],
-  workflows: ["workflow_succeeded", "workflow_failed"],
+  workflows: ["workflow_succeeded", "workflow_failed", "automation_suggested", "automation_activated", "automation_paused", "automation_disabled", "automation_triggered", "automation_failed"],
 };
 
 export function parseActivityFilter(value: unknown): ActivityFilter {
@@ -86,6 +86,12 @@ export function activityLabel(event: ActivityEvent): string {
     action_cancelled: "Proposed action cancelled",
     workflow_succeeded: "Workflow completed",
     workflow_failed: "Workflow did not complete",
+    automation_suggested: "CrazyLoops noticed repeated work",
+    automation_activated: "You activated an automation",
+    automation_paused: "You paused an automation",
+    automation_disabled: "You disabled an automation",
+    automation_triggered: "Automation began preparing new work",
+    automation_failed: "Automation needs attention",
     goal_created: "Goal created",
     goal_plan_proposed: "Plan proposed for review",
     goal_plan_approved: "Plan approved",
@@ -97,6 +103,12 @@ export function activityLabel(event: ActivityEvent): string {
 }
 
 export function activityOutcome(event: ActivityEvent): string {
+  if (event.event_type === "automation_suggested") return "Suggested";
+  if (event.event_type === "automation_activated") return "Active";
+  if (event.event_type === "automation_paused") return "Paused";
+  if (event.event_type === "automation_disabled") return "Disabled";
+  if (event.event_type === "automation_triggered") return "Running";
+  if (event.event_type === "automation_failed") return "Failed";
   if (event.source_type === "goal") {
     if (event.event_type === "goal_completed") return "Completed";
     if (event.event_type === "goal_cancelled") return "Cancelled";
@@ -122,6 +134,7 @@ export function activityOutcome(event: ActivityEvent): string {
 export function activitySourceHref(event: ActivityEvent): string | null {
   if (event.goal_id) return `/goals/${event.goal_id}`;
   if (event.visibility !== "private") return null;
+  if (event.source_type === "automation") return `/automations/${event.source_id}`;
   if (event.work_item_id) return `/my-day#work-item-${event.work_item_id}`;
   if (event.workflow_id) return `/dashboard/projects/${event.workflow_id}`;
   return null;

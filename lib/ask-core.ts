@@ -33,6 +33,7 @@ export const AskToolIdSchema = z.enum([
   "work_items",
   "pending_approvals",
   "workflow_status",
+  "automation_status",
   "recent_activity",
   "action_activity",
   "gmail_search",
@@ -50,6 +51,7 @@ export const AskReferenceKindSchema = z.enum([
   "work_item",
   "approval",
   "workflow",
+  "automation",
   "execution",
   "action_execution",
   "activity",
@@ -65,7 +67,7 @@ export const AskReferenceKindSchema = z.enum([
 export type AskReferenceKind = z.infer<typeof AskReferenceKindSchema>;
 
 const InternalHrefSchema = z.string().max(500).refine(
-  (value) => /^\/(?:my-day|manager|dashboard|connections|activity|knowledge|goals)(?:[/?#][^\s]*)?$/.test(value),
+  (value) => /^\/(?:my-day|manager|dashboard|connections|activity|knowledge|goals|automations)(?:[/?#][^\s]*)?$/.test(value),
   "Reference links must stay inside CrazyLoops.",
 );
 
@@ -106,7 +108,7 @@ export type AskResponseMetadata = z.infer<typeof AskResponseMetadataSchema>;
 export const AskModelOutputSchema = z.object({
   responseType: z.enum(ASK_MODEL_RESPONSE_TYPES),
   answer: z.string().trim().min(1).max(ASK_LIMITS.modelAnswerCharacters),
-  referenceKeys: z.array(z.string().regex(/^(?:work_item|team_work|approval|workflow|execution|action_execution|activity|gmail_message|sheet_row|sheet_range|calendar_event|knowledge_chunk|goal|slack_message|notion_page):\d+$/)).max(12),
+  referenceKeys: z.array(z.string().regex(/^(?:work_item|team_work|approval|workflow|automation|execution|action_execution|activity|gmail_message|sheet_row|sheet_range|calendar_event|knowledge_chunk|goal|slack_message|notion_page):\d+$/)).max(12),
   clarificationRequired: z.boolean(),
   suggestedAction: AskSuggestedActionSchema.optional(),
 }).strict();
@@ -129,7 +131,8 @@ export const ASK_MODEL_OUTPUT_CONTRACT_INSTRUCTION = [
   `"responseType" must be exactly ${ASK_MODEL_RESPONSE_TYPES.map((value) => `"${value}"`).join(" or ")}. "answer" must be a non-empty string. "clarificationRequired" must be a boolean.`,
   '"referenceKeys" must be an array containing only reference keys supplied in the retrieved records.',
   'If the requested fact is not present in the supplied records, say that the information is not available, use "responseType":"clarification", set "clarificationRequired":true, use an empty "referenceKeys" array, and omit "suggestedAction".',
-  'When a useful safe internal action exists, "suggestedAction" must be exactly an object with two fields: {"label":"non-empty text","href":"internal path"}. Its href must begin with /my-day, /manager, /dashboard, /activity, /knowledge, /goals, or /connections. Otherwise omit "suggestedAction" entirely. Never return null, a string, an external URL, or extra fields for "suggestedAction".',
+  'When a useful safe internal action exists, "suggestedAction" must be exactly an object with two fields: {"label":"non-empty text","href":"internal path"}. Its href must begin with /my-day, /manager, /dashboard, /activity, /knowledge, /goals, /automations, or /connections. Otherwise omit "suggestedAction" entirely. Never return null, a string, an external URL, or extra fields for "suggestedAction".',
+  'Ask cannot activate, pause, disable, or edit an automation. For these requests, report its current state and link to the review page. Do not claim any change was made.',
   `Valid complete example: ${JSON.stringify(ASK_MODEL_OUTPUT_CONTRACT_EXAMPLE)}`,
 ].join(" ");
 
@@ -239,6 +242,7 @@ export function selectAskTools(question: string): AskToolId[] {
   if (/waiting|handled|task|work item|needs you/.test(text)) tools.push("work_items");
   if (/\bwhat did i (?:complete|finish)\b|\bmy\b.{0,32}\b(?:completed|finished|done)\b/.test(text)) tools.push("work_items");
   if (generalAttention) tools.push("my_day", "pending_approvals");
+  if (/automati[os]|repetitive work|automate this/.test(text)) tools.push("automation_status");
   if (explicitWorkflow || /failed|failure|problem|broken/.test(text)) tools.push("workflow_status");
   if (/activity|what happened|completed|run|\brecent(?:ly)?\b|what did crazyloops do|actions? failed|uncertain outcome|after i approved/.test(text)) tools.push("recent_activity");
   const actionOutcome = isAskActionOutcomeQuestion(question);
@@ -426,6 +430,7 @@ function frameGoalProgressAsWork(input: {
 }
 
 function emptyAnswer(tools: readonly AskToolId[]): string {
+  if (tools.includes("automation_status")) return "I found no repeated-work suggestions or automations in your workspace.";
   if (tools.includes("goals")) return "I found no workspace goals matching the bounded current goal list.";
   if (tools.includes("company_knowledge")) return "The uploaded company documents do not specify that. Ask an owner or admin to add the relevant source if it should be available.";
   if (tools.includes("sheets_search")) return "I found no matching rows in the bounded selected spreadsheet range. Ask about a narrower range if the sheet has more data.";
@@ -533,6 +538,15 @@ export async function runGroundedAsk(input: {
       : "Company-wide assigned work is available only to a manager of this workspace. I did not read another employee's work or private information.";
     return { answer, metadata: { version: 1, responseType: clarification ? "clarification" : "unsupported",
       clarificationRequired: clarification, references: [], ...(clarification ? {} : { unsupportedReason: answer }) } };
+  }
+  if (tools.includes("automation_status")
+    && /\b(?:pause|resume|activate|enable|disable|edit|change|turn off|turn on)\b/i.test(input.question)) {
+    return {
+      answer: "I haven't changed an automation. Open Your automations to review its current state and make that choice yourself.",
+      metadata: { version: 1, responseType: "unsupported", clarificationRequired: false,
+        references: [], unsupportedReason: "Ask cannot change automation state.",
+        suggestedAction: { label: "Open Your automations", href: "/automations" } },
+    };
   }
   if (toolResults.every((result) => result.records.length === 0)) {
     return {
