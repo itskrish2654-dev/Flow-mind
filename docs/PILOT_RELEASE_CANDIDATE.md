@@ -1,6 +1,6 @@
 # CrazyLoops — first customer pilot release candidate v1
 
-This is a release record, not authorization to deploy customer production. The release branch is `codex/work-os-first-customer-rc-v1`. Its application source is frozen from the accepted Pilot Readiness commit `fb36771fd54b9b2817c612be6b018bc43b2132da`; obtain the release-record commit with `git rev-parse HEAD` on that branch. Do not merge or modify frozen `main` for this pilot gate.
+This is a release record, not authorization to deploy customer production. The release branch is `codex/work-os-first-customer-rc-v1`. It descends from the accepted Pilot Readiness commit `fb36771fd54b9b2817c612be6b018bc43b2132da` without changing product behavior. The RC updates vulnerable production dependencies to patched versions; obtain its exact release commit with `git rev-parse HEAD` on that branch. Do not merge or modify frozen `main` for this pilot gate.
 
 ## Customer surface
 
@@ -20,12 +20,13 @@ Gmail, Slack, and Google Calendar have accepted provider-backed paths in this li
 
 ## Validation and rollback
 
-The accepted source passed 1,216 deterministic tests, TypeScript, ESLint, migration/environment validation, production build, anonymous RLS checks, and a fresh three-person staging browser journey. The disposable owner, two employees, their workspaces, Goal, Work Items, and Knowledge document were removed after acceptance. Desktop manager and mobile employee screens were checked. These staging results do not replace a final smoke on the exact customer deployment.
+Pilot Readiness passed 1,216 deterministic tests, TypeScript, ESLint, migration/environment validation, production build, anonymous RLS checks, and a fresh three-person staging browser journey. The disposable owner, two employees, their workspaces, Goal, Work Items, and Knowledge document were removed after acceptance. Desktop manager and mobile employee screens were checked. The patched RC must pass these deterministic gates again and a fresh staging smoke; prior browser evidence alone is not a claim that the patched build was exercised. These staging results do not replace a final smoke on the exact customer deployment.
 
-The last known healthy staging deployment before this release record is `dpl_DCe6ThR5zasyYYfMNcbYfZGwigEs`, built from the accepted Pilot Readiness source above. Keep that as the staging rollback checkpoint. For a customer release, record its own previous healthy deployment and database migration version before cutover. Roll back application traffic to that known-good deployment if health or authorization fails; **do not** reverse a committed migration blindly. Use a forward correction or restored backup only under a separately approved incident plan. Pause invitations and external actions while the incident is assessed.
+The prior staging deployment `dpl_DCe6ThR5zasyYYfMNcbYfZGwigEs` is a functional comparison checkpoint, **not a safe security rollback**: it uses a vulnerable Next.js dependency. Keep the patched RC staging deployment as the next rollback checkpoint only after its health and smoke gates pass. For a first customer deployment there may be no previous safe build; withdraw pilot traffic and pause invitations/external actions if it fails, then use a tested forward correction. **Do not** reverse a committed migration blindly. A restored backup requires a separately approved incident plan.
 
 ## Known pilot limits
 
+- The RC pins Next.js 16.3.8 and locks patched Sharp 0.35.5, source-map-js 1.2.2, and Undici 7.30.0. The production dependency audit has zero findings. Seven high-severity development-tooling audit findings remain in the lint dependency tree; this is not a claim that the full development dependency audit is clean.
 - Sheets writes and Notion actions/workflows are not generally product-enabled for a customer pilot despite isolated staging acceptance; keep their gates in place until separately released.
 - The Notion picker can show a provider data source whose parent label is still unfamiliar to its owner. Confirm the exact shared resource before any Notion write.
 - Automate This needs repeated qualifying work; one completed task correctly produces no suggestion.
