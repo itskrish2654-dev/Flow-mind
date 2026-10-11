@@ -52,7 +52,7 @@ async function invite(page: Page, email: string, role: "admin" | "member") {
 async function acceptInvite(page: Page, link: string) {
   await page.goto(link);
   await page.getByRole("button", { name: "Accept invitation" }).click();
-  await page.waitForURL(/\/my-day\?joined=1/, { timeout: 30_000 });
+  await page.waitForURL(/\/getting-started/, { timeout: 30_000 });
 }
 
 async function clientFor(url: string, key: string, user: User) {
@@ -174,7 +174,7 @@ test("company onboarding, permissions, invitation lifecycle, switching, and isol
     expect(memberRows?.find((row) => row.workspace_id === storedMemberInvite.workspace_id)).toMatchObject({ role: "member", is_default: true });
     await memberBrowser.page.goto(memberInvite);
     await memberBrowser.page.getByRole("button", { name: "Accept invitation" }).click();
-    await memberBrowser.page.waitForURL(/\/my-day\?joined=1/);
+    await memberBrowser.page.waitForURL(/\/getting-started/);
     expect((await admin.from("workspace_memberships").select("*", { count: "exact", head: true }).eq("workspace_id", storedMemberInvite.workspace_id).eq("user_id", member.id)).count).toBe(1);
 
     const adminInvite = await invite(ownerBrowser.page, adminUser.email, "admin");
@@ -237,7 +237,7 @@ test("company onboarding, permissions, invitation lifecycle, switching, and isol
     const concurrentTwo = await concurrentOne.context.newPage();
     await Promise.all([concurrentOne.page.goto(concurrentInvite), concurrentTwo.goto(concurrentInvite)]);
     await Promise.all([concurrentOne.page.getByRole("button", { name: "Accept invitation" }).click(), concurrentTwo.getByRole("button", { name: "Accept invitation" }).click()]);
-    await Promise.all([concurrentOne.page.waitForURL(/\/my-day\?joined=1/), concurrentTwo.waitForURL(/\/my-day\?joined=1/)]);
+    await Promise.all([concurrentOne.page.waitForURL(/\/getting-started/), concurrentTwo.waitForURL(/\/getting-started/)]);
     expect((await admin.from("workspace_memberships").select("*", { count: "exact", head: true }).eq("workspace_id", storedMemberInvite.workspace_id).eq("user_id", concurrentUser.id)).count).toBe(1);
 
     await memberBrowser.page.goto("/settings");

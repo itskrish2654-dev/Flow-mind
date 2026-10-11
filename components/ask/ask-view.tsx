@@ -28,10 +28,10 @@ const STARTERS = [
 
 function sourceLabel(kind: string): string {
   switch (kind) {
-    case "work_item": return "Work Item";
+    case "work_item": return "Task";
     case "approval": return "Approval";
-    case "workflow": return "Workflow";
-    case "execution": return "Execution";
+    case "workflow": return "Automation";
+    case "execution": return "Run";
     case "action_execution": return "Action result";
     case "gmail_message": return "Gmail";
     case "sheet_row": return "Sheet row";
@@ -260,7 +260,7 @@ export function AskView({ data }: { data: AskPageData }) {
                 <div className="py-8 text-center sm:py-14">
                   <span className="mx-auto flex size-12 items-center justify-center rounded-2xl border border-[#e4c35d] bg-[#fff2bd] text-[#805b00]"><Sparkles className="size-5" /></span>
                   <h2 className="mt-5 text-2xl font-semibold tracking-[-0.03em] text-[#272536]">What is happening with your work?</h2>
-                  <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-600">Ask about the Work Items, approvals, workflows, and activity already stored in your private CrazyLoops workspace.</p>
+                  <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-600">Ask about your tasks, approvals, company knowledge, and recent Activity. CrazyLoops should say when information is unavailable.</p>
                   <div className="mx-auto mt-7 grid max-w-2xl gap-2 sm:grid-cols-2">
                     {STARTERS.map((starter) => (
                       <button key={starter} type="button" onClick={() => { setMessage(starter); void send(starter); }} disabled={isSending || Boolean(pending)} className="group flex min-h-12 items-center justify-between rounded-xl border border-[#ddd3c3] bg-[#fffdfa] px-4 text-left text-sm text-slate-700 transition hover:border-[#d7aa2f] hover:bg-[#fff8e3] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#8a6200] disabled:opacity-60">
@@ -333,7 +333,7 @@ export function AskView({ data }: { data: AskPageData }) {
               )}
               <div className="flex items-end gap-2 rounded-2xl border border-[#d9cfbf] bg-white p-2 shadow-sm focus-within:border-[#b58a13] focus-within:ring-2 focus-within:ring-[#efd77f]/40">
                 <label htmlFor="ask-message" className="sr-only">Ask CrazyLoops</label>
-                <textarea id="ask-message" value={message} onChange={(event) => setMessage(event.target.value)} maxLength={2_000} rows={2} disabled={isSending} placeholder="Ask about your work, approvals, workflows, or recent activity…" className="max-h-36 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 disabled:opacity-60" />
+                <textarea id="ask-message" value={message} onChange={(event) => setMessage(event.target.value)} maxLength={2_000} rows={2} disabled={isSending} placeholder="Ask about your tasks, approvals, company knowledge, or recent Activity…" className="max-h-36 min-h-11 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 disabled:opacity-60" />
                 <button type="submit" disabled={isSending || !message.trim() || Boolean(pending && (feedback?.outcome === "processing" || feedback?.outcome === "uncertain"))} aria-label="Send message" className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-[#f1c94b] text-[#272536] transition hover:bg-[#e5bb3a] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#8a6200] disabled:cursor-not-allowed disabled:opacity-50">
                   {isSending ? <LoaderCircle className="size-4 animate-spin" /> : <Send className="size-4" />}
                 </button>

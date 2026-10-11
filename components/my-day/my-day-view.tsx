@@ -212,12 +212,13 @@ export function MyDayView({ data, automationSuggestions = [], actionError = fals
             <h1 className="mt-2 text-3xl font-semibold tracking-[-0.045em] text-[#272536] sm:text-4xl">My Day</h1>
             <p className="mt-3 max-w-xl text-sm leading-6 text-slate-600 sm:text-base">Here’s what needs your attention and what you can move forward.</p>
             <StartMyDay summary={data.summary.sentence} startWith={data.startWith} />
+            {data.managerAssigned.length === 0 && data.needsYou.length === 0 && data.approvals.length === 0 && <Link href="/getting-started" className="mt-4 inline-flex min-h-11 items-center text-sm font-semibold text-[#4b357d] underline underline-offset-4">New here? See how CrazyLoops works →</Link>}
           </div>
         </header>
 
         <section aria-labelledby="daily-agenda-title" className="mt-6 rounded-2xl border border-[#ded6ca] bg-white p-5 sm:p-6">
           <h2 id="daily-agenda-title" className="text-lg font-semibold">Your daily agenda</h2>
-          <p className="mt-1 text-xs text-slate-600">Grounded in your assigned Work Items. Nothing is added from a guess.</p>
+          <p className="mt-1 text-xs text-slate-600">Grounded in your assigned tasks. Nothing is added from a guess.</p>
           {data.agenda.priorities.length ? <ol className="mt-4 space-y-2">{data.agenda.priorities.map((priority, index) => <li key={priority.href} className="flex gap-3 text-sm"><span className="font-semibold text-[#856b36]">{index + 1}.</span><Link href={priority.href} className="min-w-0 break-words font-medium text-[#4b357d] hover:underline">{priority.title}</Link><span className="text-xs text-slate-600">{priority.reason}</span></li>)}</ol>
             : <p className="mt-4 text-sm text-slate-600">No assigned priorities are due soon. Review Needs You and your approved plans below.</p>}
           <p className="mt-4 text-xs text-slate-600">{data.agenda.waiting} waiting · {data.agenda.atRisk} blocked or due within 48 hours</p>
@@ -238,11 +239,11 @@ export function MyDayView({ data, automationSuggestions = [], actionError = fals
         {(data.workItemsUnavailable || data.approvalsUnavailable || data.workflowDataUnavailable || data.actionActivityUnavailable || actionError || approvalActionError) && (
           <div role="alert" className="mt-5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
             {approvalActionError ? "That approval could not be decided. Refresh and review its current status."
-              : actionError ? "That work item could not be updated. Refresh and try again."
+              : actionError ? "That task could not be updated. Refresh and try again."
               : data.approvalsUnavailable ? "Approvals are temporarily unavailable. Other work is still shown below."
-              : data.workflowDataUnavailable ? "Workflow information is temporarily unavailable. Your saved work items are still shown below."
+              : data.workflowDataUnavailable ? "Automation information is temporarily unavailable. Your saved tasks are still shown below."
               : data.actionActivityUnavailable ? "Approved-action activity is temporarily unavailable. Other work is still shown below."
-                : "Work items are temporarily unavailable. Your workflow information is still shown below."}
+                : "Tasks are temporarily unavailable. Your automation information is still shown below."}
           </div>
         )}
 
@@ -303,7 +304,7 @@ export function MyDayView({ data, automationSuggestions = [], actionError = fals
               empty="No work has been handled automatically yet."
             />
           </div>
-          <div className="lg:col-span-6"><MyDaySection id="completed-title" title="Completed" description="Work you marked done. Goal progress uses these durable completions." icon={CircleCheck} items={data.completed} empty="No recently completed Work Items." /></div>
+          <div className="lg:col-span-6"><MyDaySection id="completed-title" title="Completed" description="Work you marked done. Goal progress uses these saved completions." icon={CircleCheck} items={data.completed} empty="No recently completed tasks." /></div>
           <div className="lg:col-span-12">
             <MyDaySection
               id="recent-activity-title"
@@ -324,7 +325,7 @@ export function MyDayView({ data, automationSuggestions = [], actionError = fals
             </span>
             <div>
               <h2 id="automate-this-title" className="text-lg font-semibold tracking-[-0.025em] text-[#272536]">Automate This</h2>
-              <p className="mt-1 max-w-xl text-sm leading-6 text-slate-700">Doing something repeatedly? Describe it once and let CrazyLoops build the workflow.</p>
+              <p className="mt-1 max-w-xl text-sm leading-6 text-slate-700">After repeated completed work, CrazyLoops can suggest an automation for you to review. Nothing starts until you activate it.</p>
             </div>
           </div>
           <Link href="/dashboard" className="mt-5 inline-flex min-h-11 shrink-0 items-center gap-2 rounded-xl border border-[#b78c20] bg-[#fffdfa] px-4 text-sm font-semibold text-[#5f4709] transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9b7309] focus-visible:ring-offset-2 sm:mt-0">
@@ -334,7 +335,7 @@ export function MyDayView({ data, automationSuggestions = [], actionError = fals
 
         <div className="mt-6 text-center">
           <Link href="/dashboard" className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-sm font-semibold text-slate-600 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9b7309] focus-visible:ring-offset-2">
-            View all workflows<ArrowRight className="size-4" aria-hidden="true" />
+            Open advanced automations<ArrowRight className="size-4" aria-hidden="true" />
           </Link>
         </div>
       </main>

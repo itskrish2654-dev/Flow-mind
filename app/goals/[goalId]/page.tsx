@@ -41,13 +41,13 @@ export default async function GoalDetailPage({ params, searchParams }: {
       </header>
       <section aria-label="Goal progress" className="mt-5 rounded-2xl border border-[#e4ddd2] bg-white p-5 sm:p-6">
         <h2 className="text-xl font-semibold">Progress from actual work</h2>
-        {progress ? <><p className="mt-2 text-2xl font-semibold text-[#4b357d]">{progress.completed} of {progress.total} done</p><p className="mt-2 text-sm text-slate-600">{progress.needsAttention} need attention · {progress.blocked} blocked · {progress.overdue} overdue{progress.missing ? ` · ${progress.missing} missing assigned Work Items` : ""}. Only Work Items marked done count as complete.</p></>
+        {progress ? <><p className="mt-2 text-2xl font-semibold text-[#4b357d]">{progress.completed} of {progress.total} done</p><p className="mt-2 text-sm text-slate-600">{progress.needsAttention} need attention · {progress.blocked} blocked · {progress.overdue} overdue{progress.missing ? ` · ${progress.missing} tasks still need assignment` : ""}. Only tasks marked done count as complete.</p></>
           : <p className="mt-2 text-sm text-slate-600">No work is active. A manager must review and approve a plan first.</p>}
       </section>
       {detail.canManage && <GoalManager key={`${goal.updated_at}:${plan?.id ?? "none"}`} goal={goal} plan={plan} items={items} members={members} />}
       {assignmentError && <p role="alert" className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">That assignment changed or could not be saved. Refresh and review the live work before trying again.</p>}
-      <section aria-label="Execution plan" className="mt-5 rounded-2xl border border-[#e4ddd2] bg-white p-5 sm:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-xl font-semibold">{plan?.status === "approved" ? "Approved execution plan" : "Proposed plan"}</h2>{plan && <span className="text-xs text-slate-600">Revision {plan.revision} · {plan.status}</span>}</div>
+      <section aria-label="Goal plan" className="mt-5 rounded-2xl border border-[#e4ddd2] bg-white p-5 sm:p-6">
+        <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-xl font-semibold">{plan?.status === "approved" ? "Approved plan" : "Proposed plan"}</h2>{plan && <span className="text-xs capitalize text-slate-600">{plan.status.replaceAll("_", " ")}</span>}</div>
         {items.length === 0 ? <p className="mt-3 text-sm text-slate-600">No proposal yet. A manager can generate or write one.</p> : <ol className="mt-4 space-y-3">{items.map((item) => <li key={item.id} className="rounded-xl border border-[#e4ddd2] bg-[#fcfbf8] p-4">
           <div className="flex items-start gap-3"><span className="text-sm font-semibold text-[#856b36]">{String(item.position).padStart(2, "0")}</span><div className="min-w-0 flex-1"><h3 className="break-words text-sm font-semibold">{item.title}</h3>{item.description && <p className="mt-1 whitespace-pre-wrap text-sm text-slate-600">{item.description}</p>}
             {item.rationale && <p className="mt-1 whitespace-pre-wrap text-xs text-slate-600"><span className="font-semibold">Why this work:</span> {item.rationale}</p>}

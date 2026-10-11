@@ -13,6 +13,7 @@ import { createClient } from "@/lib/supabase/server";
 import { trackProductEvent } from "@/lib/observability";
 import { getSiteOrigin } from "@/lib/site-origin";
 import { safeAuthReturnPath } from "@/lib/auth-return-path";
+import { recordNewAccountWorkspace } from "@/lib/workspace-context";
 
 const EmailSchema = z.string().trim().email().max(320);
 const CaptchaTokenSchema = z.string().min(1).max(4_096);
@@ -138,6 +139,7 @@ export async function authenticateWithPassword(input: {
     };
   }
   await trackProductEvent({ event: "signup_completed", userId: data.user?.id });
+  if (data.session && data.user?.id) await recordNewAccountWorkspace(data.user.id).catch(() => undefined);
   return data.session
     ? { ok: true, sessionCreated: true }
     : {

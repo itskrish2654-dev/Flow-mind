@@ -4,6 +4,7 @@ import { getAuthenticatedContext } from "@/lib/auth";
 import { AUTOMATION_EVIDENCE_DAYS, detectRepeatedWork, isFollowUpWorkTitle, type RepeatedWorkEvidence } from "@/lib/automate-this-core";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Database } from "@/lib/supabase/types";
+import { trackProductEvent } from "@/lib/observability";
 
 export type AutomationSuggestion = Database["public"]["Tables"]["automation_suggestions"]["Row"];
 
@@ -73,6 +74,7 @@ export async function listMyAutomationSuggestions(): Promise<AutomationSuggestio
     }).select("id").maybeSingle();
     if (error && error.code !== "23505") throw new Error("Automation suggestion could not be saved.");
     if (inserted) {
+      await trackProductEvent({ event: "automate_this_suggested", userId: auth.user.id });
       const { error: activityError } = await admin.from("activity_events").insert({
         workspace_id: auth.workspace.id, owner_user_id: auth.user.id,
         actor_user_id: null, visibility: "private", event_type: "automation_suggested",

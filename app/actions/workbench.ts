@@ -11,6 +11,7 @@ import { getAuthenticatedContext } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { finalizeWorkItemDeliverable, generateWorkItemResult, loadWorkItemWorkbench, saveWorkItemDeliverable } from "@/lib/workbench";
 import { transitionCurrentUserWorkItem } from "@/lib/work-items";
+import { trackProductEvent } from "@/lib/observability";
 
 const id = z.uuid();
 const href = (workItemId: string) => `/my-day/work/${encodeURIComponent(workItemId)}`;
@@ -23,6 +24,10 @@ export async function generateWorkbenchAction(formData: FormData): Promise<void>
     const turn = await generateWorkItemResult({ workItemId: workItemId.data, requestKey: formData.get("requestKey"),
       instruction: formData.get("instruction") });
     if (turn.status !== "completed") outcome = turn.status === "failed" ? "ai_failed" : "processing";
+    else {
+      const auth = await getAuthenticatedContext();
+      if (auth) await trackProductEvent({ event: "do_with_ai_used", userId: auth.user.id });
+    }
   } catch { outcome = "ai_failed"; }
   revalidatePath(href(workItemId.data));
   redirect(`${href(workItemId.data)}?result=${outcome}`);
@@ -46,7 +51,11 @@ export async function finalizeWorkbenchResultAction(formData: FormData): Promise
   const deliverableId = id.safeParse(formData.get("deliverableId"));
   if (!workItemId.success || !deliverableId.success) redirect("/my-day");
   let outcome = "finalized";
-  try { await finalizeWorkItemDeliverable(workItemId.data, deliverableId.data); }
+  try {
+    await finalizeWorkItemDeliverable(workItemId.data, deliverableId.data);
+    const auth = await getAuthenticatedContext();
+    if (auth) await trackProductEvent({ event: "deliverable_finalized", userId: auth.user.id });
+  }
   catch { outcome = "finalize_failed"; }
   revalidatePath(href(workItemId.data));
   redirect(`${href(workItemId.data)}?result=${outcome}`);
@@ -60,6 +69,8 @@ export async function completeWorkbenchWorkAction(formData: FormData): Promise<v
     const work = await loadWorkItemWorkbench(workItemId.data);
     if (!work.deliverables.some((result) => result.status === "final")) throw new Error("No final result");
     await transitionCurrentUserWorkItem(workItemId.data, "done");
+    const auth = await getAuthenticatedContext();
+    if (auth) await trackProductEvent({ event: "task_completed", userId: auth.user.id });
   }
   catch { outcome = "complete_failed"; }
   revalidatePath("/my-day");

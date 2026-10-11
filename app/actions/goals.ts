@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { getAuthenticatedContext } from "@/lib/auth";
+import { trackProductEvent } from "@/lib/observability";
 
 import {
   approveGoalPlan, createGoalDraft, finishWorkspaceGoal, generateGoalPlan,
@@ -38,6 +40,8 @@ export async function reviseGoalWorkAssignmentAction(formData: FormData): Promis
 export async function createGoalAction(input: unknown): Promise<GoalActionResult> {
   try {
     const goal = await createGoalDraft(input);
+    const auth = await getAuthenticatedContext();
+    if (auth) await trackProductEvent({ event: "goal_created", userId: auth.user.id });
     refreshGoal(goal.id);
     return { ok: true, goalId: goal.id };
   } catch {
@@ -89,6 +93,11 @@ export async function approveGoalPlanAction(input: {
 }): Promise<GoalActionResult> {
   try {
     await approveGoalPlan(input);
+    const auth = await getAuthenticatedContext();
+    if (auth) await Promise.all([
+      trackProductEvent({ event: "goal_plan_approved", userId: auth.user.id }),
+      trackProductEvent({ event: "work_items_assigned", userId: auth.user.id }),
+    ]);
     refreshGoal(input.goalId);
     return { ok: true, goalId: input.goalId };
   } catch {

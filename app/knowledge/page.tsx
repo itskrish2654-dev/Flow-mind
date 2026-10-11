@@ -19,7 +19,7 @@ export default async function KnowledgePage() {
       <section aria-label="Shared documents">
         {documents.length === 0 ? <div className="rounded-2xl border border-dashed border-[#d8caa8] bg-white p-8 text-center">
           <h2 className="text-lg font-semibold">No company documents yet</h2>
-          <p className="mt-2 text-sm text-slate-600">{canManage ? "Add a handbook or SOP to give your team a grounded source in Ask." : "An owner or admin can add shared documents here."}</p>
+          <p className="mt-2 text-sm text-slate-600">{canManage ? "Add a short SOP, policy, onboarding guide, process document, or product note to give your team a grounded source in Ask. Everyone in this workspace can read it." : "An owner or admin can add shared documents here. Ask them for the company information you need."}</p>
         </div> : <ul className="space-y-3">{documents.map((document) => {
           const status = document.processingStale ? "Processing interrupted — ask an admin to remove and upload again" : document.status === "ready" ? "Ready for Ask" : document.status === "failed" ? "Could not index" : document.status === "deleting" ? "Removal pending" : "Processing";
           return <li key={document.id} className="rounded-2xl border border-[#e4ddd2] bg-white p-5 shadow-sm">
@@ -27,7 +27,7 @@ export default async function KnowledgePage() {
               <h2 className="break-words text-base font-semibold"><Link href={`/knowledge/${document.id}`} className="hover:underline focus-visible:outline-2 focus-visible:outline-offset-2">{document.title}</Link></h2>
               <p className="mt-1 text-xs text-slate-600">{document.filename} · {(document.size_bytes / 1024).toFixed(0)} KB · {new Date(document.created_at).toLocaleDateString("en-GB")} · {document.uploaded_by_user_id === auth.user.id ? "Uploaded by you" : "Uploaded by a teammate"}</p>
             </div><span className="rounded-full bg-[#f8f4ec] px-3 py-1 text-xs font-medium text-slate-700">{status}</span></div>
-            {document.status === "failed" && <p className="mt-2 text-sm text-red-800">{document.failure_reason ?? "Extraction failed."}</p>}
+            {document.status === "failed" && <p className="mt-2 text-sm text-red-800">CrazyLoops could not prepare this document for Ask. An owner or admin can remove it and upload a supported file again.</p>}
             {document.status === "ready" && <p className="mt-2 text-xs text-slate-600">{document.chunk_count} indexed sections{document.page_count ? ` · ${document.page_count} pages` : ""}</p>}
             {canManage && <div className="mt-4"><KnowledgeDelete documentId={document.id} /></div>}
           </li>;

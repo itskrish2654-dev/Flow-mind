@@ -27,7 +27,7 @@ export default async function ManagerPage() {
       </header>
       <section aria-labelledby="manager-brief" className="mt-7 rounded-2xl border border-[#ded6ca] bg-white p-5 sm:p-7">
         <h2 id="manager-brief" className="text-xl font-semibold">Today’s brief</h2>
-        <p className="mt-2 text-sm text-slate-600">Counts reflect approved-plan Work Items in this workspace. Completed work does not by itself prove the business outcome.</p>
+        <p className="mt-2 text-sm text-slate-600">Counts reflect tasks from approved Goal plans in this company. Completed tasks do not by themselves prove the business outcome.</p>
         <dl className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">{[
           ["Active", brief.active], ["Completed", brief.completed], ["Blocked", brief.blocked],
           ["Overdue", brief.overdue], ["Due within 48 hours", brief.dueSoon], ["Decisions", brief.decisions],
@@ -36,10 +36,10 @@ export default async function ManagerPage() {
       </section>
       <section aria-labelledby="manager-goals" className="mt-7">
         <div className="flex flex-wrap items-center justify-between gap-2"><h2 id="manager-goals" className="text-xl font-semibold">Goals</h2><Link href="/goals" className="text-sm font-semibold text-[#4b357d] underline underline-offset-2">Manage goals</Link></div>
-        {brief.goals.length === 0 ? <p className="mt-4 rounded-xl border border-dashed border-[#ded6ca] bg-white p-5 text-sm text-slate-600">No goals yet. Define an outcome, review the proposed plan, then approve assignments.</p>
+        {brief.goals.length === 0 ? <div className="mt-4 rounded-xl border border-dashed border-[#ded6ca] bg-white p-5 text-sm text-slate-600"><p>No goals yet. Define an outcome, review the proposed plan, then approve assignments.</p><Link href="/goals" className="mt-3 inline-flex min-h-11 items-center font-semibold text-[#4b357d] underline underline-offset-4">Create your first Goal →</Link></div>
           : <ul className="mt-4 grid gap-3 md:grid-cols-2">{brief.goals.map(({ goal, total, done, blocked, overdue, atRisk }) => <li key={goal.id}><Link href={`/goals/${goal.id}`} className="block h-full rounded-xl border border-[#e4ddd2] bg-white p-5 hover:border-[#ae9bca] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6047a0]">
             <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">{goal.title}</h3><span className="text-xs capitalize text-slate-600">{goal.status}</span></div>
-            <p className="mt-2 text-sm">{done} of {total} Work Items done{total ? ` · ${Math.round(done / total * 100)}% of assigned work` : ""}</p>
+            <p className="mt-2 text-sm">{done} of {total} tasks done{total ? ` · ${Math.round(done / total * 100)}% of assigned work` : ""}</p>
             <p className="mt-1 text-xs text-slate-600">{blocked} blocked · {overdue} overdue · Target {dateLabel(goal.target_date)}</p>
             {atRisk && <span className="mt-3 inline-block rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900">Needs review</span>}
           </Link></li>)}</ul>}
@@ -47,7 +47,7 @@ export default async function ManagerPage() {
       <section aria-labelledby="manager-team" className="mt-8">
         <h2 id="manager-team" className="text-xl font-semibold">Team work</h2>
         <p className="mt-1 text-sm text-slate-600">Only work assigned through approved company goal plans is shown.</p>
-        {grouped.length === 0 ? <p className="mt-4 rounded-xl border border-dashed border-[#ded6ca] bg-white p-5 text-sm text-slate-600">No approved work is assigned yet.</p>
+        {grouped.length === 0 ? <div className="mt-4 rounded-xl border border-dashed border-[#ded6ca] bg-white p-5 text-sm text-slate-600"><p>No approved work is assigned yet. Review a Goal plan to choose people and deadlines before tasks reach My Day.</p><Link href="/goals" className="mt-3 inline-flex min-h-11 items-center font-semibold text-[#4b357d] underline underline-offset-4">Review Goals →</Link></div>
           : <div className="mt-4 space-y-4">{grouped.map(({ member, items }) => <section key={member.userId} aria-label={`Assigned work for ${label(member.userId)}`} className="rounded-xl border border-[#e4ddd2] bg-white p-5">
             <div className="flex flex-wrap justify-between gap-2"><h3 className="font-semibold">{label(member.userId)}</h3><p className="text-xs text-slate-600">{items.filter((item) => isActiveTeamWork(item.status)).length} active · {items.filter((item) => item.status === "done").length} completed</p></div>
             <ul className="mt-3 divide-y divide-[#eee8de]">{items.map((item) => <li key={item.id} className="py-3 text-sm"><div className="flex flex-wrap items-start justify-between gap-2"><Link href={`/goals/${item.goal_id}`} className="font-medium text-[#4b357d] underline-offset-2 hover:underline">{item.title}</Link><span className="rounded-full bg-[#f3eff8] px-2.5 py-1 text-xs font-semibold capitalize">{item.status.replaceAll("_", " ")}</span></div>

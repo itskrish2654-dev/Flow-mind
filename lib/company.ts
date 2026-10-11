@@ -14,6 +14,7 @@ import {
   hashInvitationToken,
 } from "@/lib/company-core";
 import { getSiteUrl } from "@/lib/site-origin";
+import { trackProductEvent } from "@/lib/observability";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export type WorkspaceOption = {
@@ -164,6 +165,7 @@ export async function createCompanyInvitation(email: string, role: string) {
     p_workspace_id: auth.workspace.id,
   });
   if (error || !data?.[0]) throw new Error(error?.message === "account is already a member" ? "That account is already a company member." : "The invitation could not be created.");
+  await trackProductEvent({ event: "employee_invited", userId: auth.user.id });
   return {
     invitationId: data[0].id,
     inviteUrl: getSiteUrl(`/invite/accept?token=${encodeURIComponent(token)}`),
@@ -242,5 +244,6 @@ export async function acceptCompanyInvitation(token: string) {
     if (message.includes("expired")) throw new Error("This invitation has expired.");
     throw new Error("This invitation is no longer available.");
   }
+  await trackProductEvent({ event: "employee_activated", userId: auth.user.id });
   return data[0];
 }

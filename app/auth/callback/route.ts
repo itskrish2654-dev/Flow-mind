@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { safeAuthReturnPath } from "@/lib/auth-return-path";
 import { createClient } from "@/lib/supabase/server";
 import { getSiteOrigin, getSiteUrl } from "@/lib/site-origin";
+import { recordNewAccountWorkspace } from "@/lib/workspace-context";
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
@@ -15,7 +16,11 @@ export async function GET(request: Request) {
   if (code) {
     const supabase = await createClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
-    if (!error) return NextResponse.redirect(new URL(nextPath, siteOrigin));
+    if (!error) {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) await recordNewAccountWorkspace(user.id).catch(() => undefined);
+      return NextResponse.redirect(new URL(nextPath, siteOrigin));
+    }
   }
 
   const loginUrl = new URL(getSiteUrl("/login", requestUrl.origin));

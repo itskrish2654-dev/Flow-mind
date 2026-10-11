@@ -48,7 +48,7 @@ export function GoalManager({ goal, plan, items, members }: {
   }
   return <section aria-label="Manage goal" className="mt-5 rounded-2xl border border-[#d9cba9] bg-[#fffdf7] p-5 sm:p-6">
     <h2 className="text-xl font-semibold">Manager controls</h2>
-    <p className="mt-1 text-sm text-slate-600">Plans are proposals until you approve the exact revision. Approval creates internal Work Items only; it does not send messages or run external actions.</p>
+    <p className="mt-1 text-sm text-slate-600">Review the proposed tasks, people, and deadlines before approval. Approval assigns tasks inside CrazyLoops; it does not send messages or take external actions.</p>
     {editable && <div className="mt-4 flex flex-wrap gap-2">
       <button type="button" onClick={() => { setEditingGoal(!editingGoal); setEditingPlan(false); }} className="min-h-11 rounded-xl border border-[#c9bdd9] px-4 py-2 text-sm font-semibold text-[#4b357d] hover:bg-white">{editingGoal ? "Close goal edits" : "Edit goal"}</button>
       <button type="button" onClick={() => { setEditingPlan(!editingPlan); setEditingGoal(false); }} className="min-h-11 rounded-xl border border-[#c9bdd9] px-4 py-2 text-sm font-semibold text-[#4b357d] hover:bg-white">{editingPlan ? "Close plan editor" : plan ? "Revise plan" : "Write plan"}</button>
@@ -79,11 +79,11 @@ export function GoalManager({ goal, plan, items, members }: {
           dueAt: item.dueDate ? new Date(`${item.dueDate}T12:00:00Z`).toISOString() : null,
           priority: item.priority })) }));
     }}>
-      <p className="text-sm text-slate-600">Saving creates a new immutable proposal revision. Assign every item to a current member before approval.</p>
+      <p className="text-sm text-slate-600">Saving updates the proposal for your review. Assign every task to a current teammate before approval.</p>
       {planItems.map((item, index) => <div key={index} className="rounded-xl border border-[#e4ddd2] bg-white p-4">
         <div className="flex items-center justify-between gap-2"><h3 className="text-sm font-semibold">Step {index + 1}</h3><button type="button" disabled={planItems.length === 1} onClick={() => setPlanItems((current) => current.filter((_, position) => position !== index))} className="text-xs font-semibold text-red-800 disabled:opacity-40">Remove</button></div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <label className="grid gap-1 text-sm sm:col-span-2">Work Item title<input required maxLength={180} value={item.title} onChange={(event) => changeItem(index, { title: event.target.value })} className="min-h-11 rounded-lg border border-[#d6cfc4] px-3" /></label>
+          <label className="grid gap-1 text-sm sm:col-span-2">Task title<input required maxLength={180} value={item.title} onChange={(event) => changeItem(index, { title: event.target.value })} className="min-h-11 rounded-lg border border-[#d6cfc4] px-3" /></label>
           <label className="grid gap-1 text-sm sm:col-span-2">Description<textarea maxLength={1000} rows={2} value={item.description} onChange={(event) => changeItem(index, { description: event.target.value })} className="rounded-lg border border-[#d6cfc4] px-3 py-2" /></label>
           <label className="grid gap-1 text-sm sm:col-span-2">Why this work is proposed<textarea maxLength={500} rows={2} value={item.rationale} onChange={(event) => changeItem(index, { rationale: event.target.value })} className="rounded-lg border border-[#d6cfc4] px-3 py-2" /></label>
           <label className="grid gap-1 text-sm sm:col-span-2">Suggested owner role <span className="text-xs font-normal text-slate-500">A hint only—choose a real teammate below.</span><input maxLength={80} value={item.suggestedOwnerRole} onChange={(event) => changeItem(index, { suggestedOwnerRole: event.target.value })} className="min-h-11 rounded-lg border border-[#d6cfc4] px-3" /></label>
@@ -97,9 +97,9 @@ export function GoalManager({ goal, plan, items, members }: {
     </form>}
     {editable && plan?.status === "proposed" && !editingPlan && <div className="mt-5 border-t border-[#e4ddd2] pt-5">
       <button type="button" onClick={() => setReviewing(!reviewing)} className="min-h-11 rounded-xl bg-[#342555] px-4 py-2 text-sm font-semibold text-white">{reviewing ? "Close approval review" : "Review exact plan for approval"}</button>
-      {reviewing && <div className="mt-4 rounded-xl border border-[#c9bdd9] bg-white p-4"><h3 className="text-base font-semibold">Approve revision {plan.revision}?</h3><p className="mt-2 text-sm">{goal.title}</p><p className="mt-1 text-sm text-slate-600">Success: {goal.success_criteria || "Not defined"}</p>
+      {reviewing && <div className="mt-4 rounded-xl border border-[#c9bdd9] bg-white p-4"><h3 className="text-base font-semibold">Approve this plan?</h3><p className="mt-2 text-sm">{goal.title}</p><p className="mt-1 text-sm text-slate-600">Success: {goal.success_criteria || "Not defined"}</p>
         <ol className="mt-3 list-inside list-decimal space-y-2 text-sm">{items.map((item) => <li key={item.id}>{item.title} — {labelFor(item.assignee_user_id)}{item.due_at ? ` · ${item.due_at.slice(0, 10)}` : ""} · {item.priority}{item.rationale && <p className="ml-5 text-xs text-slate-600">Why: {item.rationale}</p>}</li>)}</ol>
-        <p className="mt-3 text-sm font-semibold">This creates exactly {items.length} internal Work Items. It does not authorize external actions.</p>
+        <p className="mt-3 text-sm font-semibold">This assigns {items.length} {items.length === 1 ? "task" : "tasks"} inside CrazyLoops. It does not authorize external actions.</p>
         <button type="button" disabled={pending || !goal.success_criteria || items.some((item) => !item.assignee_user_id)} onClick={() => void run(() => approveGoalPlanAction({ goalId: goal.id, planId: plan.id, revision: plan.revision }))} className="mt-3 min-h-11 rounded-xl bg-[#342555] px-4 text-sm font-semibold text-white disabled:opacity-40">Approve and create work</button>
         {items.some((item) => !item.assignee_user_id) && <p className="mt-2 text-xs text-red-800">Assign every step before approval.</p>}
       </div>}

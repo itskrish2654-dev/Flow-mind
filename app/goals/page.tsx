@@ -26,7 +26,7 @@ export default async function GoalsPage() {
           return <li key={goal.id}><Link href={`/goals/${goal.id}`} className="block h-full rounded-2xl border border-[#e4ddd2] bg-white p-5 shadow-sm transition hover:border-[#ae9bca] hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6047a0]">
             <div className="flex flex-wrap items-start justify-between gap-2"><h2 className="max-w-[36ch] break-words text-lg font-semibold">{goal.title}</h2><span className="rounded-full bg-[#f3eff8] px-3 py-1 text-xs font-semibold capitalize text-[#4b357d]">{goal.status.replaceAll("_", " ")}</span></div>
             <p className="mt-3 text-sm text-slate-600">Owner: {owner}{goal.target_date ? ` · Target ${new Date(`${goal.target_date}T12:00:00`).toLocaleDateString("en-GB")}` : ""}</p>
-            <p className="mt-3 text-sm font-medium text-[#4b357d]">{goal.progress ? `${goal.progress.completed}/${goal.progress.total} Work Items done${goal.progress.needsAttention ? ` · ${goal.progress.needsAttention} need attention` : ""}` : "No work active yet"}</p>
+            <p className="mt-3 text-sm font-medium text-[#4b357d]">{goal.progress ? `${goal.progress.completed}/${goal.progress.total} tasks done${goal.progress.needsAttention ? ` · ${goal.progress.needsAttention} need attention` : ""}` : "No work active yet"}</p>
           </Link></li>;
         })}</ul>}
       </section>

@@ -12,6 +12,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import type { Json } from "@/lib/supabase/types";
 import { createImmutableWorkflowVersion, loadWorkflowSnapshot } from "@/lib/workflow-versioning";
 import { deleteWorkflow, setWorkflowPublication } from "@/app/actions/workflow";
+import { trackProductEvent } from "@/lib/observability";
 
 export async function dismissAutomationSuggestion(formData: FormData) {
   const id = z.uuid().safeParse(formData.get("suggestionId"));
@@ -106,6 +107,7 @@ export async function changeAutomationActivation(formData: FormData) {
   }
   const result = await setWorkflowPublication(suggestion.workflow_id, input.data.activate === "yes");
   if (!result.ok) throw new Error(result.error);
+  if (input.data.activate === "yes") await trackProductEvent({ event: "automation_activated", userId: auth.user.id });
   revalidatePath("/automations");
   revalidatePath(`/automations/${suggestion.id}`);
   redirect(`/automations/${suggestion.id}`);

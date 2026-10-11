@@ -9,7 +9,7 @@ const groups = [
   { key: "suggested", title: "Suggested", description: "Patterns CrazyLoops noticed. Nothing runs until you activate it." },
   { key: "paused", title: "Paused", description: "These will not prepare new work until you resume them." },
   { key: "configured", title: "Ready for review", description: "A draft exists, but it is not active." },
-  { key: "disabled", title: "Disabled", description: "These workflows have been archived and cannot run." },
+  { key: "disabled", title: "Disabled", description: "These automations have been archived and cannot run." },
 ] as const;
 
 export default async function AutomationsPage() {
@@ -21,6 +21,7 @@ export default async function AutomationsPage() {
       <h1 className="mt-2 text-3xl font-semibold tracking-tight text-[#272536] sm:text-4xl">Automations</h1>
       <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-700">CrazyLoops can notice repeated completed work and suggest a safer way to prepare the next instance. You decide what it does and when it starts. External actions still require your approval.</p>
     </header>
+    {suggestions.length === 0 && <div className="mt-6 rounded-2xl border border-[#ded6ca] bg-white p-5 text-sm text-slate-600"><p>Nothing to automate yet. Complete a few similar tasks in My Day; CrazyLoops only suggests a repeatable setup when it has real examples.</p><Link href="/my-day" className="mt-2 inline-flex min-h-11 items-center font-semibold text-[#4b357d] underline underline-offset-4">Open My Day →</Link></div>}
     {groups.map((group) => {
       const entries = suggestions.filter((item) => item.status === group.key || (group.key === "configured" && item.status === "accepted"));
       return <section key={group.key} aria-labelledby={`${group.key}-title`} className="mt-8">

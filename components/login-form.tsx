@@ -68,19 +68,20 @@ export function LoginForm({
     let navigationStarted = false;
 
     try {
+      const destination = mode === "signup" && nextPath === "/dashboard" ? "/getting-started" : nextPath;
       const result = await authenticateWithPassword(
         mode === "recovery"
           ? {
               mode,
               email: email.trim(),
-              nextPath,
+              nextPath: destination,
               ...(captchaRequired && captchaToken ? { captchaToken } : {}),
             }
           : {
               mode,
               email: email.trim(),
               password,
-              nextPath,
+              nextPath: destination,
               ...(captchaRequired && captchaToken ? { captchaToken } : {}),
             },
       );
@@ -91,7 +92,7 @@ export function LoginForm({
       if (result.sessionCreated) {
         navigationStarted = true;
         setProgress("opening");
-        window.location.replace(nextPath);
+        window.location.replace(destination);
       } else {
         setNotice(result.notice ?? "Check your email, then return here to sign in.");
       }
@@ -113,9 +114,9 @@ export function LoginForm({
       ? "Create your workspace"
       : "Recover your account";
   const description = mode === "login"
-    ? "Log in to access only your saved automations."
+    ? "Log in to your company workspace and pick up your work."
     : mode === "signup"
-      ? "Sign up to keep every workflow private and tied to your account."
+      ? "Create a private workspace, invite your team, and turn company goals into work."
       : "Enter your email and we’ll send a secure recovery link.";
 
   return (
@@ -123,7 +124,7 @@ export function LoginForm({
       <div className="absolute inset-x-0 top-0 h-1 bg-[#f1c94b]" />
       <div className="flex items-center gap-3">
         <span className="flex size-10 items-center justify-center rounded-xl border border-[#e4c35d] bg-[#fff2bd] text-[#8a6200]"><Zap className="size-[18px] fill-current" /></span>
-        <div><p className="text-lg font-bold tracking-[-0.03em] text-slate-950">CrazyLoops</p><p className="text-[11px] text-slate-600">Your private automation workspace</p></div>
+        <div><p className="text-lg font-bold tracking-[-0.03em] text-slate-950">CrazyLoops</p><p className="text-[11px] text-slate-600">Your company work, in one place</p></div>
       </div>
 
       {isSubmitting ? (
@@ -139,7 +140,7 @@ export function LoginForm({
             {progress === "opening" ? "You’re all set" : mode === "login" ? "Signing you in" : mode === "signup" ? "Creating your workspace" : "Requesting recovery"}
           </h1>
           <p className="mt-2 max-w-[280px] text-sm leading-6 text-slate-500">
-            {progress === "opening" ? "Opening your private automation workspace now." : "Securely verifying your request. This usually takes just a few seconds."}
+            {progress === "opening" ? "Opening your company workspace now." : "Securely verifying your request. This usually takes just a few seconds."}
           </p>
           <div className="mt-7 h-1.5 w-56 overflow-hidden rounded-full bg-[#eee9df]"><span className="auth-progress-bar block h-full w-1/2 rounded-full bg-[#d7aa2f]" /></div>
         </div>

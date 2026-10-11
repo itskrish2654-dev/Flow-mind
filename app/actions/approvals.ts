@@ -6,6 +6,8 @@ import { z } from "zod";
 
 import { decideCurrentUserApproval } from "@/lib/approvals";
 import { decideAndExecuteCurrentUserAction } from "@/lib/action-executions";
+import { getAuthenticatedContext } from "@/lib/auth";
+import { trackProductEvent } from "@/lib/observability";
 
 const ApprovalActionSchema = z.object({
   id: z.uuid(),
@@ -32,6 +34,15 @@ export async function decideMyApproval(formData: FormData): Promise<void> {
         decision: parsed.data.decision,
         rejectionReason: parsed.data.decision === "rejected" ? parsed.data.rejectionReason || null : null,
       });
+    }
+    if (action && parsed.data.decision === "approved") {
+      const auth = await getAuthenticatedContext();
+      if (auth) {
+        await trackProductEvent({ event: "external_action_approved", userId: auth.user.id });
+        if (action.status === "succeeded" && action.acknowledged && action.externally_delivered) {
+          await trackProductEvent({ event: "external_action_executed", userId: auth.user.id });
+        }
+      }
     }
   } catch {
     redirect("/my-day?approval_error=decision_failed");

@@ -78,7 +78,7 @@ export default async function ConnectionsPage({
           </p>
           <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-950">Connections</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
-            Connect Gmail to bring work into CrazyLoops and send exact approved emails. {googleSheetsLiveAcceptanceEnabled() ? "Google Sheets is temporarily available in this isolated staging environment for live acceptance." : "Other integrations remain unavailable until their live-provider checks are complete."} {notionLiveAcceptanceEnabled() ? "Notion connection is open here for live acceptance; its workflows remain unavailable." : ""}
+            Connect only the apps your work needs. CrazyLoops shows which actions are available and when a connection needs attention. {googleSheetsLiveAcceptanceEnabled() ? "Google Sheets is available here for isolated live acceptance." : ""} {notionLiveAcceptanceEnabled() ? "Notion connection is open here for live acceptance; its workflows remain unavailable." : ""}
           </p>
         </div>
         <p className="max-w-xs text-xs leading-5 text-slate-500">
