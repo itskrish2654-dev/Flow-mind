@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { after } from "next/server";
 
 import { AutomationWorkspace } from "@/components/automation-workspace";
 import { getAuthenticatedContext } from "@/lib/auth";
@@ -11,7 +12,7 @@ import {
 
 export default async function DashboardPage() {
   const auth = await getAuthenticatedContext();
-  if (auth) await trackProductEvent({ event: "dashboard_viewed", userId: auth.user.id });
+  if (auth) after(() => trackProductEvent({ event: "dashboard_viewed", userId: auth.user.id }));
   const connections = auth ? await listConnectionViews(auth.user.id) : [];
   const cookieStore = await cookies();
   const draftToken = cookieStore.get(HOMEPAGE_DEMO_DRAFT_COOKIE)?.value;

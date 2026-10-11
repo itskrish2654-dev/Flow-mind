@@ -11,6 +11,14 @@ test("polish auth deduplicates per server render without persistent identity cac
   assert.match(auth, /resolveTrustedWorkspaceMembership\(user\.id\)/);
   assert.doesNotMatch(auth, /unstable_cache|use cache|new Map|localStorage/);
 });
+test("page-view analytics run after the response without delaying work screens", () => {
+  for (const path of ["app/my-day/page.tsx", "app/dashboard/page.tsx"]) {
+    const page = source(path);
+    assert.match(page, /import \{ after \} from "next\/server"/);
+    assert.match(page, /after\(\(\) => trackProductEvent\(/);
+    assert.doesNotMatch(page, /await trackProductEvent\(/);
+  }
+});
 test("work navigation uses trusted role presentation and avoids unrelated readiness fetches", () => {
   const navigation = source("app/dashboard/layout.tsx");
   const role = source("app/actions/workspace-navigation.ts");
