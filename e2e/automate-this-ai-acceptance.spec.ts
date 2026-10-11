@@ -31,6 +31,7 @@ test("reviewed AI automation prepares one real provider result for a future Work
   let cleanupFailure: unknown;
   try {
     for (const role of ["owner", "outsider"]) {
+      console.log(`Automate This acceptance: creating ${role} session`);
       const email = `automate-this-${role}-${marker}@example.com`;
       const password = `At!${randomBytes(24).toString("base64url")}7z`;
       const created = await admin.auth.admin.createUser({
@@ -45,36 +46,47 @@ test("reviewed AI automation prepares one real provider result for a future Work
       const context = await browser.newContext({ viewport: { width: role === "owner" ? 1365 : 390, height: 850 } });
       browserContexts.push(context);
       const page = await context.newPage();
-      await page.goto("/login?next=/automations");
+      await page.goto("/login?next=/automations", { waitUntil: "domcontentloaded", timeout: 45_000 });
       await page.getByLabel("Email address").fill(email);
       await page.getByLabel("Password").fill(password);
       await page.getByRole("button", { name: "Log in securely" }).click();
-      await page.waitForURL(/\/(dashboard|automations)(?:$|[/?#])/, { timeout: 30_000 });
+      try {
+        await page.waitForURL((target) => ["/dashboard", "/automations"].includes(target.pathname), {
+          timeout: 30_000, waitUntil: "domcontentloaded",
+        });
+      } catch {
+        const alerts = (await page.getByRole("alert").allTextContents()).map((value) => value.trim()).filter(Boolean);
+        throw new Error(`Disposable login did not complete. Path: ${new URL(page.url()).pathname}; alerts: ${alerts.join(" | ") || "none"}`);
+      }
+      console.log(`Automate This acceptance: ${role} session ready`);
     }
     const owner = users[0];
     const ownerPage = browserContexts[0].pages()[0];
     const outsiderPage = browserContexts[1].pages()[0];
+    const completedAt = new Date(Date.now() - 60_000).toISOString();
     for (let index = 0; index < 3; index += 1) {
       const item = await admin.from("work_items").insert({
         workspace_id: owner.workspaceId, assignee_user_id: owner.id,
         title, summary: `Completed disposable manager update example ${index + 1}.`,
-        source_type: "internal", status: "done", resolved_at: new Date().toISOString(),
+        source_type: "internal", status: "done", resolved_at: completedAt,
       }).select("id").single();
       if (item.error || !item.data) throw new Error("Example Work Item fixture failed.");
       const deliverable = await admin.from("work_item_deliverables").insert({
         workspace_id: owner.workspaceId, owner_user_id: owner.id, work_item_id: item.data.id,
         request_key: randomUUID(), title: `Manager update example ${index + 1}`,
         content: `A disposable reviewed manager update example ${index + 1}.`,
-        ai_assisted: true, status: "final", finalized_at: new Date().toISOString(),
+        ai_assisted: true, status: "final", finalized_at: completedAt,
       });
       if (deliverable.error) throw new Error("Example deliverable fixture failed.");
     }
     await ownerPage.goto("/automations");
+    console.log("Automate This acceptance: reviewed evidence inserted");
     await expect(ownerPage.getByRole("heading", { name: "Automations" })).toBeVisible();
     const suggestionCard = ownerPage.getByRole("article").filter({ hasText: title });
     await expect(suggestionCard).toHaveCount(1);
     await expect(suggestionCard).toContainText("3 completed examples");
     await suggestionCard.getByRole("link", { name: "Automate this" }).click();
+    await ownerPage.waitForURL(/\/automations\/[0-9a-f-]{36}$/);
     const suggestionId = new URL(ownerPage.url()).pathname.split("/").at(-1);
     if (!suggestionId) throw new Error("Suggestion URL was unavailable.");
     await outsiderPage.goto(`/automations/${suggestionId}`);
@@ -82,6 +94,11 @@ test("reviewed AI automation prepares one real provider result for a future Work
     await ownerPage.getByRole("button", { name: "Save for review" }).click();
     await expect(ownerPage.getByRole("button", { name: "Activate reviewed draft" })).toBeVisible();
     await ownerPage.getByRole("button", { name: "Activate reviewed draft" }).click();
+    await expect.poll(async () => {
+      const activation = await admin.from("automation_suggestions").select("status")
+        .eq("id", suggestionId).eq("workspace_id", owner.workspaceId).single();
+      return activation.error?.code ?? activation.data?.status ?? "missing";
+    }, { timeout: 15_000 }).toBe("active");
     await expect(ownerPage.getByText(/Current state: active\./)).toBeVisible();
     const future = await admin.from("work_items").insert({
       workspace_id: owner.workspaceId, assignee_user_id: owner.id,
@@ -133,6 +150,9 @@ test("reviewed AI automation prepares one real provider result for a future Work
           .eq("workspace_id", user.workspaceId).eq("user_id", user.id);
         if (workflows.error) throw new Error("Disposable workflow cleanup scope failed.");
         for (const workflow of workflows.data) {
+          const removedExecutions = await admin.from("workflow_executions").delete()
+            .eq("workflow_id", workflow.id).eq("user_id", user.id);
+          if (removedExecutions.error) throw new Error(`Disposable execution cleanup failed: ${removedExecutions.error.code}`);
           const removedWorkflow = await admin.from("workflows").delete().eq("id", workflow.id)
             .eq("workspace_id", user.workspaceId).eq("user_id", user.id);
           if (removedWorkflow.error) throw new Error(`Disposable workflow cleanup failed: ${removedWorkflow.error.code}`);
