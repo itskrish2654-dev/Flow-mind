@@ -1,5 +1,23 @@
 @import "tailwindcss";
 
+/* Shared work surfaces: meaningful cards inside open, separated sections. */
+.dashboard-theme { --work-ink: #272536; --work-line: #ded6ca; --work-accent: #4b357d; }
+.work-page-header { display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:space-between; gap:20px; padding-bottom:24px; border-bottom:1px solid #ded6ca; }
+.work-page-header + * { margin-top:24px; }
+.work-page-header h1 { margin-top:8px; font-size:clamp(28px,3vw,36px); line-height:1.18; font-weight:600; letter-spacing:-1px; color:#272536; }
+.work-eyebrow { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:1.6px; color:#856b36; }
+.work-description { max-width:65ch; margin-top:12px; font-size:14px; line-height:1.75; color:#586174; }
+.work-header-actions { max-width:100%; }
+.work-section { padding-block:24px; border-top:1px solid #ded6ca; min-width:0; }
+.work-button { display:inline-flex; align-items:center; min-height:44px; padding:10px 16px; border-radius:8px; background:#4b357d; color:white; font-size:13px; font-weight:600; }
+.work-loading { padding:80px 24px 32px; max-width:1100px; margin:auto; }
+.dashboard-theme .work-navigation > a { min-height:40px; height:auto; justify-content:flex-start; padding:9px 12px; font-size:13px; gap:10px; }
+.dashboard-theme .work-navigation > a[aria-current="page"] { background:#fff7dc; color:#725300; }
+.dashboard-theme aside { overflow-y:auto; }
+.dashboard-theme :is(main,form,article) :focus-visible { outline:2px solid #6047a0; outline-offset:3px; }
+@media(min-width:1024px) { .work-loading { padding-top:40px; } }
+@media(max-width:640px) { .work-page-header { gap:12px; } .work-header-actions { width:100%; } }
+
 @keyframes auth-progress {
   0% {
     transform: translateX(-110%);

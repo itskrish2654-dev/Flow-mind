@@ -27,6 +27,7 @@ export function GoalManager({ goal, plan, items, members }: {
   const [editingPlan, setEditingPlan] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [pending, setPending] = useState(false);
+  const [pendingLabel, setPendingLabel] = useState("Saving your change…");
   const [notice, setNotice] = useState<string | null>(null);
   const [planItems, setPlanItems] = useState<ItemEdit[]>(items.length ? items.map((item) => ({
     title: item.title, description: item.description ?? "", rationale: item.rationale ?? "",
@@ -34,14 +35,17 @@ export function GoalManager({ goal, plan, items, members }: {
     dueDate: item.due_at?.slice(0, 10) ?? "", priority: item.priority,
   })) : [emptyItem()]);
   const labelFor = (id: string | null) => members.find((member) => member.userId === id)?.label ?? "Unassigned";
-  async function run(action: () => Promise<{ ok: boolean; error?: string; question?: string }>) {
+  async function run(action: () => Promise<{ ok: boolean; error?: string; question?: string }>, label = "Saving your change…") {
     if (pending) return;
-    setPending(true); setNotice(null);
+    setPending(true); setPendingLabel(label); setNotice(null);
+    try {
     const result = await action();
-    setPending(false);
     if (!result.ok) setNotice(result.error ?? "This change could not be saved.");
     else if (result.question) setNotice(result.question);
     else { setEditingGoal(false); setEditingPlan(false); setReviewing(false); router.refresh(); }
+    } catch {
+      setNotice("We couldn’t confirm the result. Refresh to check the saved state before trying again.");
+    } finally { setPending(false); }
   }
   function changeItem(index: number, change: Partial<ItemEdit>) {
     setPlanItems((current) => current.map((item, position) => position === index ? { ...item, ...change } : item));
@@ -52,8 +56,9 @@ export function GoalManager({ goal, plan, items, members }: {
     {editable && <div className="mt-4 flex flex-wrap gap-2">
       <button type="button" onClick={() => { setEditingGoal(!editingGoal); setEditingPlan(false); }} className="min-h-11 rounded-xl border border-[#c9bdd9] px-4 py-2 text-sm font-semibold text-[#4b357d] hover:bg-white">{editingGoal ? "Close goal edits" : "Edit goal"}</button>
       <button type="button" onClick={() => { setEditingPlan(!editingPlan); setEditingGoal(false); }} className="min-h-11 rounded-xl border border-[#c9bdd9] px-4 py-2 text-sm font-semibold text-[#4b357d] hover:bg-white">{editingPlan ? "Close plan editor" : plan ? "Revise plan" : "Write plan"}</button>
-      <button type="button" disabled={pending} onClick={() => void run(async () => generateGoalPlanAction(goal.id))} className="min-h-11 rounded-xl border border-[#c9bdd9] px-4 py-2 text-sm font-semibold text-[#4b357d] hover:bg-white disabled:opacity-50">Propose plan with AI</button>
+      <button type="button" disabled={pending} onClick={() => void run(async () => generateGoalPlanAction(goal.id), "Preparing an AI proposal. You’ll review it before assigning work.")} className="min-h-11 rounded-xl border border-[#c9bdd9] px-4 py-2 text-sm font-semibold text-[#4b357d] hover:bg-white disabled:opacity-50">{pending ? "Please wait…" : "Propose plan with AI"}</button>
     </div>}
+    {pending && <p role="status" aria-live="polite" className="mt-4 text-sm text-slate-600">{pendingLabel}</p>}
     {notice && <p role="status" className="mt-4 rounded-xl border border-[#e4ddd2] bg-white p-3 text-sm text-[#583c27]">{notice}</p>}
     {editingGoal && editable && <form className="mt-5 grid gap-4 border-t border-[#e4ddd2] pt-5 sm:grid-cols-2" onSubmit={(event) => {
       event.preventDefault(); const data = new FormData(event.currentTarget);

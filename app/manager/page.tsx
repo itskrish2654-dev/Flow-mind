@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { getAuthenticatedContext } from "@/lib/auth";
 import { isActiveTeamWork } from "@/lib/manager-work-core";
 import { loadManagerCockpit } from "@/lib/manager-work";
+import { PageHeader } from "@/components/workspace/page-header";
 
 function dateLabel(value: string | null) {
   return value ? new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeZone: "UTC" })
@@ -21,17 +22,14 @@ export default async function ManagerPage() {
     .filter(({ items }) => items.length > 0);
   return <main className="min-w-0 flex-1 overflow-y-auto bg-[#f7f4ee] px-4 pb-12 pt-20 text-[#272536] sm:px-8 lg:pt-8">
     <div className="mx-auto max-w-6xl">
-      <header><p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#856b36]">Company work</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">Team work</h1>
-        <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">A view of assigned work and goal progress—not private conversations, email or employee activity tracking.</p>
-      </header>
-      <section aria-labelledby="manager-brief" className="mt-7 rounded-2xl border border-[#ded6ca] bg-white p-5 sm:p-7">
+      <PageHeader eyebrow="Company work" title="Team work" description="A view of assigned work and goal progress—not private conversations, email or employee activity tracking."><Link href="/goals" className="work-button">Manage goals →</Link></PageHeader>
+      <section aria-labelledby="manager-brief" className="work-section mt-7">
         <h2 id="manager-brief" className="text-xl font-semibold">Today’s brief</h2>
         <p className="mt-2 text-sm text-slate-600">Counts reflect tasks from approved Goal plans in this company. Completed tasks do not by themselves prove the business outcome.</p>
         <dl className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">{[
           ["Active", brief.active], ["Completed", brief.completed], ["Blocked", brief.blocked],
           ["Overdue", brief.overdue], ["Due within 48 hours", brief.dueSoon], ["Decisions", brief.decisions],
-        ].map(([name, value]) => <div key={name} className="rounded-xl border border-[#e4ddd2] bg-[#fcfbf8] p-3"><dt className="text-xs text-slate-600">{name}</dt><dd className="mt-1 text-2xl font-semibold">{value}</dd></div>)}</dl>
+        ].map(([name, value]) => <div key={name} className="border-l border-[#ded6ca] pl-4"><dt className="text-xs text-slate-600">{name}</dt><dd className="mt-1 text-2xl font-semibold">{value}</dd></div>)}</dl>
         {brief.decisions > 0 && <Link href="/my-day" className="mt-4 inline-block text-sm font-semibold text-[#4b357d] underline underline-offset-2">Review your decisions</Link>}
       </section>
       <section aria-labelledby="manager-goals" className="mt-7">

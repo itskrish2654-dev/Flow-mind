@@ -1,9 +1,12 @@
 import "server-only";
+import { cache } from "react";
 
 import { createClient } from "@/lib/supabase/server";
 import { resolveTrustedWorkspaceMembership } from "@/lib/workspace-context";
 
-export async function getAuthenticatedContext() {
+// React memoizes only inside this server render. Never persist identity or
+// membership across requests: actions and subsequent renders re-authorize.
+export const getAuthenticatedContext = cache(async function getAuthenticatedContext() {
   try {
     const supabase = await createClient();
     const {
@@ -22,4 +25,4 @@ export async function getAuthenticatedContext() {
   } catch {
     return null;
   }
-}
+});

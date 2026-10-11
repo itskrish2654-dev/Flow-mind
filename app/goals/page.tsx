@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PageHeader } from "@/components/workspace/page-header";
 import { redirect } from "next/navigation";
 
 import { CreateGoalForm } from "@/components/goals/create-goal-form";
@@ -10,11 +11,8 @@ export default async function GoalsPage() {
   if (!auth) redirect("/login?next=/goals");
   const [{ goals, canManage }, members] = await Promise.all([listWorkspaceGoals(), listGoalMembers()]);
   return <main className="min-w-0 flex-1 overflow-y-auto bg-[#f7f4ee] px-4 pb-12 pt-16 text-[#272536] sm:px-8 lg:pt-8">
-    <div className="mx-auto max-w-5xl">
-      <header className="mb-8"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#856b36]">Work OS</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">Goals</h1>
-        <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">Turn a clear outcome into a reviewed plan and track progress from work your team actually completes.</p>
-      </header>
+    <div className="mx-auto max-w-6xl">
+      <PageHeader eyebrow="Company outcomes" title="Goals" description="Turn a clear outcome into a reviewed plan and track progress from work your team actually completes." />
       {canManage && <Link href="/manager" className="mb-5 inline-flex min-h-11 items-center rounded-xl border border-[#c9bdd9] bg-white px-4 text-sm font-semibold text-[#4b357d] hover:bg-[#f3eff8]">Open team work view →</Link>}
       {canManage && <CreateGoalForm members={members} currentUserId={auth.user.id} />}
       <section aria-label="Workspace goals" className="mt-8">

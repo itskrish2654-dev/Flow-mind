@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PageHeader } from "@/components/workspace/page-header";
 import { redirect } from "next/navigation";
 
 import { KnowledgeDelete, KnowledgeUpload } from "@/components/knowledge-manager";
@@ -10,11 +11,8 @@ export default async function KnowledgePage() {
   if (!auth) redirect("/login?next=/knowledge");
   const { documents, canManage } = await listCompanyKnowledge();
   return <main className="min-w-0 flex-1 overflow-y-auto bg-[#f7f4ee] px-4 pb-12 pt-16 text-[#272536] sm:px-8 lg:pt-8">
-    <div className="mx-auto max-w-4xl">
-      <header className="mb-7"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#856b36]">Work OS</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">Company Knowledge</h1>
-        <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">Ask CrazyLoops uses these company documents as grounded sources. Everyone in this workspace can read them; only owners and admins can manage them. Uploaded text never instructs CrazyLoops to take an action.</p>
-      </header>
+    <div className="mx-auto max-w-6xl">
+      <PageHeader eyebrow="Shared context" title="Company Knowledge" description="Ask CrazyLoops uses these company documents as grounded sources. Everyone in this workspace can read them; only owners and admins can manage them. Uploaded text never instructs CrazyLoops to take an action." />
       {canManage && <div className="mb-7"><KnowledgeUpload /></div>}
       <section aria-label="Shared documents">
         {documents.length === 0 ? <div className="rounded-2xl border border-dashed border-[#d8caa8] bg-white p-8 text-center">

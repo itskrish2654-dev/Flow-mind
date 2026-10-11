@@ -43,8 +43,8 @@ export default async function GettingStartedPage() {
   }
 
   return <main className="min-w-0 flex-1 overflow-y-auto bg-[#f7f4ee] px-4 pb-16 pt-20 text-[#272536] sm:px-8 lg:pt-9">
-    <div className="mx-auto max-w-5xl">
-      <header className="rounded-3xl border border-[#ded6ca] bg-[#fffdfa] p-6 sm:p-9">
+    <div className="mx-auto max-w-6xl">
+      <header className="work-page-header">
         <p className="text-xs font-semibold uppercase tracking-[0.15em] text-[#725300]">Getting started · {workspace.name}</p>
         <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">{canManage ? "Bring your company into CrazyLoops" : `Welcome to ${workspace.name}`}</h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-700">{canManage

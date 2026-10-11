@@ -8,10 +8,10 @@ const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 export const metadata: Metadata = {
   metadataBase: new URL("https://www.crazy-loops.com"),
   title: {
-    default: "CrazyLoops — Run the work. Not every task.",
+    default: "CrazyLoops — From company goals to completed work. With AI.",
     template: "%s | CrazyLoops",
   },
-  description: "Tell CrazyLoops what should happen. It turns the outcome into a reliable workflow and keeps the work moving.",
+  description: "Managers coordinate work, employees produce reviewed results with AI, and teams make repeated work repeatable.",
   applicationName: "CrazyLoops",
   authors: [{ name: "CrazyLoops" }],
   creator: "CrazyLoops",
@@ -22,13 +22,13 @@ export const metadata: Metadata = {
     type: "website",
     siteName: "CrazyLoops",
     url: "https://www.crazy-loops.com/",
-    title: "CrazyLoops — Run the work. Not every task.",
-    description: "Tell CrazyLoops what should happen. It turns the outcome into a reliable workflow and keeps the work moving.",
+    title: "CrazyLoops — From company goals to completed work. With AI.",
+    description: "Managers coordinate work, employees produce reviewed results with AI, and teams make repeated work repeatable.",
   },
   twitter: {
     card: "summary_large_image",
-    title: "CrazyLoops — Run the work. Not every task.",
-    description: "Tell CrazyLoops what should happen. It turns the outcome into a reliable workflow and keeps the work moving.",
+    title: "CrazyLoops — From company goals to completed work. With AI.",
+    description: "Managers coordinate work, employees produce reviewed results with AI, and teams make repeated work repeatable.",
   },
 };
 

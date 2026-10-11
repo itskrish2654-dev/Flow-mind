@@ -15,6 +15,7 @@ import { updateMyWorkItem } from "@/app/actions/work-items";
 import { dismissAutomationSuggestion } from "@/app/actions/automate-this";
 import { decideMyApproval } from "@/app/actions/approvals";
 import { StartMyDay } from "@/components/my-day/start-my-day";
+import { PageHeader } from "@/components/workspace/page-header";
 import type { MyDayApproval, MyDayData, MyDayItem, MyDayItemStatus } from "@/lib/my-day-model";
 import type { AutomationSuggestion } from "@/lib/automate-this";
 
@@ -151,7 +152,7 @@ function MyDaySection({
   totalCount?: number;
 }) {
   return (
-    <section aria-labelledby={id} className="rounded-3xl border border-[#ded6ca] bg-white/65 p-4 shadow-[0_18px_60px_rgba(44,39,31,0.035)] sm:p-6">
+    <section aria-labelledby={id} className="work-section">
       <SectionHeader id={id} title={title} description={description} icon={icon} count={totalCount} />
       {items.length > 0 ? (
         <>
@@ -161,9 +162,9 @@ function MyDaySection({
           )}
         </>
       ) : (
-        <div className="mt-5 rounded-2xl border border-dashed border-[#ddd3c2] bg-[#faf8f4] px-5 py-8 text-center">
-          <CircleCheck className="mx-auto size-5 text-[#a49372]" aria-hidden="true" />
-          <p className="mt-2 text-sm leading-6 text-slate-600">{empty}</p>
+        <div className="mt-4 flex items-start gap-3 py-3">
+          <CircleCheck className="mt-0.5 size-4 shrink-0 text-[#897850]" aria-hidden="true" />
+          <p className="text-sm leading-6 text-slate-600">{empty}</p>
         </div>
       )}
     </section>
@@ -205,18 +206,12 @@ export function MyDayView({ data, automationSuggestions = [], actionError = fals
   return (
     <div className="h-dvh overflow-y-auto bg-[#f7f4ee] text-[#34313d]">
       <main className="mx-auto w-full max-w-6xl px-4 pb-16 pt-20 sm:px-6 sm:pb-20 lg:px-8 lg:pt-10">
-        <header className="relative overflow-hidden rounded-3xl border border-[#ded6ca] bg-[#fffdfa] px-5 py-7 shadow-[0_20px_70px_rgba(50,43,30,0.055)] sm:px-8 sm:py-9">
-          <div className="pointer-events-none absolute -right-20 -top-24 size-72 rounded-full bg-[#fff0b9]/55 blur-3xl" aria-hidden="true" />
-          <div className="relative max-w-3xl">
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#8a6200]">Your workday, clearly</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-[-0.045em] text-[#272536] sm:text-4xl">My Day</h1>
-            <p className="mt-3 max-w-xl text-sm leading-6 text-slate-600 sm:text-base">Here’s what needs your attention and what you can move forward.</p>
+        <PageHeader eyebrow="Your workday, clearly" title="My Day" description="Here’s what needs your attention and what you can move forward.">
             <StartMyDay summary={data.summary.sentence} startWith={data.startWith} />
             {data.managerAssigned.length === 0 && data.needsYou.length === 0 && data.approvals.length === 0 && <Link href="/getting-started" className="mt-4 inline-flex min-h-11 items-center text-sm font-semibold text-[#4b357d] underline underline-offset-4">New here? See how CrazyLoops works →</Link>}
-          </div>
-        </header>
+        </PageHeader>
 
-        <section aria-labelledby="daily-agenda-title" className="mt-6 rounded-2xl border border-[#ded6ca] bg-white p-5 sm:p-6">
+        <section aria-labelledby="daily-agenda-title" className="work-section mt-7">
           <h2 id="daily-agenda-title" className="text-lg font-semibold">Your daily agenda</h2>
           <p className="mt-1 text-xs text-slate-600">Grounded in your assigned tasks. Nothing is added from a guess.</p>
           {data.agenda.priorities.length ? <ol className="mt-4 space-y-2">{data.agenda.priorities.map((priority, index) => <li key={priority.href} className="flex gap-3 text-sm"><span className="font-semibold text-[#856b36]">{index + 1}.</span><Link href={priority.href} className="min-w-0 break-words font-medium text-[#4b357d] hover:underline">{priority.title}</Link><span className="text-xs text-slate-600">{priority.reason}</span></li>)}</ol>
@@ -248,7 +243,7 @@ export function MyDayView({ data, automationSuggestions = [], actionError = fals
         )}
 
         <div className="mt-6 grid items-start gap-6 lg:grid-cols-12">
-          <section aria-labelledby="approvals-title" className="rounded-3xl border border-[#ded6ca] bg-white/65 p-4 shadow-[0_18px_60px_rgba(44,39,31,0.035)] sm:p-6 lg:col-span-12">
+          <section aria-labelledby="approvals-title" className="work-section lg:col-span-12">
             <SectionHeader id="approvals-title" title="Approvals" description="Review exactly what is proposed. Approving authorizes that frozen action; provider success is recorded separately." icon={BadgeCheck} count={data.approvals.length} />
             {data.approvals.length > 0 ? (
               <div className="mt-5 grid gap-3 md:grid-cols-2">{data.approvals.map((approval) => <ApprovalCard key={approval.id} approval={approval} />)}</div>

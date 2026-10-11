@@ -538,7 +538,7 @@ test("5D-8c Slack send, reply, and trigger are available while Notion remains re
   const [connectorRegistry, connectorGuide, homepage] = await Promise.all([
     readFile("lib/connectors/registry.ts", "utf8"),
     readFile("docs/CONNECTORS_SLACK_NOTION.md", "utf8"),
-    readFile("app/page.tsx", "utf8"),
+    readFile("components/launch-home.tsx", "utf8"),
   ]);
   for (const capabilityId of [
     "notion_page_created_or_added",
@@ -564,7 +564,8 @@ test("5D-8c Slack send, reply, and trigger are available while Notion remains re
   assert.match(connectorRegistry, /public channels the installed bot can access/);
   assert.match(connectorRegistry, /Beta until live Notion public integration acceptance is complete/);
   assert.match(connectorGuide, /live acceptance/i);
-  assert.match(homepage, /Live acceptance pending/);
+  assert.match(homepage, /Pilot access depends on your connected accounts, granted permissions and supported actions/);
+  assert.match(homepage, /Connections do not grant access to every resource/);
 });
 
 test("5D-9 readiness uses registry TEST, LIVE, connection, and onboarding truth", () => {

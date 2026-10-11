@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PageHeader } from "@/components/workspace/page-header";
 import { redirect } from "next/navigation";
 
 import { dismissAutomationSuggestion } from "@/app/actions/automate-this";
@@ -15,12 +16,8 @@ const groups = [
 export default async function AutomationsPage() {
   const suggestions = await listMyAutomationSuggestions();
   if (!suggestions) redirect("/login?next=/automations");
-  return <main className="mx-auto w-full max-w-5xl px-4 pb-16 pt-20 sm:px-6 lg:px-8 lg:pt-10">
-    <header className="rounded-3xl border border-[#ded6ca] bg-[#fffdfa] p-6 sm:p-9">
-      <p className="text-xs font-semibold uppercase tracking-[0.15em] text-[#725300]">Your work, made repeatable</p>
-      <h1 className="mt-2 text-3xl font-semibold tracking-tight text-[#272536] sm:text-4xl">Automations</h1>
-      <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-700">CrazyLoops can notice repeated completed work and suggest a safer way to prepare the next instance. You decide what it does and when it starts. External actions still require your approval.</p>
-    </header>
+  return <main className="mx-auto w-full max-w-6xl px-4 pb-16 pt-20 sm:px-6 lg:px-8 lg:pt-10">
+    <PageHeader eyebrow="Your work, made repeatable" title="Automations" description="CrazyLoops can notice repeated completed work and suggest a safer way to prepare the next instance. You decide what it does and when it starts. External actions still require your approval." />
     {suggestions.length === 0 && <div className="mt-6 rounded-2xl border border-[#ded6ca] bg-white p-5 text-sm text-slate-600"><p>Nothing to automate yet. Complete a few similar tasks in My Day; CrazyLoops only suggests a repeatable setup when it has real examples.</p><Link href="/my-day" className="mt-2 inline-flex min-h-11 items-center font-semibold text-[#4b357d] underline underline-offset-4">Open My Day →</Link></div>}
     {groups.map((group) => {
       const entries = suggestions.filter((item) => item.status === group.key || (group.key === "configured" && item.status === "accepted"));

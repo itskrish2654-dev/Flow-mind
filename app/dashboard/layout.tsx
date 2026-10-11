@@ -30,6 +30,7 @@ import {
 import { deleteWorkflow, listWorkflows, type SavedWorkflow } from "@/app/actions/workflow";
 import { AccessibleDialog } from "@/components/accessible-dialog";
 import { createClient } from "@/lib/supabase/client";
+import { getWorkspaceNavigationRole } from "@/app/actions/workspace-navigation";
 
 type AutomationStatus = "Draft" | "Ready" | "Working" | "Running" | "Failed";
 type AccountDetails = {
@@ -94,6 +95,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [accountError, setAccountError] = useState<string | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [workspaceRole, setWorkspaceRole] = useState<"owner" | "admin" | "member" | null>(null);
+  const showingWorkflows = pathname.startsWith("/dashboard");
 
   const loadAutomations = useCallback(async () => {
     const result = await listWorkflows();
@@ -119,6 +122,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [nextCursor]);
 
   useEffect(() => {
+    if (!showingWorkflows) return;
     const initialLoad = window.setTimeout(() => void loadAutomations(), 0);
     const refresh = () => void loadAutomations();
     const activeChanged = (event: Event) => setActiveId((event as CustomEvent<string | null>).detail);
@@ -135,7 +139,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       window.removeEventListener("flowmind:active-workflow", activeChanged);
       window.removeEventListener("flowmind:status-changed", statusChanged);
     };
-  }, [loadAutomations]);
+  }, [loadAutomations, showingWorkflows]);
+
+  useEffect(() => {
+    let active = true;
+    void getWorkspaceNavigationRole().then((role) => { if (active) setWorkspaceRole(role); })
+      .catch(() => { if (active) setWorkspaceRole(null); });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -226,6 +237,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <p className="text-lg font-bold text-[#272536]">CrazyLoops</p>
             <button type="button" onClick={newAutomation} className="mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-[#d7aa2f] bg-[#fff7dc] px-4 text-sm font-semibold text-[#272536]"><Plus className="size-4" />Create workflow</button>
             <div className="mt-3 grid grid-cols-2 gap-1">
+              {(workspaceRole === "owner" || workspaceRole === "admin") && <Link href="/manager" onClick={() => setMobileNavOpen(false)} aria-current={pathname === "/manager" ? "page" : undefined} className="flex min-h-11 items-center justify-center gap-2 rounded-xl text-xs font-semibold text-slate-700 hover:bg-[#fff7dc]"><Building2 className="size-4" />Team work</Link>}
               <Link href="/my-day" onClick={() => setMobileNavOpen(false)} aria-current={pathname === "/my-day" ? "page" : undefined} className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl text-xs font-semibold ${pathname === "/my-day" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-700 hover:bg-[#f8f4ec]"}`}><SunMedium className="size-4" />My Day</Link>
               <Link href="/ask" onClick={() => setMobileNavOpen(false)} aria-current={pathname === "/ask" ? "page" : undefined} className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl text-xs font-semibold ${pathname === "/ask" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-700 hover:bg-[#f8f4ec]"}`}><MessageCircle className="size-4" />Ask</Link>
               <Link href="/activity" onClick={() => setMobileNavOpen(false)} aria-current={pathname === "/activity" ? "page" : undefined} className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl text-xs font-semibold ${pathname === "/activity" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-700 hover:bg-[#f8f4ec]"}`}><History className="size-4" />Activity</Link>
@@ -237,10 +249,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
+            {!showingWorkflows && <p className="px-2 text-xs leading-5 text-slate-600">Review decisions in My Day. Open an assigned task to work with AI.</p>}
+            {showingWorkflows && <>
             <p className="px-2 pb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">My automations</p>
             {isLoading ? <p role="status" className="flex min-h-11 items-center gap-2 px-2 text-sm text-slate-600"><LoaderCircle className="size-4 animate-spin" />Loading automations…</p> : automations.length === 0 ? <p className="rounded-xl bg-[#f8f4ec] px-3 py-4 text-sm text-slate-600">No saved automations yet.</p> : automations.map((automation) => (
               <Link key={automation.id} href={`/dashboard/projects/${automation.id}`} onClick={() => setMobileNavOpen(false)} className="flex min-h-12 items-center gap-3 rounded-xl px-3 py-2 text-sm text-slate-800 hover:bg-[#fff7dc]"><Workflow className="size-4 shrink-0 text-[#8a6200]" /><span className="min-w-0 flex-1 truncate">{automation.name}</span><span className="text-xs text-slate-500">{automation.status}</span></Link>
             ))}
+            </>}
           </div>
           <div className="border-t border-[#e4ddd2] p-3">
             {account && <p className="mb-2 truncate px-2 text-sm font-semibold text-slate-800">{account.displayName}<span className="block truncate text-xs font-normal text-slate-600">{account.email}</span></p>}
@@ -266,7 +281,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <button type="button" onClick={newAutomation} className="group flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-[#dcd4c8] bg-transparent text-[13px] font-semibold text-[#272536] transition hover:border-[#d7aa2f] hover:bg-[#fff8e3]">
             <span className="flex size-5 items-center justify-center rounded-md bg-[#fff0b9] text-[#8a6200] transition group-hover:bg-[#f1c94b] group-hover:text-[#272536]"><Plus className="size-3.5" /></span> New Automation
           </button>
-          <nav aria-label="Workspace" className="mt-3 grid grid-cols-2 gap-1">
+          <nav aria-label="Workspace" className="work-navigation mt-3 grid gap-1">
+            {(workspaceRole === "owner" || workspaceRole === "admin") && <Link href="/manager" aria-current={pathname === "/manager" ? "page" : undefined} className="flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm font-semibold text-slate-700 hover:bg-[#fff7dc]"><Building2 className="size-4" />Team work</Link>}
             <Link href="/my-day" aria-current={pathname === "/my-day" ? "page" : undefined} className={`flex h-9 items-center justify-center gap-1 rounded-lg text-[9px] font-semibold transition ${pathname === "/my-day" ? "bg-[#fff7dc] text-[#725300]" : "text-slate-500 hover:bg-[#f8f4ec] hover:text-slate-800"}`}>
               <SunMedium className="size-3.5" />My Day
             </Link>
@@ -295,6 +311,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+          {!showingWorkflows && <p className="px-3 py-4 text-xs leading-5 text-slate-600">Start with My Day. Open a task to work with AI, or review a decision there.<Link href="/dashboard" className="mt-3 block font-semibold text-[#4b357d] underline underline-offset-4">Advanced workflow builder →</Link></p>}
+          {showingWorkflows && <>
           <div className="flex items-center justify-between px-3 pb-2">
             <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-400">My Automations</p>
             {!isLoading && <span className="text-[9px] font-medium text-slate-400">{automations.length}</span>}
@@ -335,6 +353,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               )}
             </div>
           )}
+          </>}
         </div>
 
         <div className="border-t border-[#e4ddd2] px-3 py-3">

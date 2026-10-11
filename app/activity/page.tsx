@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PageHeader } from "@/components/workspace/page-header";
 import { redirect } from "next/navigation";
 
 import { activityLabel, activityOutcome, activitySourceHref, parseActivityCursor, parseActivityFilter, type ActivityFilter } from "@/lib/activity-core";
@@ -26,12 +27,8 @@ export default async function ActivityPage({ searchParams }: {
 
   return (
     <main className="min-w-0 flex-1 overflow-y-auto bg-[#f7f4ee] px-4 pb-12 pt-16 text-[#272536] sm:px-8 lg:pt-8">
-      <div className="mx-auto max-w-4xl">
-        <header className="mb-7">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#856b36]">Work OS</p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">Activity</h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">What needed attention, what was approved, and what CrazyLoops actually completed. Approval alone never means a provider received the action.</p>
-        </header>
+      <div className="mx-auto max-w-6xl">
+        <PageHeader eyebrow="Your work, with evidence" title="Activity" description="What needed attention, what was approved, and what CrazyLoops actually completed. Approval alone never means a provider received the action." />
         <nav aria-label="Activity filters" className="mb-6 flex flex-wrap gap-2">
           {filters.map(({ key, label }) => <Link key={key} href={`/activity?filter=${key}`} aria-current={filter === key ? "page" : undefined}
             className={`rounded-full border px-4 py-2 text-sm font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#725300] ${filter === key ? "border-[#b48b2c] bg-[#fff1ba] text-[#272536]" : "border-[#ddd5c9] bg-white text-slate-700 hover:border-[#b48b2c]"}`}>{label}</Link>)}

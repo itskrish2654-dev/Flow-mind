@@ -6,7 +6,7 @@ function source(path: string) {
   return readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 }
 
-const homepage = source("app/page.tsx");
+const homepage = source("components/launch-home.tsx");
 const layout = source("app/layout.tsx");
 const proxy = source("lib/supabase/proxy.ts");
 const login = source("app/login/page.tsx");
@@ -20,31 +20,27 @@ const trustPages = ["privacy", "terms", "security", "data-use", "support"]
 
 test("7B-0-1. root route is a public homepage and no longer redirects", () => {
   assert.doesNotMatch(homepage, /redirect\(/);
-  assert.match(homepage, /Run the work\./);
-  assert.match(homepage, /Not every task\./);
+  assert.match(homepage, /From company goals/);
+  assert.match(homepage, /to completed work/);
   assert.doesNotMatch(proxy, /pathname === "\/"/);
 });
 
-test("7B-0-2. homepage has truthful signup and product-demo calls to action", () => {
-  assert.match(homepage, /href="\/login\?mode=signup"/);
-  assert.match(homepage, /href="#product"/);
+test("7B-0-2. homepage has truthful pilot and work-journey calls to action", () => {
+  assert.match(homepage, /mailto:\$\{getSupportEmail\(\)\}/);
+  assert.match(homepage, /href="#how-it-works"/);
   assert.match(login, /mode\?: string/);
   assert.match(login, /=== "signup" \? "signup"/);
 });
 
-test("7B-0-3. hero demonstrates only production-supported capabilities", () => {
-  for (const claim of ["Request", "AI", "PDF", "Store"]) assert.match(homepage, new RegExp(claim));
-  const hero = homepage.slice(homepage.indexOf("function ProductDemo"), homepage.indexOf("export default function HomePage"));
-  assert.doesNotMatch(hero, /Slack|Stripe|Salesforce|Gmail|Google Sheets/);
+test("7B-0-3. hero illustrates a reviewed work journey, not fabricated live outcomes", () => {
+  for (const claim of ["COMPANY GOAL", "MY DAY", "Do with AI", "Illustrative workspace"]) assert.match(homepage, new RegExp(claim));
+  assert.match(homepage, /People approve the plan and review the result/);
 });
 
 test("7B-0-4. connector availability and beta status are explicit", () => {
-  assert.match(homepage, />Available</);
-  assert.match(homepage, /Webhook/);
-  assert.match(homepage, /HTTP JSON/);
-  assert.match(homepage, />Beta</);
-  assert.ok((homepage.match(/Google approval pending/g) ?? []).length >= 3);
-  assert.match(homepage, /More connections appear only after they pass production reliability testing/);
+  assert.match(homepage, /Pilot access depends on your connected accounts, granted permissions and supported actions/);
+  assert.match(homepage, /confirm available actions and resources together during pilot setup/);
+  assert.match(homepage, /Connections do not grant access to every resource/);
 });
 
 test("7B-0-5. homepage contains no fabricated proof or inflated support claims", () => {
@@ -52,7 +48,7 @@ test("7B-0-5. homepage contains no fabricated proof or inflated support claims",
 });
 
 test("7B-0-6. reliability and security claims remain bounded", () => {
-  for (const claim of ["version", "Retry-safe", "step-by-step status", "Private documents", "Account isolation", "Protected connections"]) {
+  for (const claim of ["Approval before action", "Sources, not invented certainty", "provider-confirmed outcomes", "private Ask conversations", "unfinished employee drafts"]) {
     assert.match(homepage, new RegExp(claim, "i"));
   }
   assert.doesNotMatch(homepage, /SOC 2|ISO 27001|HIPAA|bank-grade|military-grade|100% secure/i);
@@ -90,12 +86,13 @@ test("7B-0-11. homepage navigation is semantic and mobile-accessible without a J
   assert.match(homepage, /<header/);
   assert.match(homepage, /<main/);
   assert.match(homepage, /<footer/);
-  assert.match(homepage, /<details className="landing-mobile-menu/);
-  assert.match(homepage, /aria-label="Open navigation menu"/);
+  assert.match(homepage, /aria-label="Main navigation"/);
+  assert.match(homepage, /Skip to content/);
+  assert.doesNotMatch(homepage, /"use client"/);
 });
 
 test("7B-0-12. Google data disclosure links to the canonical data-use page", () => {
-  assert.match(homepage, /requests only the permissions required/);
+  assert.match(homepage, /granted permissions and supported actions/);
   assert.match(homepage, /href="\/data-use"/);
   assert.match(trustPages[3], /Google tokens and disconnection/);
   assert.match(trustPages[3], /not used for unrelated advertising/);
@@ -103,14 +100,13 @@ test("7B-0-12. Google data disclosure links to the canonical data-use page", () 
 
 test("7B-0-13. premium homepage uses the final outcome-first copy hierarchy", () => {
   const orderedClaims = [
-    "Run the work.",
-    "You already know what should happen.",
-    "You don’t start with boxes.",
-    "Simple to build.",
-    "Stop being the connection between your tools.",
-    "What you can build today",
-    "The loop is the product.",
-    "Describe it once.",
+    'label: "For managers"',
+    'label: "For employees"',
+    'label: "AI-assisted execution"',
+    'label: "Repeated work"',
+    "BUILT AROUND HUMAN JUDGEMENT",
+    "CONNECTED TO YOUR EVERYDAY WORK",
+    "THE FIRST-CUSTOMER PILOT",
   ];
   let previous = -1;
   for (const claim of orderedClaims) {

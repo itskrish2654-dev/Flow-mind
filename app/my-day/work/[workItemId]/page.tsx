@@ -5,6 +5,7 @@ import { notFound, redirect } from "next/navigation";
 import { completeWorkbenchWorkAction, finalizeWorkbenchResultAction, generateWorkbenchAction,
   prepareWorkbenchEmailAction, saveWorkbenchResultAction } from "@/app/actions/workbench";
 import { CopyButton } from "@/components/workbench/copy-button";
+import { PendingSubmit } from "@/components/workspace/pending-submit";
 import { getAuthenticatedContext } from "@/lib/auth";
 import type { Json } from "@/lib/supabase/types";
 import { loadWorkItemWorkbench } from "@/lib/workbench";
@@ -67,7 +68,7 @@ export default async function WorkItemWorkbenchPage({ params, searchParams }: {
   return <main className="min-w-0 flex-1 overflow-y-auto bg-[#f7f4ee] px-4 pb-20 pt-16 text-[#272536] sm:px-8 lg:pt-8">
     <div className="mx-auto max-w-5xl">
       <Link href="/my-day" className="text-sm font-semibold text-[#4b357d] hover:underline">← Back to My Day</Link>
-      <header className="mt-5 rounded-2xl border border-[#e4ddd2] bg-white p-5 sm:p-8">
+      <header className="mt-5 border-b border-[#ded6ca] pb-6">
         <p className="text-xs font-bold uppercase tracking-[0.16em] text-[#856b36]">Your assigned work</p>
         <h1 className="mt-2 break-words text-3xl font-semibold tracking-tight sm:text-4xl">{item.title}</h1>
         {item.summary && <p className="mt-4 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{item.summary}</p>}
@@ -79,7 +80,7 @@ export default async function WorkItemWorkbenchPage({ params, searchParams }: {
         {data.planItem?.description && <p className="mt-4 text-sm text-slate-700"><span className="font-semibold">Manager instructions:</span> {data.planItem.description}</p>}
       </header>
       {messages[result] && <p role="status" className="mt-4 rounded-xl border border-[#e4ddd2] bg-white p-4 text-sm">{messages[result]}</p>}
-      <section aria-labelledby="do-with-ai" className="mt-5 rounded-2xl border border-[#e4ddd2] bg-white p-5 sm:p-8">
+      <section aria-labelledby="do-with-ai" className="work-section mt-5">
         <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-xs font-bold uppercase tracking-[0.16em] text-[#856b36]">Task-focused assistance</p>
           <h2 id="do-with-ai" className="mt-2 text-2xl font-semibold">Do with AI</h2></div>
           <span className="rounded-full bg-[#f3eff8] px-3 py-1 text-xs font-semibold text-[#4b357d]">{mode.toLowerCase()} assistance</span></div>
@@ -90,7 +91,7 @@ export default async function WorkItemWorkbenchPage({ params, searchParams }: {
           <textarea id="workbench-instruction" name="instruction" required minLength={3} maxLength={2000} rows={3}
             defaultValue="Prepare a useful first draft for this task. Flag gaps in the available context."
             className="w-full min-w-0 rounded-xl border border-[#ded6ca] bg-[#fffdfa] p-3 text-sm leading-6 focus-visible:outline-2 focus-visible:outline-[#9b7309]" />
-          <button className="min-h-11 justify-self-start rounded-lg bg-[#4b357d] px-5 text-sm font-semibold text-white hover:bg-[#3d2968] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#4b357d]">Create draft</button>
+          <PendingSubmit busyText="AI is preparing a draft using this task and authorised context. Nothing is being sent. If the connection is interrupted, refresh to check the saved result before resubmitting." className="min-h-11 rounded-lg bg-[#4b357d] px-5 text-sm font-semibold text-white hover:bg-[#3d2968] disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#4b357d]">Create draft</PendingSubmit>
         </form> : <p className="mt-4 text-sm text-slate-600">This task is complete. Saved results remain available below.</p>}
       </section>
       {latestTurn && <section aria-labelledby="ai-draft" className="mt-5 rounded-2xl border border-[#e4ddd2] bg-white p-5 sm:p-8">
