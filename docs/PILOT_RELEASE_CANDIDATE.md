@@ -1,50 +1,36 @@
-# CrazyLoops Work OS — Pilot Release Candidate v1
+# CrazyLoops — first customer pilot release candidate v1
 
-This document describes the pilot scope, not a customer-production deployment. The pilot release is staged at `https://staging.crazy-loops.com` in the separate `crazyloops-staging` Vercel project and uses only the authorized acceptance Supabase project. The customer `flow-mind` project and frozen `main` branch are outside this release.
+This is a release record, not authorization to deploy customer production. The release branch is `codex/work-os-first-customer-rc-v1`. Its application source is frozen from the accepted Pilot Readiness commit `fb36771fd54b9b2817c612be6b018bc43b2132da`; obtain the release-record commit with `git rev-parse HEAD` on that branch. Do not merge or modify frozen `main` for this pilot gate.
 
-## Pilot-ready
+## Customer surface
 
-- Company workspaces with owner, admin, and member roles, invitations, and workspace switching.
-- My Day with durable Work Items and approval requests.
-- Ask CrazyLoops for grounded, cited answers from authorized work and Company Knowledge, with exact previews and approval before supported external actions.
-- Goals → grounded plan → manager review → assigned Work Items → deterministic progress and Activity history.
-- Private Company Knowledge documents with workspace-scoped retrieval.
-- Unified, company-safe Activity for work, approvals, actions, knowledge, and goals.
-- Gmail mailbox context, incoming actionable work, and exact approved email sending. Gmail is the only externally live-accepted Work OS connector in this candidate.
-- Existing first-party workflow primitives, subject to their normal publication, ownership, and quota checks.
+The normal first-company route is signup → Getting started → workspace name → invitation links and roles → Company Knowledge → Goal and reviewed AI plan → assigned Work Items → My Day and Do with AI → final work and manager progress. Ask, Activity, approvals, Automate This, and the existing workflow builder remain available under their established ownership and capability gates. Managers can see appropriate final work and progress, not private Ask conversations or private Workbench drafts.
 
-No pilot feature should be represented as working solely because connector code, an OAuth client, or credentials exist. The capability registry and Connections screen keep unaccepted providers out of the ready path.
+Gmail, Slack, and Google Calendar have accepted provider-backed paths in this lineage. Google Sheets write acceptance and Notion connection/action acceptance are restricted to the separate staging acceptance origin and Supabase project; their general customer-production capability flags remain off. Notion workflows are not pilot-ready. Internal test connectors, runner canaries, and unsupported operations must not be represented as customer-ready merely because their code exists.
 
-## Deferred
+## Deployment dependencies and preflight
 
-- Google Sheets: implementation and deterministic security tests are retained, but OAuth, Google Picker, selected-file access, read/append/update, acknowledgement, and isolation still need a dedicated live-provider acceptance. Its production operation and onboarding flags remain off.
-- Slack: preserve the separate in-progress branch and migration work; no live-provider acceptance or pilot exposure here.
-- Notion, Google Calendar, Airtable, HubSpot, and other unaccepted external providers: not pilot-ready. No fabricated provider acknowledgements.
-- OCR and embeddings. Knowledge retrieval covers the supported text/PDF extraction path only.
-- In-place reassignment of an active Goal plan after a member departs. The missing linked Work Item is surfaced instead of silently counting it complete.
-- A company-wide long-term approval/audit retention policy, beyond current application behavior.
+- Deploy only an explicitly approved release SHA to a customer environment separate from `crazyloops-staging`. Staging uses `https://staging.crazy-loops.com` and acceptance Supabase ref `gamdxwtgccluifatcrrs`; do not reuse those credentials, provider apps, or data for a customer.
+- Apply and verify the 53 ordered, transaction-bounded migrations in `supabase/migrations`, ending with `20261010000000_work_os_automate_this_v1.sql`, through the established migration pipeline. Take a database backup and record the pre-migration version/counts. Do not use ad hoc schema changes. The current checkout's Supabase CLI link is **not** the authorized acceptance project; verify the exact target ref before any linked CLI command.
+- Configure the required runtime names from `.env.example`: modern Supabase public URL/publishable key and server secret key, canonical site URL, Groq key, credential master key, rate-limit secret, cron and schedule-dispatch secrets as applicable, support address, and provider-specific OAuth/webhook secrets for integrations actually offered. `NEXT_PUBLIC_*` values are browser-visible; all other credentials remain server-only. Disable delegated runner paths unless separately accepted for that target.
+- Configure the customer origin and exact Google/Slack/Notion OAuth callbacks and webhook URLs in the corresponding customer-only provider apps before exposing those connectors. Verify minimal scopes and signed inbound events. Staging provider credentials and callbacks are not a customer configuration.
+- Configure a real CAPTCHA site/secret and fail-closed auth mode for customer signup, sign-in, and recovery. The staging pilot journey used the acceptance-only disabled CAPTCHA mode. Check Supabase Auth leaked-password protection, email templates, redirect allowlist, and actual confirmation/recovery delivery.
+- Company invitations are generated and copied from the admin UI as one-time links; the product does **not** email those invitations itself. Agree on an approved channel for the owner to deliver them securely.
+- Verify the private `company_knowledge` Storage bucket, database RLS/advisors, service-only maintenance permissions, cron ownership, rate limits, secret isolation, and alert recipient. `/api/health` must return HTTP 200 with `status=ok` and `database=ok`; review bounded runtime logs for unexplained errors.
 
-## Pilot setup
+## Validation and rollback
 
-1. Use a dedicated pilot/staging Vercel project, domain, Supabase project, and provider credentials. Never point staging at customer production credentials or storage.
-2. Apply the committed, ordered Supabase migrations to the authorized pilot database. At this candidate's starting checkpoint the history contains 49 migrations, ending with the Goals foreign-key index migration. Do not reset or roll it back.
-3. Configure the environment variables documented in `.env.example` for the pilot project. At minimum validate the modern Supabase publishable/secret key pairing, canonical staging URL, Groq key for real Ask/plan generation, credential master key, rate-limit/cron secrets, and the applicable Gmail OAuth client. Keep every backend secret server-only. Do not enable delegated/Activepieces/runner paths without their separate acceptance.
-4. Configure a staging-only Gmail OAuth client with the exact staging callback and a disposable pilot mailbox. Verify requested scopes and reconnect behavior. Do not reuse customer-production OAuth credentials.
-5. Create the company workspace with a legitimate owner session. Invite a small employee cohort through the supported invite flow; verify each user lands in the intended workspace and role before adding company material.
-6. Upload a synthetic or approved policy/SOP to private Company Knowledge. Ask a grounded question and inspect the citation before testing a Goal, plan, assignment, completion, and Activity journey.
-7. Use disposable provider resources and manifest-owned fixtures for acceptance. Record baseline and final row/object counts; clean only artifacts created by the pilot test.
+The accepted source passed 1,216 deterministic tests, TypeScript, ESLint, migration/environment validation, production build, anonymous RLS checks, and a fresh three-person staging browser journey. The disposable owner, two employees, their workspaces, Goal, Work Items, and Knowledge document were removed after acceptance. Desktop manager and mobile employee screens were checked. These staging results do not replace a final smoke on the exact customer deployment.
 
-## Pre-production owner checklist
+The last known healthy staging deployment before this release record is `dpl_DCe6ThR5zasyYYfMNcbYfZGwigEs`, built from the accepted Pilot Readiness source above. Keep that as the staging rollback checkpoint. For a customer release, record its own previous healthy deployment and database migration version before cutover. Roll back application traffic to that known-good deployment if health or authorization fails; **do not** reverse a committed migration blindly. Use a forward correction or restored backup only under a separately approved incident plan. Pause invitations and external actions while the incident is assessed.
 
-- Approve a separate customer-production deployment explicitly; this staging RC is not that approval.
-- Verify production Vercel project, canonical domain/DNS/TLS, Supabase project, modern keys, storage bucket privacy, and environment isolation independently.
-- Configure production-only Groq, Google/Gmail OAuth redirect URLs, Google consent/verification status, and required Turnstile site/secret keys. Do not paste credentials into issues or release notes.
-- Enable and verify Supabase Auth leaked-password protection in the dashboard; it is a control-plane setting, not a code migration.
-- Verify provider console webhook URLs and signing secrets only for integrations independently accepted for production.
-- Verify cron/scheduled dispatch routes and their authentication, rate limits, quotas, and operational ownership.
-- Review audit/approval retention and deletion obligations for the pilot company before storing real company data.
-- Re-run authenticated desktop/mobile, cross-user/workspace, secret-exposure, health, advisor, runtime-log, and cleanup checks against the exact proposed production commit before inviting customers.
+## Known pilot limits
 
-## Release gate
+- Sheets writes and Notion actions/workflows are not generally product-enabled for a customer pilot despite isolated staging acceptance; keep their gates in place until separately released.
+- The Notion picker can show a provider data source whose parent label is still unfamiliar to its owner. Confirm the exact shared resource before any Notion write.
+- Automate This needs repeated qualifying work; one completed task correctly produces no suggestion.
+- An active Goal plan is not automatically reassigned when a member leaves; its missing linked Work Item is surfaced for manager review.
+- Company invitations require manual secure delivery of the one-time link. Billing can remain manual for the first pilot.
+- Long-term company-wide approval/audit retention and formal legal review remain owner decisions before broader rollout.
 
-The RC is not accepted merely because local tests or a Vercel build pass. Acceptance requires a Ready deployment of the exact feature-branch commit to the separate staging project; healthy `/api/health`; real authenticated owner/employee browser journeys; current-source Ask and Goal behavior; privacy isolation; zero unexplained runtime errors; and manifest-owned fixture cleanup with explicit final database and Storage counts. Missing staging provider/AI configuration must be recorded as a blocker rather than simulated.
+Before inviting a real company, repeat authenticated owner/employee desktop and mobile smoke, cross-workspace and private-content checks, one safe accepted connector read/action, `/api/health`, bounded logs, and rollback identification against the exact customer release. Do not infer readiness from a Vercel “Ready” status alone.
